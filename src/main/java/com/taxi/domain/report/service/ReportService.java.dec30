@@ -1,0 +1,590 @@
+package com.taxi.domain.report.service;
+
+import com.taxi.domain.account.model.AccountCharge;
+import com.taxi.domain.account.repository.AccountChargeRepository;
+import com.taxi.domain.cab.model.Cab;
+import com.taxi.domain.driver.model.Driver;
+import com.taxi.domain.driver.repository.DriverRepository;
+import com.taxi.domain.lease.model.LeaseRate;
+import com.taxi.domain.lease.service.LeaseCalculationService;
+import com.taxi.domain.payment.model.CreditCardTransaction;
+import com.taxi.domain.payment.repository.CreditCardTransactionRepository;
+import com.taxi.domain.shift.model.CabShift;
+import com.taxi.domain.shift.model.DriverShift;
+import com.taxi.domain.shift.model.ShiftOwnership;
+import com.taxi.domain.shift.repository.DriverShiftRepository;
+import com.taxi.domain.shift.service.ShiftOwnershipService;
+import com.taxi.web.dto.report.ChargesRevenueDTO;
+import com.taxi.web.dto.report.ChargesRevenueReportDTO;
+import com.taxi.web.dto.report.CreditCardRevenueDTO;
+import com.taxi.web.dto.report.CreditCardRevenueReportDTO;
+import com.taxi.web.dto.report.LeaseExpenseDTO;
+import com.taxi.web.dto.report.LeaseExpenseReportDTO;
+import com.taxi.web.dto.report.LeaseRevenueDTO;
+import com.taxi.web.dto.report.LeaseRevenueReportDTO;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.math.BigDecimal;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.util.List;
+
+/**
+ * Service for generating various financial reports
+ */
+@Service
+@RequiredArgsConstructor
+@Slf4j
+public class ReportService {
+
+    private final DriverRepository driverRepository;
+    private final DriverShiftRepository driverShiftRepository;
+    private final LeaseCalculationService leaseCalculationService;
+    private final ShiftOwnershipService shiftOwnershipService;
+    private final AccountChargeRepository accountChargeRepository;
+    private final CreditCardTransactionRepository creditCardTransactionRepository;
+
+    /**
+     * Generate lease revenue report for a shift owner
+     * Shows all driver shifts where OTHER drivers drove shifts owned by this owner
+     * 
+     * Business Logic:
+     * - Owner owns specific shifts (DAY or NIGHT) of specific cabs
+     * - When another driver works that shift, the owner earns lease revenue
+     * - Revenue = Base Rate + (Miles × Mileage Rate)
+     * 
+     * @param ownerDriverNumber The driver number of the shift owner
+     * @param startDate Start date for the report period
+     * @param endDate End date for the report period
+     * @return Complete lease revenue report with all shifts and totals
+     */
+    @Transactional(readOnly = true)
+    public LeaseRevenueReportDTO generateLeaseRevenueReport(
+            String ownerDriverNumber,
+            LocalDate startDate,
+            LocalDate endDate) {
+        
+        log.info("Generating lease revenue report for owner: {} from {} to {}", 
+                ownerDriverNumber, startDate, endDate);
+        
+        // Find the owner driver
+        Driver owner = driverRepository.findByDriverNumber(ownerDriverNumber)
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "Driver not found: " + ownerDriverNumber));
+        
+        // Find all shifts currently owned by this driver
+        List<ShiftOwnership> ownerships = shiftOwnershipService.getCurrentOwnerships(owner);
+        
+        if (ownerships.isEmpty()) {
+            log.warn("Driver {} owns no shifts", ownerDriverNumber);
+        }
+        
+        log.info("Driver {} owns {} shifts", ownerDriverNumber, ownerships.size());
+        
+        // Initialize the report
+        LeaseRevenueReportDTO report = LeaseRevenueReportDTO.builder()
+                .ownerDriverNumber(ownerDriverNumber)
+                .ownerDriverName(owner.getFullName())
+                .startDate(startDate)
+                .endDate(endDate)
+                .build();
+        
+        // Convert dates to LocalDateTime for querying
+        LocalDateTime startDateTime = startDate.atStartOfDay();
+        LocalDateTime endDateTime = endDate.atTime(23, 59, 59);
+        
+        // For each owned shift, find driver shifts in the date range
+        for (ShiftOwnership ownership : ownerships) {
+            CabShift cabShift = ownership.getShift();
+            Cab cab = cabShift.getCab();
+            
+            log.debug("Processing ownership: {} {} shift for cab {}", 
+                    ownerDriverNumber, cabShift.getShiftType(), cab.getCabNumber());
+            
+            // Find all driver shifts for this cab in the date range
+            List<DriverShift> driverShifts = driverShiftRepository
+                    .findByCabNumberAndLogonTimeBetween(
+                            cab.getCabNumber(), 
+                            startDateTime, 
+                            endDateTime);
+            
+            log.debug("Found {} driver shifts for cab {} in date range", 
+                    driverShifts.size(), cab.getCabNumber());
+            
+            // Process each driver shift
+            for (DriverShift driverShift : driverShifts) {
+                
+                // Skip if the owner drove their own shift
+                if (driverShift.getDriverNumber().equals(ownerDriverNumber)) {
+                    log.debug("Skipping shift {} - owner drove their own shift", driverShift.getId());
+                    continue;
+                }
+                
+                // Skip if shift is not completed
+                if (!"COMPLETED".equals(driverShift.getStatus())) {
+                    log.debug("Skipping shift {} - not completed (status: {})", 
+                            driverShift.getId(), driverShift.getStatus());
+                    continue;
+                }
+                
+                // Check if this driver shift matches the owned shift type
+                // The driverShift.getPrimaryShiftType() should match cabShift.getShiftType()
+                if (!cabShift.getShiftType().name().equals(driverShift.getPrimaryShiftType())) {
+                    log.debug("Skipping shift {} - type mismatch (owned: {}, driven: {})",
+                            driverShift.getId(), 
+                            cabShift.getShiftType(), 
+                            driverShift.getPrimaryShiftType());
+                    continue;
+                }
+                
+                // Calculate lease for this shift
+                LeaseRevenueDTO leaseItem = calculateLeaseForShift(driverShift, cab, owner);
+                
+                if (leaseItem != null) {
+                    report.addLeaseItem(leaseItem);
+                    log.debug("Added lease item for shift {}: ${}", 
+                            driverShift.getId(), leaseItem.getTotalLease());
+                }
+            }
+        }
+        
+        // Calculate summary totals
+        report.calculateSummary();
+        
+        log.info("Generated lease revenue report with {} shifts, total: ${}", 
+                report.getTotalShifts(), report.getGrandTotalLease());
+        
+        return report;
+    }
+    
+    /**
+     * Calculate lease revenue for a single driver shift
+     * 
+     * @param shift The driver shift (actual work done)
+     * @param cab The cab used
+     * @param owner The shift owner (who earns the lease)
+     * @return Lease revenue DTO with all calculations
+     */
+    private LeaseRevenueDTO calculateLeaseForShift(DriverShift shift, Cab cab, Driver owner) {
+        try {
+            // Get the applicable lease rate
+            LeaseRate leaseRate = leaseCalculationService.findApplicableRate(
+                    cab.getCabType(),
+                    cab.getHasAirportLicense() != null ? cab.getHasAirportLicense() : false,
+                    shift.getLogonTime()
+            );
+            
+            if (leaseRate == null) {
+                log.warn("No lease rate found for shift {}, cab {}", shift.getId(), cab.getCabNumber());
+                return null;
+            }
+            
+            // Determine mileage - use 10 miles if totalDistance is 0 or null
+            BigDecimal miles = shift.getTotalDistance();
+            if (miles == null || miles.compareTo(BigDecimal.ZERO) == 0) {
+                miles = BigDecimal.TEN; // Default to 10 miles
+                log.debug("Using default 10 miles for shift {} (actual: {})", 
+                        shift.getId(), shift.getTotalDistance());
+            }
+            
+            // Calculate lease components
+            BigDecimal mileageLease = leaseRate.getMileageRate().multiply(miles);
+            BigDecimal totalLease = leaseRate.getBaseRate().add(mileageLease);
+            
+            // Build the DTO
+            return LeaseRevenueDTO.builder()
+                    .shiftId(shift.getId())
+                    .shiftDate(shift.getLogonTime().toLocalDate())
+                    .logonTime(shift.getLogonTime())
+                    .logoffTime(shift.getLogoffTime())
+                    .driverNumber(shift.getDriverNumber())
+                    .driverName(getDriverFullName(shift))
+                    .cabNumber(cab.getCabNumber())
+                    .shiftType(shift.getPrimaryShiftType())
+                    .totalHours(shift.getTotalHours())
+                    .baseRate(leaseRate.getBaseRate())
+                    .miles(miles)
+                    .mileageRate(leaseRate.getMileageRate())
+                    .mileageLease(mileageLease)
+                    .totalLease(totalLease)
+                    .cabType(cab.getCabType().toString())
+                    .hasAirportLicense(cab.getHasAirportLicense())
+                    .build();
+                    
+        } catch (Exception e) {
+            log.error("Error calculating lease for shift {}: {}", shift.getId(), e.getMessage(), e);
+            return null;
+        }
+    }
+
+    /**
+     * Generate charges revenue report for a driver
+     * Shows all account charges driven by this driver
+     * 
+     * @param driverNumber The driver number
+     * @param startDate Start date for the report period
+     * @param endDate End date for the report period
+     * @return Complete charges revenue report with all charges and totals
+     */
+    @Transactional(readOnly = true)
+    public ChargesRevenueReportDTO generateChargesRevenueReport(
+            String driverNumber,
+            LocalDate startDate,
+            LocalDate endDate) {
+        
+        log.info("Generating charges revenue report for driver: {} from {} to {}", 
+                driverNumber, startDate, endDate);
+        
+        // Find the driver
+        Driver driver = driverRepository.findByDriverNumber(driverNumber)
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "Driver not found: " + driverNumber));
+        
+        // Find all charges for this driver in the date range
+        List<AccountCharge> charges = accountChargeRepository
+                .findByDriverNumberAndDateRange(driverNumber, startDate, endDate);
+        
+        log.info("Found {} charges for driver {}", charges.size(), driverNumber);
+        
+        // Initialize the report
+        ChargesRevenueReportDTO report = ChargesRevenueReportDTO.builder()
+                .driverNumber(driverNumber)
+                .driverName(driver.getFullName())
+                .startDate(startDate)
+                .endDate(endDate)
+                .build();
+        
+        // Convert charges to DTOs
+        for (AccountCharge charge : charges) {
+            ChargesRevenueDTO chargeItem = ChargesRevenueDTO.builder()
+                    .chargeId(charge.getId())
+                    .tripDate(charge.getTripDate())
+                    .startTime(charge.getStartTime())
+                    .endTime(charge.getEndTime())
+                    .accountId(charge.getAccountId())
+                    .customerName(charge.getAccountCustomer() != null ? 
+                            charge.getAccountCustomer().getCompanyName() : null)
+                    .subAccount(charge.getSubAccount())
+                    .jobCode(charge.getJobCode())
+                    .pickupAddress(charge.getPickupAddress())
+                    .dropoffAddress(charge.getDropoffAddress())
+                    .passengerName(charge.getPassengerName())
+                    .cabNumber(charge.getCab() != null ? 
+                            charge.getCab().getCabNumber() : null)
+                    .driverNumber(charge.getDriver() != null ? 
+                            charge.getDriver().getDriverNumber() : driverNumber)
+                    .driverName(driver.getFullName())
+                    .fareAmount(charge.getFareAmount())
+                    .tipAmount(charge.getTipAmount() != null ? 
+                            charge.getTipAmount() : BigDecimal.ZERO)
+                    .totalAmount(charge.getTotalAmount())
+                    .isPaid(charge.isPaid())
+                    .paidDate(charge.getPaidDate())
+                    .invoiceNumber(charge.getInvoiceNumber())
+                    .notes(charge.getNotes())
+                    .build();
+            
+            report.addChargeItem(chargeItem);
+        }
+        
+        // Calculate summary totals
+        report.calculateSummary();
+        
+        log.info("Generated charges revenue report with {} charges, total: ${}", 
+                report.getTotalCharges(), report.getGrandTotal());
+        
+        return report;
+    }
+    
+    /**
+     * Get driver full name from shift data
+     */
+    private String getDriverFullName(DriverShift shift) {
+        if (shift.getDriverFirstName() != null && shift.getDriverLastName() != null) {
+            return shift.getDriverFirstName() + " " + shift.getDriverLastName();
+        }
+        
+        // Try to look up from driver table
+        return driverRepository.findByDriverNumber(shift.getDriverNumber())
+                .map(Driver::getFullName)
+                .orElse(shift.getDriverNumber());
+    }
+/**
+     * Generate credit card revenue report for a driver (UPDATED for business identifiers)
+     * Shows all credit card transactions for this driver using driver_number
+     * 
+     * @param driverNumber The driver number (e.g., "DRV-001")
+     * @param startDate Start date for the report period
+     * @param endDate End date for the report period
+     * @return Complete credit card revenue report with all transactions and totals
+     */
+    @Transactional(readOnly = true)
+    public CreditCardRevenueReportDTO generateCreditCardRevenueReport(
+            String driverNumber,
+            LocalDate startDate,
+            LocalDate endDate) {
+        
+        log.info("Generating credit card revenue report for driver: {} from {} to {}", 
+                driverNumber, startDate, endDate);
+        
+        // Find the driver (for name and validation)
+        Driver driver = driverRepository.findByDriverNumber(driverNumber)
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "Driver not found: " + driverNumber));
+        
+        // Find all credit card transactions for this driver_number in the date range
+        // The repository now uses driverNumber string directly
+        List<CreditCardTransaction> transactions = creditCardTransactionRepository
+                .findByDriverNumberAndDateRange(driverNumber, startDate, endDate);
+        
+        log.info("Found {} credit card transactions for driver {}", 
+                transactions.size(), driverNumber);
+        
+        // Initialize the report
+        CreditCardRevenueReportDTO report = CreditCardRevenueReportDTO.builder()
+                .driverNumber(driverNumber)
+                .driverName(driver.getFullName())
+                .startDate(startDate)
+                .endDate(endDate)
+                .build();
+        
+        // Convert transactions to DTOs
+        for (CreditCardTransaction transaction : transactions) {
+            CreditCardRevenueDTO transactionItem = CreditCardRevenueDTO.builder()
+                    .transactionId(transaction.getId())
+                    .transactionDate(transaction.getTransactionDate())
+                    .transactionTime(transaction.getTransactionTime())
+                    .authorizationCode(transaction.getAuthorizationCode())
+                    .terminalId(transaction.getTerminalId())
+                    .merchantId(transaction.getMerchantId())
+                    .batchNumber(transaction.getBatchNumber())
+                    .cardType(transaction.getCardType())
+                    .cardLastFour(transaction.getCardLastFour())
+                    // Now using business identifiers directly from entity
+                    .cabNumber(transaction.getCabNumber())
+                    .driverNumber(transaction.getDriverNumber())
+                    .driverName(driver.getFullName())
+                    .jobId(transaction.getJobId())
+                    .amount(transaction.getAmount())
+                    .tipAmount(transaction.getTipAmount() != null ? 
+                            transaction.getTipAmount() : BigDecimal.ZERO)
+                    .totalAmount(transaction.getTotalAmount())
+                    .processingFee(transaction.getProcessingFee())
+                    .netAmount(transaction.getNetAmount())
+                    .transactionStatus(transaction.getTransactionStatus().name())
+                    .isSettled(transaction.getIsSettled())
+                    .settlementDate(transaction.getSettlementDate())
+                    .isRefunded(transaction.getIsRefunded())
+                    .refundAmount(transaction.getRefundAmount())
+                    .receiptNumber(transaction.getReceiptNumber())
+                    .customerName(transaction.getCustomerName())
+                    .notes(transaction.getNotes())
+                    .build();
+            
+            report.addTransactionItem(transactionItem);
+        }
+        
+        // Calculate summary totals
+        report.calculateSummary();
+        
+        log.info("Generated credit card revenue report with {} transactions, total: ${}", 
+                report.getTotalTransactions(), report.getGrandTotal());
+        
+        return report;
+    }
+
+    /**
+     * Generate lease expense report for a driver
+     * Shows all shifts where this driver drove shifts owned by others
+     * 
+     * @param workingDriverNumber The driver number who worked the shifts
+     * @param startDate Start date for the report period
+     * @param endDate End date for the report period
+     * @return Complete lease expense report with all shifts and totals
+     */
+    @Transactional(readOnly = true)
+    public LeaseExpenseReportDTO generateLeaseExpenseReport(
+            String workingDriverNumber,
+            LocalDate startDate,
+            LocalDate endDate) {
+        
+        log.info("Generating lease expense report for driver: {} from {} to {}", 
+                workingDriverNumber, startDate, endDate);
+        
+        // Find the working driver
+        Driver workingDriver = driverRepository.findByDriverNumber(workingDriverNumber)
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "Driver not found: " + workingDriverNumber));
+        
+        // Initialize the report
+        LeaseExpenseReportDTO report = LeaseExpenseReportDTO.builder()
+                .workingDriverNumber(workingDriverNumber)
+                .workingDriverName(workingDriver.getFullName())
+                .startDate(startDate)
+                .endDate(endDate)
+                .build();
+        
+        // Convert dates to LocalDateTime for querying
+        LocalDateTime startDateTime = startDate.atStartOfDay();
+        LocalDateTime endDateTime = endDate.atTime(23, 59, 59);
+        
+        // Find all driver shifts for this driver in the date range
+        List<DriverShift> driverShifts = driverShiftRepository
+                .findByDriverNumberAndLogonTimeBetween(
+                        workingDriverNumber,
+                        startDateTime,
+                        endDateTime);
+        
+        log.info("Found {} shifts driven by {} in date range", 
+                driverShifts.size(), workingDriverNumber);
+        
+        // Process each driver shift
+        for (DriverShift driverShift : driverShifts) {
+            
+            // Skip if shift is not completed
+            if (!"COMPLETED".equals(driverShift.getStatus())) {
+                log.debug("Skipping shift {} - not completed (status: {})", 
+                        driverShift.getId(), driverShift.getStatus());
+                continue;
+            }
+            
+            // Find who owns this shift
+            CabShift cabShift = findCabShiftForDriverShift(driverShift);
+            
+            if (cabShift == null) {
+                log.warn("Could not find cab shift for driver shift {}", driverShift.getId());
+                continue;
+            }
+            
+            // Get the current owner of this shift
+            Driver shiftOwner = cabShift.getCurrentOwner();
+            
+            // If the driver drove their OWN shift, no lease expense
+            if (shiftOwner.getDriverNumber().equals(workingDriverNumber)) {
+                log.debug("Skipping shift {} - driver drove their own shift", 
+                        driverShift.getId());
+                continue;
+            }
+            
+            // Driver drove someone else's shift - calculate lease expense
+            LeaseExpenseDTO leaseExpense = calculateLeaseExpenseForShift(
+                    driverShift, cabShift, shiftOwner);
+            
+            if (leaseExpense != null) {
+                report.addLeaseExpense(leaseExpense);
+                log.debug("Added lease expense for shift {}: ${} owed to {}", 
+                        driverShift.getId(), 
+                        leaseExpense.getTotalLease(),
+                        shiftOwner.getDriverNumber());
+            }
+        }
+        
+        // Calculate summary totals
+        report.calculateSummary();
+        
+        log.info("Generated lease expense report with {} shifts, total expense: ${}", 
+                report.getTotalShifts(), report.getGrandTotalLease());
+        
+        return report;
+    }
+    
+    /**
+     * Find the CabShift that corresponds to a DriverShift
+     * Matches by cab number and shift type
+     */
+    private CabShift findCabShiftForDriverShift(DriverShift driverShift) {
+        try {
+            // Get the cab from the driver shift
+            String cabNumber = driverShift.getCabNumber();
+            String shiftType = driverShift.getPrimaryShiftType(); // "DAY" or "NIGHT"
+            
+            if (cabNumber == null || shiftType == null) {
+                log.warn("Driver shift {} missing cab number or shift type", 
+                        driverShift.getId());
+                return null;
+            }
+            
+            // Find the cab shift matching this cab and shift type
+            // You'll need to add this query method to CabShiftRepository
+            return shiftOwnershipService.findCabShiftByCabNumberAndShiftType(
+                    cabNumber, shiftType);
+            
+        } catch (Exception e) {
+            log.error("Error finding cab shift for driver shift {}: {}", 
+                    driverShift.getId(), e.getMessage());
+            return null;
+        }
+    }
+    
+    /**
+     * Calculate lease expense for a single driver shift
+     * 
+     * @param driverShift The driver shift (actual work done)
+     * @param cabShift The cab shift that was worked
+     * @param owner The shift owner (who receives the lease payment)
+     * @return Lease expense DTO with all calculations
+     */
+    private LeaseExpenseDTO calculateLeaseExpenseForShift(
+            DriverShift driverShift, 
+            CabShift cabShift, 
+            Driver owner) {
+        try {
+            Cab cab = cabShift.getCab();
+            
+            // Get the applicable lease rate
+            LeaseRate leaseRate = leaseCalculationService.findApplicableRate(
+                    cab.getCabType(),
+                    cab.getHasAirportLicense() != null ? cab.getHasAirportLicense() : false,
+                    driverShift.getLogonTime()
+            );
+            
+            if (leaseRate == null) {
+                log.warn("No lease rate found for shift {}, cab {}", 
+                        driverShift.getId(), cab.getCabNumber());
+                return null;
+            }
+            
+            // Determine mileage - use 10 miles if totalDistance is 0 or null
+            BigDecimal miles = driverShift.getTotalDistance();
+            if (miles == null || miles.compareTo(BigDecimal.ZERO) == 0) {
+                miles = BigDecimal.TEN; // Default to 10 miles
+                log.debug("Using default 10 miles for shift {} (actual: {})", 
+                        driverShift.getId(), driverShift.getTotalDistance());
+            }
+            
+            // Calculate lease components
+            BigDecimal mileageLease = leaseRate.getMileageRate().multiply(miles);
+            BigDecimal totalLease = leaseRate.getBaseRate().add(mileageLease);
+            
+            // Build the DTO
+            return LeaseExpenseDTO.builder()
+                    .shiftId(driverShift.getId())
+                    .shiftDate(driverShift.getLogonTime().toLocalDate())
+                    .logonTime(driverShift.getLogonTime())
+                    .logoffTime(driverShift.getLogoffTime())
+                    .cabNumber(cab.getCabNumber())
+                    .shiftType(driverShift.getPrimaryShiftType())
+                    .ownerDriverNumber(owner.getDriverNumber())
+                    .ownerDriverName(owner.getFullName())
+                    .totalHours(driverShift.getTotalHours())
+                    .baseRate(leaseRate.getBaseRate())
+                    .miles(miles)
+                    .mileageRate(leaseRate.getMileageRate())
+                    .mileageLease(mileageLease)
+                    .totalLease(totalLease)
+                    .cabType(cab.getCabType().toString())
+                    .hasAirportLicense(cab.getHasAirportLicense())
+                    .build();
+                    
+        } catch (Exception e) {
+            log.error("Error calculating lease expense for shift {}: {}", 
+                    driverShift.getId(), e.getMessage(), e);
+            return null;
+        }
+    }
+
+
+}

@@ -1,0 +1,180 @@
+package com.taxi.domain.expense.model;
+
+import com.fasterxml.jackson.annotation.JsonProperty;
+import com.taxi.domain.cab.model.Cab;
+import com.taxi.domain.driver.model.Driver;
+import com.taxi.domain.shift.model.ShiftType;  // ✅ USE EXISTING ENUM
+import jakarta.persistence.*;
+import lombok.*;
+
+import java.math.BigDecimal;
+import java.math.RoundingMode;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.YearMonth;
+import java.time.temporal.ChronoUnit;
+
+/**
+ * RecurringExpense - Fixed expenses that recur on a schedule
+ */
+@Entity
+@Table(name = "recurring_expense",
+       indexes = {
+           @Index(name = "idx_recurring_category", columnList = "expense_category_id"),
+           @Index(name = "idx_recurring_entity", columnList = "entity_type, entity_id"),
+           @Index(name = "idx_recurring_dates", columnList = "effective_from, effective_to"),
+           @Index(name = "idx_recurring_active", columnList = "is_active"),
+           @Index(name = "idx_recurring_shift_type", columnList = "shift_type")
+       })
+@Getter
+@Setter
+@NoArgsConstructor
+@AllArgsConstructor
+@Builder
+@ToString(exclude = {"cab", "owner", "driver"})
+@EqualsAndHashCode(of = "id")
+public class RecurringExpense {
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+
+    @ManyToOne(fetch = FetchType.EAGER)
+    @JoinColumn(name = "expense_category_id", nullable = false)
+    private ExpenseCategory expenseCategory;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "entity_type", nullable = false, length = 20)
+    private EntityType entityType;
+
+    @Column(name = "entity_id", nullable = false)
+    private Long entityId;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "cab_id", insertable = false, updatable = false)
+    private Cab cab;
+
+    // ✅ USE EXISTING ShiftType enum from shift package
+    @Enumerated(EnumType.STRING)
+    @Column(name = "shift_type", length = 10)
+    private ShiftType shiftType;  // Only used when entityType = SHIFT
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "owner_id", insertable = false, updatable = false)
+    private Driver owner;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "driver_id", insertable = false, updatable = false)
+    private Driver driver;
+
+    @Column(name = "amount", nullable = false, precision = 10, scale = 2)
+    private BigDecimal amount;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "billing_method", nullable = false, length = 20)
+    private BillingMethod billingMethod;
+
+    @Column(name = "effective_from", nullable = false)
+    private LocalDate effectiveFrom;
+
+    @Column(name = "effective_to")
+    private LocalDate effectiveTo;
+
+    @Column(name = "is_active")
+    @Builder.Default
+    @JsonProperty("isActive")
+    private boolean isActive = true;
+
+    @Column(name = "notes", length = 500)
+    private String notes;
+
+    @Column(name = "created_at", nullable = false, updatable = false)
+    private LocalDateTime createdAt;
+
+    @Column(name = "updated_at")
+    private LocalDateTime updatedAt;
+
+    @PrePersist
+    protected void onCreate() {
+        createdAt = LocalDateTime.now();
+        updatedAt = LocalDateTime.now();
+    }
+
+    @PreUpdate
+    protected void onUpdate() {
+        updatedAt = LocalDateTime.now();
+    }
+
+    public enum EntityType {
+        CAB,
+        SHIFT,
+        OWNER,
+        DRIVER,
+        COMPANY
+    }
+
+    public enum BillingMethod {
+        MONTHLY("Monthly - Fixed amount per month"),
+        DAILY("Daily - Amount charged per day"),
+        PER_SHIFT("Per Shift - Amount charged per shift");
+
+        private final String displayName;
+
+        BillingMethod(String displayName) {
+            this.displayName = displayName;
+        }
+
+        public String getDisplayName() {
+            return displayName;
+        }
+    }
+
+    public boolean isEffectiveOn(LocalDate date) {
+        if (!isActive) return false;
+        if (date.isBefore(effectiveFrom)) return false;
+        return effectiveTo == null || !date.isAfter(effectiveTo);
+    }
+
+    public RecurringExpense createNewVersion(BigDecimal newAmount, BillingMethod newBillingMethod, YearMonth effectiveMonth) {
+        LocalDate endOfPreviousMonth = effectiveMonth.minusMonths(1).atEndOfMonth();
+        this.effectiveTo = endOfPreviousMonth;
+        this.isActive = false;
+
+        return RecurringExpense.builder()
+                .expenseCategory(this.expenseCategory)
+                .entityType(this.entityType)
+                .entityId(this.entityId)
+                .shiftType(this.shiftType)
+                .amount(newAmount)
+                .billingMethod(newBillingMethod)
+                .effectiveFrom(effectiveMonth.atDay(1))
+                .effectiveTo(null)
+                .isActive(true)
+                .notes("Rate changed from " + this.amount + " to " + newAmount)
+                .build();
+    }
+
+    public void endExpense(LocalDate endDate) {
+        this.effectiveTo = endDate;
+        this.isActive = false;
+    }
+
+    public BigDecimal calculateAmountForDateRange(LocalDate startDate, LocalDate endDate) {
+        LocalDate effectiveStart = this.effectiveFrom.isAfter(startDate) ? this.effectiveFrom : startDate;
+        LocalDate effectiveEnd = (this.effectiveTo == null || this.effectiveTo.isAfter(endDate)) ? endDate : this.effectiveTo;
+
+        if (effectiveStart.isAfter(effectiveEnd)) {
+            return BigDecimal.ZERO;
+        }
+
+        if (billingMethod == BillingMethod.MONTHLY) {
+            YearMonth startMonth = YearMonth.from(effectiveStart);
+            YearMonth endMonth = YearMonth.from(effectiveEnd);
+            long months = startMonth.until(endMonth, ChronoUnit.MONTHS) + 1;
+            return amount.multiply(BigDecimal.valueOf(months));
+        } else {
+            long days = ChronoUnit.DAYS.between(effectiveStart, effectiveEnd) + 1;
+            return amount.multiply(BigDecimal.valueOf(days)).setScale(2, RoundingMode.HALF_UP);
+        }
+    }
+}

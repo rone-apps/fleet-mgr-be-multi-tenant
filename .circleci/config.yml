@@ -1,0 +1,60 @@
+version: 2.1
+
+jobs:
+  build_and_push_backend:
+    docker:
+      - image: cimg/openjdk:17.0
+    environment:
+      JVM_OPTS: -Xmx3200m
+      TERM: dumb
+    steps:
+      - checkout
+
+      - setup_remote_docker:
+          docker_layer_caching: true
+
+      - run:
+          name: Verify Java version
+          command: |
+            java -version
+            echo "JAVA_HOME=$JAVA_HOME"
+
+      - restore_cache:
+          keys:
+            - v1-gradle-{{ checksum "build.gradle" }}
+            - v1-gradle-
+
+      - run:
+          name: Build backend
+          command: |
+            chmod +x ./gradlew
+            ./gradlew clean build -x test
+
+      - save_cache:
+          paths:
+            - ~/.gradle
+          key: v1-gradle-{{ checksum "build.gradle" }}
+
+      - run:
+          name: DockerHub login
+          command: |
+            echo "$DOCKERHUB_TOKEN" | docker login \
+              -u "$DOCKERHUB_USERNAME" --password-stdin
+
+      - run:
+          name: Build Docker image
+          command: |
+            docker build \
+              -t $DOCKERHUB_USERNAME/fleet-manager-app-backend:latest \
+              .
+
+      - run:
+          name: Push Docker image
+          command: |
+            docker push $DOCKERHUB_USERNAME/fleet-manager-app-backend:latest
+
+workflows:
+  build_and_push:
+    jobs:
+      - build_and_push_backend
+
