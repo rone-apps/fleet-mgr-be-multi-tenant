@@ -1,6 +1,7 @@
 package com.taxi.web.controller;
 
 import com.taxi.domain.taxicaller.service.TaxiCallerService;
+import com.taxi.domain.tenant.exception.TenantConfigurationException;
 import com.taxi.domain.account.service.TaxiCallerAccountChargeImportService;
 import com.taxi.domain.account.dto.TaxiCallerImportResult;
 import com.taxi.domain.shift.dto.DriverShiftImportResult;
@@ -48,6 +49,8 @@ public class TaxiCallerController {
             response.put("message", "TaxiCaller API connection successful");
             response.put("data", new JSONObject(result).toMap());
             return ResponseEntity.ok(response);
+        } catch (TenantConfigurationException e) {
+            throw e; // Let GlobalExceptionHandler handle it
         } catch (Exception e) {
             response.put("success", false);
             response.put("message", "Failed to connect to TaxiCaller API");
@@ -92,6 +95,8 @@ public class TaxiCallerController {
             response.put("data", reportData);
             
             return ResponseEntity.ok(response);
+        } catch (TenantConfigurationException e) {
+            throw e;
         } catch (Exception e) {
             response.put("success", false);
             response.put("message", "Error fetching account job reports");
@@ -132,6 +137,8 @@ public class TaxiCallerController {
             response.put("total records read", result.getTotalRecords());
             response.put("data", result);
             return ResponseEntity.ok(response);
+        } catch (TenantConfigurationException e) {
+            throw e;
         } catch (Exception e) {
             response.put("success", false);
             response.put("message", "Error fetching account job reports");
@@ -174,6 +181,8 @@ public class TaxiCallerController {
             response.put("data", reportData);
             
             return ResponseEntity.ok(response);
+        } catch (TenantConfigurationException e) {
+            throw e;
         } catch (Exception e) {
             response.put("success", false);
             response.put("message", "Error fetching account job reports");
@@ -216,6 +225,8 @@ public class TaxiCallerController {
             System.out.println(reportData);
             
             return ResponseEntity.ok(response);
+        } catch (TenantConfigurationException e) {
+            throw e;
         } catch (Exception e) {
             response.put("success", false);
             response.put("message", "Error fetching driver log on/off reports");
@@ -257,6 +268,8 @@ public class TaxiCallerController {
             response.put("data", reportData);
             
             return ResponseEntity.ok(response);
+        } catch (TenantConfigurationException e) {
+            throw e;
         } catch (Exception e) {
             response.put("success", false);
             response.put("message", "Error fetching driver job reports");
@@ -288,6 +301,8 @@ public class TaxiCallerController {
             response.put("data", jsonResult.toMap());
             
             return ResponseEntity.ok(response);
+        } catch (TenantConfigurationException e) {
+            throw e;
         } catch (Exception e) {
             response.put("success", false);
             response.put("message", "Error fetching users");
@@ -319,6 +334,8 @@ public class TaxiCallerController {
             response.put("data", jsonResult.toMap());
             
             return ResponseEntity.ok(response);
+        } catch (TenantConfigurationException e) {
+            throw e;
         } catch (Exception e) {
             response.put("success", false);
             response.put("message", "Error fetching vehicles");
@@ -350,6 +367,8 @@ public class TaxiCallerController {
             response.put("data", jsonResult.toMap());
             
             return ResponseEntity.ok(response);
+        } catch (TenantConfigurationException e) {
+            throw e;
         } catch (Exception e) {
             response.put("success", false);
             response.put("message", "Error fetching report templates");
@@ -384,6 +403,8 @@ public class TaxiCallerController {
             response.put("data", summary);
             
             return ResponseEntity.ok(response);
+        } catch (TenantConfigurationException e) {
+            throw e;
         } catch (Exception e) {
             response.put("success", false);
             response.put("message", "Error fetching summary");
@@ -454,6 +475,8 @@ public class TaxiCallerController {
             
             return ResponseEntity.ok(response);
             
+        } catch (TenantConfigurationException e) {
+            throw e;
         } catch (Exception e) {
            // log.error("Error importing driver shifts from TaxiCaller", e);
             response.put("success", false);
@@ -498,6 +521,8 @@ public class TaxiCallerController {
             response.put("data", reportData);
             
             return ResponseEntity.ok(response);
+        } catch (TenantConfigurationException e) {
+            throw e;
         } catch (Exception e) {
           //  log.error("Error previewing driver shifts", e);
             response.put("success", false);

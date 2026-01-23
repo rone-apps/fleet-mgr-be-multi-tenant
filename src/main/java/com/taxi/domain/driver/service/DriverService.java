@@ -15,6 +15,7 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import com.taxi.infrastructure.multitenancy.TenantContext;
 import java.util.Map;
 import java.util.List;
 import java.util.function.Function;
@@ -36,7 +37,7 @@ public class DriverService {
      * Get all drivers
      */
     @Transactional(readOnly = true)
-    @Cacheable(cacheNames = "drivers_all")
+    @Cacheable(cacheNames = "drivers_all", key = "T(com.taxi.infrastructure.multitenancy.TenantContext).getCurrentTenant()")
     public List<DriverDTO> getAllDrivers() {
         log.info("Getting all drivers");
         List<Driver> drivers = driverRepository.findAll();
@@ -54,7 +55,7 @@ public class DriverService {
      * Get active drivers only
      */
     @Transactional(readOnly = true)
-    @Cacheable(cacheNames = "drivers_active")
+    @Cacheable(cacheNames = "drivers_active", key = "T(com.taxi.infrastructure.multitenancy.TenantContext).getCurrentTenant()")
     public List<DriverDTO> getActiveDrivers() {
         log.info("Getting active drivers");
         List<Driver> drivers = driverRepository.findAllActiveDrivers();
@@ -72,7 +73,7 @@ public class DriverService {
      * Get drivers by status
      */
     @Transactional(readOnly = true)
-    @Cacheable(cacheNames = "drivers_status", key = "#status")
+    @Cacheable(cacheNames = "drivers_status", key = "T(com.taxi.infrastructure.multitenancy.TenantContext).getCurrentTenant() + '_' + #status")
     public List<DriverDTO> getDriversByStatus(Driver.DriverStatus status) {
         log.info("Getting drivers with status: {}", status);
         List<Driver> drivers = driverRepository.findByStatus(status);
@@ -90,7 +91,7 @@ public class DriverService {
      * Search drivers by name
      */
     @Transactional(readOnly = true)
-    @Cacheable(cacheNames = "drivers_search", key = "#name")
+    @Cacheable(cacheNames = "drivers_search", key = "T(com.taxi.infrastructure.multitenancy.TenantContext).getCurrentTenant() + '_' + #name")
     public List<DriverDTO> searchDriversByName(String name) {
         log.info("Searching drivers by name: {}", name);
         List<Driver> drivers = driverRepository.searchByName(name);
@@ -108,7 +109,7 @@ public class DriverService {
      * Get driver by ID
      */
     @Transactional(readOnly = true)
-    @Cacheable(cacheNames = "driver_by_id", key = "#id")
+    @Cacheable(cacheNames = "driver_by_id", key = "T(com.taxi.infrastructure.multitenancy.TenantContext).getCurrentTenant() + '_' + #id")
     public DriverDTO getDriverById(Long id) {
         log.info("Getting driver by ID: {}", id);
         Driver driver = driverRepository.findById(id)
@@ -122,7 +123,7 @@ public class DriverService {
      * Get driver by driver number
      */
     @Transactional(readOnly = true)
-    @Cacheable(cacheNames = "driver_by_number", key = "#driverNumber")
+    @Cacheable(cacheNames = "driver_by_number", key = "T(com.taxi.infrastructure.multitenancy.TenantContext).getCurrentTenant() + '_' + #driverNumber")
     public DriverDTO getDriverByDriverNumber(String driverNumber) {
         log.info("Getting driver by driver number: {}", driverNumber);
         Driver driver = driverRepository.findByDriverNumber(driverNumber)

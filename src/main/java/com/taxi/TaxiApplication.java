@@ -26,7 +26,8 @@ public class TaxiApplication {
                 "drivers_status",
                 "drivers_search",
                 "driver_by_id",
-                "driver_by_number"
+                "driver_by_number",
+                "tenant_config"
         ));
         return cacheManager;
     }

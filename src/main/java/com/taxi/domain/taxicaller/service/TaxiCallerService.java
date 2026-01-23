@@ -1,5 +1,9 @@
 package com.taxi.domain.taxicaller.service;
 
+import com.taxi.domain.tenant.exception.TenantConfigurationException;
+import com.taxi.domain.tenant.service.TenantConfigService;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.json.JSONArray;
 import org.json.JSONObject;
 import org.springframework.stereotype.Service;
@@ -9,45 +13,94 @@ import java.net.HttpURLConnection;
 import java.net.URL;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
+import java.util.concurrent.ConcurrentHashMap;
 
 @Service
+@RequiredArgsConstructor
+@Slf4j
 public class TaxiCallerService {
-    private static final String API_KEY = "5658f7a37c72163a41855005b23add80";
-    private static final int COMPANY_ID = 42259;
-    private static final String BASE_URL = "https://api.taxicaller.net";
-    private String token = null;
+
+    private final TenantConfigService tenantConfigService;
+
+    // Cache tokens per tenant to avoid fetching on every request
+    private final ConcurrentHashMap<String, String> tokenCache = new ConcurrentHashMap<>();
+
+    private String getApiKey() {
+        return tenantConfigService.getTaxicallerApiKey();
+    }
+
+    private int getCompanyId() {
+        return tenantConfigService.getTaxicallerCompanyId();
+    }
+
+    private String getBaseUrl() {
+        return tenantConfigService.getTaxicallerBaseUrl();
+    }
 
     /**
      * Fetch a new JWT token from TaxiCaller API
      */
     private String fetchToken() {
         try {
-            String urlString = BASE_URL + "/AdminService/v1/jwt/for-key?key=" + API_KEY + "&sub=*&ttl=900";
+            String urlString = getBaseUrl() + "/AdminService/v1/jwt/for-key?key=" + getApiKey() + "&sub=*&ttl=900";
+            log.info("Fetching TaxiCaller token from: {}", getBaseUrl());
             HttpURLConnection conn = (HttpURLConnection) new URL(urlString).openConnection();
             conn.setRequestMethod("GET");
 
             int responseCode = conn.getResponseCode();
             if (responseCode != 200) {
-                System.err.println("Failed to get token. HTTP Response: " + responseCode);
-                return null;
+                String errorResponse = readErrorResponse(conn);
+                log.error("Failed to get TaxiCaller token. HTTP {}: {}", responseCode, errorResponse);
+                throw new RuntimeException("TaxiCaller authentication failed: " + errorResponse);
             }
 
             String response = readResponse(conn);
+            if (response == null || response.isBlank() || !response.trim().startsWith("{")) {
+                log.error("Invalid TaxiCaller token response: {}", response);
+                throw new RuntimeException("Invalid response from TaxiCaller API");
+            }
+            
             JSONObject json = new JSONObject(response);
             return json.getString("token");
+        } catch (TenantConfigurationException e) {
+            throw e;
         } catch (Exception e) {
-            e.printStackTrace();
-            return null;
+            log.error("Error fetching TaxiCaller token", e);
+            throw new RuntimeException("Failed to authenticate with TaxiCaller: " + e.getMessage(), e);
+        }
+    }
+    
+    private String readErrorResponse(HttpURLConnection conn) {
+        try (BufferedReader br = new BufferedReader(new InputStreamReader(conn.getErrorStream(), "utf-8"))) {
+            StringBuilder response = new StringBuilder();
+            String line;
+            while ((line = br.readLine()) != null) {
+                response.append(line);
+            }
+            return response.toString();
+        } catch (Exception e) {
+            return "Unable to read error response";
         }
     }
 
     /**
-     * Ensure we have a valid token
+     * Ensure we have a valid token for the current tenant
      */
-    private void ensureToken() {
-        if (token == null) {
-            token = fetchToken();
+    private String ensureToken() {
+        String tenantKey = tenantConfigService.getTaxicallerApiKey();
+        return tokenCache.computeIfAbsent(tenantKey, k -> fetchToken());
+    }
+
+    /**
+     * Refresh token for current tenant
+     */
+    private String refreshToken() {
+        String tenantKey = tenantConfigService.getTaxicallerApiKey();
+        String newToken = fetchToken();
+        if (newToken != null) {
+            tokenCache.put(tenantKey, newToken);
         }
+        return newToken;
     }
 
     /**
@@ -55,20 +108,22 @@ public class TaxiCallerService {
      */
     public String fetchData(String endpoint) {
         try {
-            ensureToken();
-            String urlString = BASE_URL + "/api/v1/company/" + COMPANY_ID + "/" + endpoint;
-            HttpURLConnection conn = createConnection(urlString, "GET");
+            String token = ensureToken();
+            String urlString = getBaseUrl() + "/api/v1/company/" + getCompanyId() + "/" + endpoint;
+            HttpURLConnection conn = createConnection(urlString, "GET", token);
 
             int responseCode = conn.getResponseCode();
             if (responseCode == 401) {
-                System.out.println("Token expired. Fetching new token...");
-                token = fetchToken();
+                log.info("Token expired. Fetching new token...");
+                token = refreshToken();
                 return fetchData(endpoint);
             }
 
             return readResponse(conn);
+        } catch (TenantConfigurationException e) {
+            throw e; // Let configuration exceptions propagate to GlobalExceptionHandler
         } catch (Exception e) {
-            e.printStackTrace();
+            log.error("Error fetching data from TaxiCaller", e);
             return null;
         }
     }
@@ -78,12 +133,12 @@ public class TaxiCallerService {
      */
     public JSONArray generateAccountJobReports(LocalDate startDate, LocalDate endDate) {
         try {
-            token = fetchToken(); // Fresh token for each request
-            String urlString = BASE_URL + "/api/v1/reports/typed/generate";
-            HttpURLConnection conn = createConnection(urlString, "POST");
+            String token = refreshToken(); // Fresh token for each request
+            String urlString = getBaseUrl() + "/api/v1/reports/typed/generate";
+            HttpURLConnection conn = createConnection(urlString, "POST", token);
 
             JSONObject requestBody = new JSONObject();
-            requestBody.put("company_id", COMPANY_ID);
+            requestBody.put("company_id", getCompanyId());
             requestBody.put("report_type", "JOB");
             requestBody.put("output_format", "json");
             requestBody.put("template_id", 13908);
@@ -121,6 +176,8 @@ public class TaxiCallerService {
             System.out.println(array);
             return array;
 
+        } catch (TenantConfigurationException e) {
+            throw e;
         } catch (Exception e) {
             e.printStackTrace();
             return null;
@@ -132,12 +189,12 @@ public class TaxiCallerService {
      */
     public JSONArray generateDriverLogOnOffReports(LocalDate startDate, LocalDate endDate) {
         try {
-            token = fetchToken(); // Fresh token for each request
-            String urlString = BASE_URL + "/api/v1/reports/typed/generate";
-            HttpURLConnection conn = createConnection(urlString, "POST");
+            String token = refreshToken(); // Fresh token for each request
+            String urlString = getBaseUrl() + "/api/v1/reports/typed/generate";
+            HttpURLConnection conn = createConnection(urlString, "POST", token);
 
             JSONObject requestBody = new JSONObject();
-            requestBody.put("company_id", COMPANY_ID);
+            requestBody.put("company_id", getCompanyId());
             requestBody.put("report_type", "JOB");
             requestBody.put("output_format", "json");
             requestBody.put("template_id", 11118);
@@ -174,6 +231,8 @@ public class TaxiCallerService {
        JSONArray array = jsonObject.getJSONArray("rows");
             return array;
 
+        } catch (TenantConfigurationException e) {
+            throw e;
         } catch (Exception e) {
             e.printStackTrace();
             return null;
@@ -185,12 +244,12 @@ public class TaxiCallerService {
      */
     public JSONArray generateDriverJobReports(int daysCount, int offset) {
         try {
-            token = fetchToken(); // Fresh token for each request
-            String urlString = BASE_URL + "/api/v1/reports/typed/generate";
-            HttpURLConnection conn = createConnection(urlString, "POST");
+            String token = refreshToken(); // Fresh token for each request
+            String urlString = getBaseUrl() + "/api/v1/reports/typed/generate";
+            HttpURLConnection conn = createConnection(urlString, "POST", token);
 
             JSONObject requestBody = new JSONObject();
-            requestBody.put("company_id", COMPANY_ID);
+            requestBody.put("company_id", getCompanyId());
             requestBody.put("report_type", "JOB");
             requestBody.put("output_format", "json");
             requestBody.put("template_id", 14001);
@@ -225,6 +284,8 @@ public class TaxiCallerService {
             JSONObject jsonObject = new JSONObject(response);
             return jsonObject.getJSONArray("rows");
 
+        } catch (TenantConfigurationException e) {
+            throw e;
         } catch (Exception e) {
             e.printStackTrace();
             return null;
@@ -236,12 +297,12 @@ public class TaxiCallerService {
      */
     public JSONArray generateDriverJobReports(LocalDate startDate, LocalDate endDate) {
         try {
-            token = fetchToken(); // Fresh token for each request
-            String urlString = BASE_URL + "/api/v1/reports/typed/generate";
-            HttpURLConnection conn = createConnection(urlString, "POST");
+            String token = refreshToken(); // Fresh token for each request
+            String urlString = getBaseUrl() + "/api/v1/reports/typed/generate";
+            HttpURLConnection conn = createConnection(urlString, "POST", token);
 
             JSONObject requestBody = new JSONObject();
-            requestBody.put("company_id", COMPANY_ID);
+            requestBody.put("company_id", getCompanyId());
             requestBody.put("report_type", "JOB");
             requestBody.put("output_format", "json");
             requestBody.put("template_id", 14001);
@@ -275,6 +336,8 @@ public class TaxiCallerService {
             JSONObject jsonObject = new JSONObject(response);
             return jsonObject.getJSONArray("rows");
 
+        } catch (TenantConfigurationException e) {
+            throw e;
         } catch (Exception e) {
             e.printStackTrace();
             return null;
@@ -303,7 +366,7 @@ public class TaxiCallerService {
     }
 
     // Helper method to create HTTP connection
-    private HttpURLConnection createConnection(String urlString, String method) throws IOException {
+    private HttpURLConnection createConnection(String urlString, String method, String token) throws IOException {
         HttpURLConnection conn = (HttpURLConnection) new URL(urlString).openConnection();
         conn.setRequestMethod(method);
         conn.setRequestProperty("Authorization", "Bearer " + token);
