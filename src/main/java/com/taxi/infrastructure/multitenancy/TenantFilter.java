@@ -31,8 +31,11 @@ public class TenantFilter extends OncePerRequestFilter {
             String tenantId = resolveTenant(request);
 
             if (tenantId == null || tenantId.isBlank()) {
+                String uri = request.getRequestURI();
+                // Only system endpoints should bypass tenant requirement
+                // All business endpoints including drivers/cabs require a tenant
                 throw new ServletException(
-                    "Missing tenant for request: " + request.getRequestURI()
+                    "Missing tenant for request: " + uri
                 );
             }
 
@@ -93,7 +96,11 @@ public class TenantFilter extends OncePerRequestFilter {
 
     @Override
     protected boolean shouldNotFilter(HttpServletRequest request) {
-        // ONLY actuator should bypass tenant logic
-        return request.getRequestURI().startsWith("/actuator");
+        String uri = request.getRequestURI();
+        // Endpoints that should bypass tenant filtering
+        return uri.startsWith("/actuator") ||
+               uri.startsWith("/api/auth") ||
+               uri.equals("/api/test") ||
+               uri.startsWith("/api/test/");
     }
 }

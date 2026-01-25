@@ -1,5 +1,5 @@
 #!/bin/bash
-#git add .
+git add .
 git commit . -m "Fixed stuff"
 git push
 ./gradlew clean build
