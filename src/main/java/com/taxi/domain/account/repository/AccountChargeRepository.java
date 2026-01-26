@@ -206,4 +206,41 @@ public interface AccountChargeRepository extends JpaRepository<AccountCharge, Lo
             @Param("startDate") LocalDate startDate,
             @Param("endDate") LocalDate endDate
     );
+
+    // Search charges without pagination
+    @EntityGraph(attributePaths = {"accountCustomer", "cab", "driver"})
+    @Query(
+            value = "SELECT ac FROM AccountCharge ac " +
+                    "WHERE (:customerName IS NULL OR LOWER(ac.accountCustomer.companyName) LIKE LOWER(CONCAT('%', :customerName, '%'))) " +
+                    "AND (:cabId IS NULL OR ac.cab.id = :cabId) " +
+                    "AND (:driverId IS NULL OR ac.driver.id = :driverId) " +
+                    "AND (:startDate IS NULL OR ac.tripDate >= :startDate) " +
+                    "AND (:endDate IS NULL OR ac.tripDate <= :endDate)"
+    )
+    List<AccountCharge> searchChargesNoPaging(
+            @Param("customerName") String customerName,
+            @Param("cabId") Long cabId,
+            @Param("driverId") Long driverId,
+            @Param("startDate") LocalDate startDate,
+            @Param("endDate") LocalDate endDate);
+
+    // Get summary statistics for filtered charges
+    @Query(
+            value = "SELECT new map(" +
+                    "COUNT(ac) as totalChargesCount, " +
+                    "SUM(CASE WHEN ac.paid = false THEN 1 ELSE 0 END) as unpaidChargesCount, " +
+                    "COALESCE(SUM(CASE WHEN ac.paid = false THEN ac.fareAmount + ac.tipAmount ELSE 0 END), 0) as outstandingBalance" +
+                    ") FROM AccountCharge ac " +
+                    "WHERE (:customerName IS NULL OR LOWER(ac.accountCustomer.companyName) LIKE LOWER(CONCAT('%', :customerName, '%'))) " +
+                    "AND (:cabId IS NULL OR ac.cab.id = :cabId) " +
+                    "AND (:driverId IS NULL OR ac.driver.id = :driverId) " +
+                    "AND (:startDate IS NULL OR ac.tripDate >= :startDate) " +
+                    "AND (:endDate IS NULL OR ac.tripDate <= :endDate)"
+    )
+    Map<String, Object> getSummaryStatistics(
+            @Param("customerName") String customerName,
+            @Param("cabId") Long cabId,
+            @Param("driverId") Long driverId,
+            @Param("startDate") LocalDate startDate,
+            @Param("endDate") LocalDate endDate);
 }

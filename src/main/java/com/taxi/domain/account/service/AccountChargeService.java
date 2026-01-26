@@ -352,6 +352,79 @@ public Page<AccountCharge> getChargesByCustomer(Long customerId, Pageable pageab
     return accountChargeRepository.findByAccountCustomerId(customerId, pageable);
 }
 
+/**
+ * Get summary statistics for charges with filters
+ */
+public Map<String, Object> getChargesSummary(String customerName, Long cabId, Long driverId, LocalDate startDate, LocalDate endDate) {
+    String normalizedCustomerName = (customerName != null && !customerName.trim().isEmpty()) ? customerName.trim() : null;
+    Map<String, Object> stats = accountChargeRepository.getSummaryStatistics(normalizedCustomerName, cabId, driverId, startDate, endDate);
+
+    // Ensure all fields have proper types and defaults
+    Map<String, Object> result = new java.util.HashMap<>();
+    result.put("outstandingBalance", stats.getOrDefault("outstandingBalance", BigDecimal.ZERO));
+    result.put("unpaidChargesCount", ((Number) stats.getOrDefault("unpaidChargesCount", 0L)).longValue());
+    result.put("totalChargesCount", ((Number) stats.getOrDefault("totalChargesCount", 0L)).longValue());
+
+    return result;
+}
+
+/**
+ * Get fare and tip totals for charges with filters
+ */
+public Map<String, Object> getChargesTotals(String customerName, Long cabId, Long driverId, LocalDate startDate, LocalDate endDate) {
+    List<AccountCharge> charges = accountChargeRepository.searchChargesNoPaging(
+            (customerName != null && !customerName.trim().isEmpty()) ? customerName.trim() : null,
+            cabId, driverId, startDate, endDate);
+
+    // Calculate totals for all charges
+    BigDecimal totalFareAmount = charges.stream()
+            .map(AccountCharge::getFareAmount)
+            .filter(Objects::nonNull)
+            .reduce(BigDecimal.ZERO, BigDecimal::add);
+
+    BigDecimal totalTipAmount = charges.stream()
+            .map(AccountCharge::getTipAmount)
+            .filter(Objects::nonNull)
+            .reduce(BigDecimal.ZERO, BigDecimal::add);
+
+    // Calculate totals for unpaid charges only
+    BigDecimal unpaidFareAmount = charges.stream()
+            .filter(c -> !c.isPaid())
+            .map(AccountCharge::getFareAmount)
+            .filter(Objects::nonNull)
+            .reduce(BigDecimal.ZERO, BigDecimal::add);
+
+    BigDecimal unpaidTipAmount = charges.stream()
+            .filter(c -> !c.isPaid())
+            .map(AccountCharge::getTipAmount)
+            .filter(Objects::nonNull)
+            .reduce(BigDecimal.ZERO, BigDecimal::add);
+
+    BigDecimal totalAmount = totalFareAmount.add(totalTipAmount);
+    BigDecimal unpaidAmount = unpaidFareAmount.add(unpaidTipAmount);
+    BigDecimal paidAmount = totalAmount.subtract(unpaidAmount);
+
+    long totalCount = charges.size();
+    long unpaidCount = charges.stream().filter(c -> !c.isPaid()).count();
+    long paidCount = totalCount - unpaidCount;
+
+    Map<String, Object> result = new java.util.HashMap<>();
+    result.put("totalFareAmount", totalFareAmount);
+    result.put("totalTipAmount", totalTipAmount);
+    result.put("totalAmount", totalAmount);
+    result.put("unpaidFareAmount", unpaidFareAmount);
+    result.put("unpaidTipAmount", unpaidTipAmount);
+    result.put("unpaidAmount", unpaidAmount);
+    result.put("paidFareAmount", totalFareAmount.subtract(unpaidFareAmount));
+    result.put("paidTipAmount", totalTipAmount.subtract(unpaidTipAmount));
+    result.put("paidAmount", paidAmount);
+    result.put("chargeCount", totalCount);
+    result.put("unpaidCount", unpaidCount);
+    result.put("paidCount", paidCount);
+
+    return result;
+}
+
     // Charges cannot be deleted - only updated
     // No delete methods provided
 }

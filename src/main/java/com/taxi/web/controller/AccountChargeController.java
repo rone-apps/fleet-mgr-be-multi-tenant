@@ -35,6 +35,44 @@ public class AccountChargeController {
         return ResponseEntity.ok(AccountChargeDTO.fromEntity(created));
     }
 
+    // Get summary statistics for filtered charges (MUST be before /{id})
+    @GetMapping("/summary")
+    @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER', 'ACCOUNTANT')")
+    public ResponseEntity<Map<String, Object>> getChargesSummary(
+            @RequestParam(required = false) String customerName,
+            @RequestParam(required = false) Long cabId,
+            @RequestParam(required = false) Long driverId,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate startDate,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate endDate) {
+
+        // If no dates provided, default to current month
+        LocalDate actualStartDate = startDate;
+        LocalDate actualEndDate = endDate;
+
+        if (startDate == null && endDate == null) {
+            LocalDate today = LocalDate.now();
+            actualStartDate = today.withDayOfMonth(1);
+            actualEndDate = today.withDayOfMonth(today.lengthOfMonth());
+        }
+
+        Map<String, Object> summary = accountChargeService.getChargesSummary(customerName, cabId, driverId, actualStartDate, actualEndDate);
+        return ResponseEntity.ok(summary);
+    }
+
+    // Get fare and tip totals for filtered charges (MUST be before /{id})
+    @GetMapping("/totals")
+    @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER', 'ACCOUNTANT')")
+    public ResponseEntity<Map<String, Object>> getChargesTotals(
+            @RequestParam(required = false) String customerName,
+            @RequestParam(required = false) Long cabId,
+            @RequestParam(required = false) Long driverId,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate startDate,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate endDate) {
+
+        Map<String, Object> totals = accountChargeService.getChargesTotals(customerName, cabId, driverId, startDate, endDate);
+        return ResponseEntity.ok(totals);
+    }
+
     @PutMapping("/{id}")
     @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER')")
     public ResponseEntity<AccountChargeDTO> updateCharge(@PathVariable Long id, @RequestBody AccountCharge charge) {
