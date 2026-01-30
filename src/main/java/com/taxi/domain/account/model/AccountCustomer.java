@@ -62,6 +62,11 @@ public class AccountCustomer {
     @Column(name = "notes", length = 1000)
     private String notes;
 
+    @Enumerated(EnumType.STRING)
+    @Column(name = "account_type", length = 20)
+    @Builder.Default
+    private AccountType accountType = AccountType.PERSONAL;
+
     @Column(name = "is_active", nullable = false)
     @Builder.Default
     private boolean active = true;
@@ -114,5 +119,23 @@ public class AccountCustomer {
 
     public boolean isInProvince(String provinceName) {
         return this.province != null && this.province.equalsIgnoreCase(provinceName);
+    }
+
+    // Account type enumeration
+    public enum AccountType {
+        ONE_TIME_USER("One time User"),
+        PARTY_ACCOUNT("Party Account"),
+        CORPORATE("Corporate"),
+        PERSONAL("Personal");
+
+        private final String displayName;
+
+        AccountType(String displayName) {
+            this.displayName = displayName;
+        }
+
+        public String getDisplayName() {
+            return displayName;
+        }
     }
 }

@@ -40,8 +40,11 @@ public interface AccountCustomerRepository extends JpaRepository<AccountCustomer
     @Query("SELECT c FROM AccountCustomer c WHERE LOWER(c.companyName) LIKE LOWER(CONCAT('%', :name, '%'))")
     List<AccountCustomer> searchByCompanyName(@Param("name") String name);
 
-    // Find by email
+    // Find by email (returns Optional for single result)
     Optional<AccountCustomer> findByEmailIgnoreCase(String email);
+
+    // Find all customers with specific email (case-insensitive) - returns List to handle multiple matches
+    List<AccountCustomer> findAllByEmailIgnoreCase(String email);
 
     // Check if company name exists (for duplicate prevention)
     boolean existsByCompanyNameIgnoreCase(String companyName);

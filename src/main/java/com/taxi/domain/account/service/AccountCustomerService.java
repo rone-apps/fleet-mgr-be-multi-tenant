@@ -35,19 +35,23 @@ public class AccountCustomerService {
     // Update existing customer
     public AccountCustomer updateCustomer(Long id, AccountCustomer customerData) {
         AccountCustomer existing = getCustomerById(id);
-        
+
         // Don't allow changing account_id
         if (!existing.getAccountId().equals(customerData.getAccountId())) {
             throw new IllegalStateException("Cannot change account ID for existing customer");
         }
-        
-        // Check company name uniqueness (excluding current customer)
-        accountCustomerRepository.findByEmailIgnoreCase(customerData.getEmail())
-            .ifPresent(found -> {
-                if (!found.getId().equals(id)) {
+
+        // Check email uniqueness only if email is provided and different from current
+        if (customerData.getEmail() != null && !customerData.getEmail().isEmpty() &&
+            !customerData.getEmail().equalsIgnoreCase(existing.getEmail() != null ? existing.getEmail() : "")) {
+            // Check if this email is already used by another customer
+            List<AccountCustomer> emailConflicts = accountCustomerRepository.findAllByEmailIgnoreCase(customerData.getEmail());
+            for (AccountCustomer conflict : emailConflicts) {
+                if (!conflict.getId().equals(id)) {
                     throw new IllegalStateException("Email already in use by another customer");
                 }
-            });
+            }
+        }
         
         // Update fields
         existing.setCompanyName(customerData.getCompanyName());
@@ -62,7 +66,10 @@ public class AccountCustomerService {
         existing.setBillingPeriod(customerData.getBillingPeriod());
         existing.setCreditLimit(customerData.getCreditLimit());
         existing.setNotes(customerData.getNotes());
-        
+        if (customerData.getAccountType() != null) {
+            existing.setAccountType(customerData.getAccountType());
+        }
+
         return accountCustomerRepository.save(existing);
     }
 
