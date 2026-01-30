@@ -81,6 +81,39 @@ public class Driver {
     @Column(name = "notes", length = 1000)
     private String notes;
 
+    // Tax & Financial Information
+    @Column(name = "sin", length = 50)
+    private String sin;
+
+    @Column(name = "gst_number", length = 50)
+    private String gstNumber;
+
+    @Column(name = "deposit_amount")
+    private Double depositAmount;
+
+    // Emergency Contact Information
+    @Column(name = "emergency_contact_name", length = 100)
+    private String emergencyContactName;
+
+    @Column(name = "emergency_contact_phone", length = 20)
+    private String emergencyContactPhone;
+
+    @Column(name = "emergency_contact_relationship", length = 50)
+    private String emergencyContactRelationship;
+
+    // Document & Record Dates
+    @Column(name = "security_deposit_date")
+    private LocalDate securityDepositDate;
+
+    @Column(name = "refund_date")
+    private LocalDate refundDate;
+
+    @Column(name = "pic_date")
+    private LocalDate picDate;
+
+    @Column(name = "ibc_records_date")
+    private LocalDate ibcRecordsDate;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;
 

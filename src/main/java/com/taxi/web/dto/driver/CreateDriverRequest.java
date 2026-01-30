@@ -50,6 +50,31 @@ public class CreateDriverRequest {
 
     private Boolean isOwner;
 
+    // Tax & Financial Information
+    @Size(max = 50, message = "SIN must not exceed 50 characters")
+    private String sin;
+
+    @Size(max = 50, message = "GST Number must not exceed 50 characters")
+    private String gstNumber;
+
+    private Double depositAmount;
+
+    // Emergency Contact Information
+    @Size(max = 100, message = "Emergency contact name must not exceed 100 characters")
+    private String emergencyContactName;
+
+    @Size(max = 20, message = "Emergency contact phone must not exceed 20 characters")
+    private String emergencyContactPhone;
+
+    @Size(max = 50, message = "Relationship must not exceed 50 characters")
+    private String emergencyContactRelationship;
+
+    // Document & Record Dates
+    private LocalDate securityDepositDate;
+    private LocalDate refundDate;
+    private LocalDate picDate;
+    private LocalDate ibcRecordsDate;
+
     // Optional: Create user account for this driver
     private Boolean createUser;
     private String username;

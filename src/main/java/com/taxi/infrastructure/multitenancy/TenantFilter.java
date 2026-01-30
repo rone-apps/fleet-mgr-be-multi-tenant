@@ -98,8 +98,8 @@ public class TenantFilter extends OncePerRequestFilter {
     protected boolean shouldNotFilter(HttpServletRequest request) {
         String uri = request.getRequestURI();
         // Endpoints that should bypass tenant filtering
+        // NOTE: /api/auth/* should NOT be bypassed - users need X-Tenant-ID to login
         return uri.startsWith("/actuator") ||
-               uri.startsWith("/api/auth") ||
                uri.equals("/api/test") ||
                uri.startsWith("/api/test/");
     }

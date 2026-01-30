@@ -37,6 +37,23 @@ public class DriverDTO {
     
     private LocalDate joinedDate;
     private String notes;
+
+    // Tax & Financial Information
+    private String sin;
+    private String gstNumber;
+    private Double depositAmount;
+
+    // Emergency Contact Information
+    private String emergencyContactName;
+    private String emergencyContactPhone;
+    private String emergencyContactRelationship;
+
+    // Document & Record Dates
+    private LocalDate securityDepositDate;
+    private LocalDate refundDate;
+    private LocalDate picDate;
+    private LocalDate ibcRecordsDate;
+
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
 
@@ -68,6 +85,16 @@ public class DriverDTO {
                 .isOwner(Boolean.TRUE.equals(driver.getIsOwner()))
                 .joinedDate(driver.getJoinedDate())
                 .notes(driver.getNotes())
+                .sin(driver.getSin())
+                .gstNumber(driver.getGstNumber())
+                .depositAmount(driver.getDepositAmount())
+                .emergencyContactName(driver.getEmergencyContactName())
+                .emergencyContactPhone(driver.getEmergencyContactPhone())
+                .emergencyContactRelationship(driver.getEmergencyContactRelationship())
+                .securityDepositDate(driver.getSecurityDepositDate())
+                .refundDate(driver.getRefundDate())
+                .picDate(driver.getPicDate())
+                .ibcRecordsDate(driver.getIbcRecordsDate())
                 .createdAt(driver.getCreatedAt())
                 .updatedAt(driver.getUpdatedAt())
                 .build();

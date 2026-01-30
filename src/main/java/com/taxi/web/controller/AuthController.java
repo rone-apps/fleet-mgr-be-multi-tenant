@@ -112,7 +112,15 @@ public class AuthController {
     System.out.println(">>> Login request - password length: " + loginRequest.getPassword().length());
     System.out.println(">>> Login request - password: [" + loginRequest.getPassword() + "]");
 
-   
+     // Get user details
+        User user = userDetailsService.loadUserEntityByUsername(loginRequest.getUsername());
+
+         org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder testEncoder = 
+    new org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder();
+    boolean testMatch = testEncoder.matches(loginRequest.getPassword(), user.getPassword());
+System.out.println(">>> BCrypt test match for '" + loginRequest.getPassword() + "': " + testMatch);
+
+   System.out.println("Authendication attempt for username: " + loginRequest.getUsername());
         // Authenticate user
         Authentication authentication = authenticationManager.authenticate(
                 new UsernamePasswordAuthenticationToken(
@@ -123,13 +131,7 @@ public class AuthController {
 
         SecurityContextHolder.getContext().setAuthentication(authentication);
 
-        // Get user details
-        User user = userDetailsService.loadUserEntityByUsername(loginRequest.getUsername());
-
-         org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder testEncoder = 
-    new org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder();
-    boolean testMatch = testEncoder.matches(loginRequest.getPassword(), user.getPassword());
-System.out.println(">>> BCrypt test match for '" + loginRequest.getPassword() + "': " + testMatch);
+       
     
 
         // Generate JWT token with role

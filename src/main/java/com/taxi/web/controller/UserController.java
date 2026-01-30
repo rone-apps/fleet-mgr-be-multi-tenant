@@ -38,10 +38,13 @@ public class UserController {
      */
     @GetMapping
     @PreAuthorize("hasRole('ADMIN')")
-    public ResponseEntity<List<User>> getAllUsers() {
+    public ResponseEntity<List<UserResponse>> getAllUsers() {
         log.info("Fetching all users");
         List<User> users = userRepository.findAll();
-        return ResponseEntity.ok(users);
+        List<UserResponse> responses = users.stream()
+                .map(UserResponse::new)
+                .toList();
+        return ResponseEntity.ok(responses);
     }
 
     /**
@@ -49,13 +52,13 @@ public class UserController {
      */
     @GetMapping("/{id}")
     @PreAuthorize("hasRole('ADMIN')")
-    public ResponseEntity<User> getUserById(@PathVariable Long id) {
+    public ResponseEntity<UserResponse> getUserById(@PathVariable Long id) {
         log.info("Fetching user by ID: {}", id);
-        
+
         User user = userRepository.findById(id)
                 .orElseThrow(() -> new RuntimeException("User not found with ID: " + id));
-        
-        return ResponseEntity.ok(user);
+
+        return ResponseEntity.ok(new UserResponse(user));
     }
 
     /**

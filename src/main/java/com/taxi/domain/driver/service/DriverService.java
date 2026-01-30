@@ -166,6 +166,16 @@ public class DriverService {
                 .joinedDate(request.getJoinedDate())
                 .notes(request.getNotes())
                 .isOwner(Boolean.TRUE.equals(request.getIsOwner()))
+                .sin(request.getSin())
+                .gstNumber(request.getGstNumber())
+                .depositAmount(request.getDepositAmount())
+                .emergencyContactName(request.getEmergencyContactName())
+                .emergencyContactPhone(request.getEmergencyContactPhone())
+                .emergencyContactRelationship(request.getEmergencyContactRelationship())
+                .securityDepositDate(request.getSecurityDepositDate())
+                .refundDate(request.getRefundDate())
+                .picDate(request.getPicDate())
+                .ibcRecordsDate(request.getIbcRecordsDate())
                 .status(Driver.DriverStatus.ACTIVE)
                 .build();
 
@@ -231,6 +241,36 @@ public class DriverService {
         }
         if (request.getIsOwner() != null) {
             driver.setIsOwner(request.getIsOwner());
+        }
+        if (request.getSin() != null) {
+            driver.setSin(request.getSin());
+        }
+        if (request.getGstNumber() != null) {
+            driver.setGstNumber(request.getGstNumber());
+        }
+        if (request.getDepositAmount() != null) {
+            driver.setDepositAmount(request.getDepositAmount());
+        }
+        if (request.getEmergencyContactName() != null) {
+            driver.setEmergencyContactName(request.getEmergencyContactName());
+        }
+        if (request.getEmergencyContactPhone() != null) {
+            driver.setEmergencyContactPhone(request.getEmergencyContactPhone());
+        }
+        if (request.getEmergencyContactRelationship() != null) {
+            driver.setEmergencyContactRelationship(request.getEmergencyContactRelationship());
+        }
+        if (request.getSecurityDepositDate() != null) {
+            driver.setSecurityDepositDate(request.getSecurityDepositDate());
+        }
+        if (request.getRefundDate() != null) {
+            driver.setRefundDate(request.getRefundDate());
+        }
+        if (request.getPicDate() != null) {
+            driver.setPicDate(request.getPicDate());
+        }
+        if (request.getIbcRecordsDate() != null) {
+            driver.setIbcRecordsDate(request.getIbcRecordsDate());
         }
         if (request.getStatus() != null) {
             try {
