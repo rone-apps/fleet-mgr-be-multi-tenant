@@ -1,13 +1,16 @@
 package com.taxi.domain.account.service;
 
 import com.taxi.domain.account.model.AccountCustomer;
+import com.taxi.domain.account.model.AccountCustomerWithBalance;
 import com.taxi.domain.account.repository.AccountChargeRepository;
 import com.taxi.domain.account.repository.AccountCustomerRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.math.BigDecimal;
 import java.util.List;
+import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
@@ -140,6 +143,43 @@ public class AccountCustomerService {
     // Get customers with outstanding balance
     public List<AccountCustomer> getCustomersWithOutstandingBalance() {
         return accountCustomerRepository.findCustomersWithOutstandingBalance();
+    }
+
+    // Get customers with outstanding balance and amount
+    public List<AccountCustomerWithBalance> getCustomersWithOutstandingBalanceAndAmount() {
+        List<AccountCustomer> customers = accountCustomerRepository.findAllCustomersWithOutstandingBalanceJoined();
+
+        return customers.stream()
+            .map(customer -> {
+                // Get total outstanding amount using existing query method
+                BigDecimal totalOutstanding = accountChargeRepository.calculateUnpaidTotal(customer.getId());
+
+                if (totalOutstanding != null && totalOutstanding.compareTo(BigDecimal.ZERO) > 0) {
+                    return new AccountCustomerWithBalance(
+                        customer.getId(),
+                        customer.getAccountId(),
+                        customer.getCompanyName(),
+                        customer.getContactPerson(),
+                        customer.getStreetAddress(),
+                        customer.getCity(),
+                        customer.getProvince(),
+                        customer.getPostalCode(),
+                        customer.getCountry(),
+                        customer.getPhoneNumber(),
+                        customer.getEmail(),
+                        customer.getBillingPeriod(),
+                        customer.getCreditLimit(),
+                        customer.getNotes(),
+                        customer.getAccountType() != null ? customer.getAccountType().toString() : null,
+                        customer.isActive(),
+                        totalOutstanding
+                    );
+                }
+
+                return null;
+            })
+            .filter(c -> c != null)
+            .collect(Collectors.toList());
     }
 
     // Get customers by billing period

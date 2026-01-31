@@ -1,6 +1,7 @@
 package com.taxi.web.controller;
 
 import com.taxi.domain.account.model.AccountCustomer;
+import com.taxi.domain.account.model.AccountCustomerWithBalance;
 import com.taxi.domain.account.service.AccountCustomerService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -108,6 +109,13 @@ public class AccountCustomerController {
     @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER', 'ACCOUNTANT')")
     public ResponseEntity<List<AccountCustomer>> getCustomersWithOutstandingBalance() {
         List<AccountCustomer> customers = accountCustomerService.getCustomersWithOutstandingBalance();
+        return ResponseEntity.ok(customers);
+    }
+
+    @GetMapping("/with-outstanding-balance/amount")
+    @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER', 'ACCOUNTANT')")
+    public ResponseEntity<List<AccountCustomerWithBalance>> getCustomersWithOutstandingBalanceAndAmount() {
+        List<AccountCustomerWithBalance> customers = accountCustomerService.getCustomersWithOutstandingBalanceAndAmount();
         return ResponseEntity.ok(customers);
     }
 

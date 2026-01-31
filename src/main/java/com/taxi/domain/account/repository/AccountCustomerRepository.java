@@ -54,6 +54,12 @@ public interface AccountCustomerRepository extends JpaRepository<AccountCustomer
            "WHERE ac.paid = false")
     List<AccountCustomer> findCustomersWithOutstandingBalance();
 
+    // Find customers with outstanding balance and calculate total unpaid amount per customer
+    @Query("SELECT c FROM AccountCustomer c " +
+           "WHERE c.id IN (SELECT DISTINCT ac.accountCustomer.id FROM AccountCharge ac " +
+           "WHERE ac.paid = false GROUP BY ac.accountCustomer.id)")
+    List<AccountCustomer> findAllCustomersWithOutstandingBalanceJoined();
+
     // Find by billing period
     List<AccountCustomer> findByBillingPeriod(String billingPeriod);
 
