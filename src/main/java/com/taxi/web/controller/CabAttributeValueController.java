@@ -149,7 +149,7 @@ public class CabAttributeValueController {
     }
 
     @DeleteMapping("/{attributeValueId}")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN')")
     public ResponseEntity<?> deleteAttribute(
             @PathVariable Long cabId,
             @PathVariable Long attributeValueId) {

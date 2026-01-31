@@ -40,7 +40,7 @@ public class TaxiCallerController {
      * Test endpoint to verify TaxiCaller integration
      */
     @GetMapping("/test")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN')")
     public ResponseEntity<Map<String, Object>> testConnection() {
         Map<String, Object> response = new HashMap<>();
         try {
@@ -64,7 +64,7 @@ public class TaxiCallerController {
      * GET /api/taxicaller/reports/account-jobs?startDate=2025-01-01&endDate=2025-01-31
      */
     @GetMapping("/reports/account-jobs")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN')")
     public ResponseEntity<Map<String, Object>> getAccountJobReports(
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate startDate,
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate endDate) {
@@ -112,7 +112,7 @@ public class TaxiCallerController {
      * GET /api/taxicaller/reports/load-account-jobs?startDate=2025-01-01&endDate=2025-01-31
      */
     @GetMapping("/reports/load-account-jobs")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN')")
     public ResponseEntity<Map<String, Object>> loadAccountJobReports(
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate startDate,
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate endDate) {
@@ -153,7 +153,7 @@ public class TaxiCallerController {
      * GET /api/taxicaller/reports/account-jobs?startDate=2025-01-01&endDate=2025-01-31
      */
     @GetMapping("/reports/importaccount-jobs")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN')")
     public ResponseEntity<Map<String, Object>> iimportAccountJobReports(
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate startDate,
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate endDate) {
@@ -196,7 +196,7 @@ public class TaxiCallerController {
      * GET /api/taxicaller/reports/driver-logons?startDate=2025-02-01&endDate=2025-02-28
      */
     @GetMapping("/reports/driver-logons")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN')")
     public ResponseEntity<Map<String, Object>> getDriverLogOnOffReports(
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate startDate,
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate endDate) {
@@ -240,7 +240,7 @@ public class TaxiCallerController {
      * GET /api/taxicaller/reports/driver-jobs?startDate=2025-02-01&endDate=2025-02-28
      */
     @GetMapping("/reports/driver-jobs")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN')")
     public ResponseEntity<Map<String, Object>> getDriverJobReports(
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate startDate,
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate endDate) {
@@ -283,7 +283,7 @@ public class TaxiCallerController {
      * GET /api/taxicaller/users
      */
     @GetMapping("/users")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN')")
     public ResponseEntity<Map<String, Object>> getUsers() {
         Map<String, Object> response = new HashMap<>();
         try {
@@ -316,7 +316,7 @@ public class TaxiCallerController {
      * GET /api/taxicaller/vehicles
      */
     @GetMapping("/vehicles")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN')")
     public ResponseEntity<Map<String, Object>> getVehicles() {
         Map<String, Object> response = new HashMap<>();
         try {
@@ -349,7 +349,7 @@ public class TaxiCallerController {
      * GET /api/taxicaller/reports/templates
      */
     @GetMapping("/reports/templates")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN')")
     public ResponseEntity<Map<String, Object>> getReportTemplates() {
         Map<String, Object> response = new HashMap<>();
         try {
@@ -382,7 +382,7 @@ public class TaxiCallerController {
      * GET /api/taxicaller/summary?startDate=2025-01-01&endDate=2025-01-31
      */
     @GetMapping("/summary")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN')")
     public ResponseEntity<Map<String, Object>> getSummary(
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate startDate,
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate endDate) {
@@ -424,7 +424,7 @@ public class TaxiCallerController {
      * 4. Avoids duplicates
      */
     @GetMapping("/reports/import-driver-shifts")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN')")
     public ResponseEntity<Map<String, Object>> importDriverShifts(
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate startDate,
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate endDate) {
@@ -493,7 +493,7 @@ public class TaxiCallerController {
      * This endpoint fetches and displays the data without saving to database
      */
     @GetMapping("/reports/preview-driver-shifts")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN')")
     public ResponseEntity<Map<String, Object>> previewDriverShifts(
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate startDate,
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate endDate) {

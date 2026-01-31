@@ -248,7 +248,7 @@ public class CabController {
      * PUT /api/cabs/{id}/retire
      */
     @PutMapping("/{id}/retire")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN')")
     public ResponseEntity<?> retire(@PathVariable Long id) {
         log.info("PUT /api/cabs/{}/retire - Retire cab", id);
         try {
@@ -284,7 +284,7 @@ public class CabController {
      * DELETE /api/cabs/{id}
      */
     @DeleteMapping("/{id}")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN')")
     public ResponseEntity<?> deleteCab(@PathVariable Long id) {
         log.info("DELETE /api/cabs/{} - Delete cab", id);
         try {

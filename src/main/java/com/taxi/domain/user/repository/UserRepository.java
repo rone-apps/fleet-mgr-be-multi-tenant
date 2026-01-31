@@ -73,6 +73,11 @@ public interface UserRepository extends JpaRepository<User, Long> {
     @Query("SELECT u FROM User u WHERE u.driver IS NULL")
     List<User> findAllOfficeStaff();
 
+    /**
+     * Find all users excluding super admins (for regular admin view)
+     */
+    @Query("SELECT u FROM User u WHERE u.role != com.taxi.domain.user.model.User$UserRole.SUPER_ADMIN")
+    List<User> findAllExcludingSuperAdmins();
 
     // ✅ NEW METHOD: Check if driver is already linked to a user
     boolean existsByDriver(Driver driver);

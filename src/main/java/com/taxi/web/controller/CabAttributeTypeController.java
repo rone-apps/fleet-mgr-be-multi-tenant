@@ -31,7 +31,7 @@ public class CabAttributeTypeController {
     private final CabAttributeTypeService attributeTypeService;
 
     @PostMapping
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN')")
     public ResponseEntity<?> createAttributeType(
             @Valid @RequestBody CreateCabAttributeTypeRequest request) {
         log.info("POST /api/cab-attribute-types - Create attribute type: {}",
@@ -54,7 +54,7 @@ public class CabAttributeTypeController {
     }
 
     @PutMapping("/{id}")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN')")
     public ResponseEntity<?> updateAttributeType(
             @PathVariable Long id,
             @Valid @RequestBody UpdateCabAttributeTypeRequest request) {
@@ -77,7 +77,7 @@ public class CabAttributeTypeController {
     }
 
     @DeleteMapping("/{id}")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN')")
     public ResponseEntity<?> deleteAttributeType(@PathVariable Long id) {
         log.info("DELETE /api/cab-attribute-types/{} - Delete attribute type", id);
         try {
@@ -94,7 +94,7 @@ public class CabAttributeTypeController {
     }
 
     @PutMapping("/{id}/activate")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN')")
     public ResponseEntity<?> activateAttributeType(@PathVariable Long id) {
         log.info("PUT /api/cab-attribute-types/{}/activate", id);
         try {
@@ -111,7 +111,7 @@ public class CabAttributeTypeController {
     }
 
     @PutMapping("/{id}/deactivate")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN')")
     public ResponseEntity<?> deactivateAttributeType(@PathVariable Long id) {
         log.info("PUT /api/cab-attribute-types/{}/deactivate", id);
         try {

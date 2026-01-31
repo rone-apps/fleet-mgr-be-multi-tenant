@@ -12,8 +12,11 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.Authentication;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import jakarta.validation.Valid;
@@ -107,20 +110,9 @@ public class AuthController {
     public ResponseEntity<?> authenticateUser(@Valid @RequestBody LoginRequest loginRequest) {
         log.info("Login attempt for username: {}", loginRequest.getUsername());
 
-          // TEMP DEBUG
-    System.out.println(">>> Login request - username: " + loginRequest.getUsername());
-    System.out.println(">>> Login request - password length: " + loginRequest.getPassword().length());
-    System.out.println(">>> Login request - password: [" + loginRequest.getPassword() + "]");
-
-     // Get user details
+        // Get user details
         User user = userDetailsService.loadUserEntityByUsername(loginRequest.getUsername());
 
-         org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder testEncoder = 
-    new org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder();
-    boolean testMatch = testEncoder.matches(loginRequest.getPassword(), user.getPassword());
-System.out.println(">>> BCrypt test match for '" + loginRequest.getPassword() + "': " + testMatch);
-
-   System.out.println("Authendication attempt for username: " + loginRequest.getUsername());
         // Authenticate user
         Authentication authentication = authenticationManager.authenticate(
                 new UsernamePasswordAuthenticationToken(
@@ -130,9 +122,6 @@ System.out.println(">>> BCrypt test match for '" + loginRequest.getPassword() + 
         );
 
         SecurityContextHolder.getContext().setAuthentication(authentication);
-
-       
-    
 
         // Generate JWT token with role
         String jwt = jwtUtils.generateTokenWithUserIdAndRole(user.getUsername(), user.getId(), user.getRole().toString());
@@ -155,9 +144,17 @@ System.out.println(">>> BCrypt test match for '" + loginRequest.getPassword() + 
      * Get current user info
      */
     @GetMapping("/me")
-    public ResponseEntity<?> getCurrentUser(Authentication authentication) {
-        String username = authentication.getName();
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<?> getCurrentUser(@AuthenticationPrincipal UserDetails userDetails) {
+        if (userDetails == null) {
+            log.warn("getCurrentUser called without authentication");
+            return ResponseEntity.status(401).body(new MessageResponse("Unauthorized: No valid authentication"));
+        }
+
+        String username = userDetails.getUsername();
         User user = userDetailsService.loadUserEntityByUsername(username);
+
+        log.info("Retrieved current user: {}, Role: {}", username, user.getRole());
 
         return ResponseEntity.ok(new UserInfoResponse(
                 user.getId(),

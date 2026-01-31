@@ -9,6 +9,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.web.bind.annotation.*;
 
@@ -34,13 +36,23 @@ public class UserController {
     private final PasswordEncoder passwordEncoder;
 
     /**
-     * Get all users (Admin only)
+     * Get all users (Admin and Super Admin only)
      */
     @GetMapping
-    @PreAuthorize("hasRole('ADMIN')")
-    public ResponseEntity<List<UserResponse>> getAllUsers() {
+    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN')")
+    public ResponseEntity<List<UserResponse>> getAllUsers(@AuthenticationPrincipal UserDetails userDetails) {
         log.info("Fetching all users");
-        List<User> users = userRepository.findAll();
+
+        User currentUser = userRepository.findByUsername(userDetails.getUsername())
+                .orElseThrow(() -> new RuntimeException("Current user not found"));
+
+        List<User> users;
+        if (currentUser.isSuperAdmin()) {
+            users = userRepository.findAll(); // Super admins see all
+        } else {
+            users = userRepository.findAllExcludingSuperAdmins(); // Admins don't see super admins
+        }
+
         List<UserResponse> responses = users.stream()
                 .map(UserResponse::new)
                 .toList();
@@ -48,17 +60,26 @@ public class UserController {
     }
 
     /**
-     * Get user by ID (Admin only)
+     * Get user by ID (Admin and Super Admin only)
      */
     @GetMapping("/{id}")
-    @PreAuthorize("hasRole('ADMIN')")
-    public ResponseEntity<UserResponse> getUserById(@PathVariable Long id) {
+    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN')")
+    public ResponseEntity<?> getUserById(@PathVariable Long id, @AuthenticationPrincipal UserDetails userDetails) {
         log.info("Fetching user by ID: {}", id);
 
-        User user = userRepository.findById(id)
+        User targetUser = userRepository.findById(id)
                 .orElseThrow(() -> new RuntimeException("User not found with ID: " + id));
 
-        return ResponseEntity.ok(new UserResponse(user));
+        User currentUser = userRepository.findByUsername(userDetails.getUsername())
+                .orElseThrow(() -> new RuntimeException("Current user not found"));
+
+        if (!currentUser.canSeeUser(targetUser)) {
+            log.warn("User {} attempted to access restricted user {}", currentUser.getUsername(), id);
+            return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                    .body(new ErrorResponse("Access denied"));
+        }
+
+        return ResponseEntity.ok(new UserResponse(targetUser));
     }
 
     /**
@@ -66,9 +87,21 @@ public class UserController {
      * POST /api/users
      */
     @PostMapping
-    @PreAuthorize("hasRole('ADMIN')")
-    public ResponseEntity<?> createUser(@Valid @RequestBody CreateUserRequest request) {
+    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN')")
+    public ResponseEntity<?> createUser(@Valid @RequestBody CreateUserRequest request,
+                                       @AuthenticationPrincipal UserDetails userDetails) {
         log.info("Creating new user: {}", request.getUsername());
+
+        // Get current user
+        User currentUser = userRepository.findByUsername(userDetails.getUsername())
+                .orElseThrow(() -> new RuntimeException("Current user not found"));
+
+        // Only SUPER_ADMIN can create SUPER_ADMIN users
+        if (request.getRole() == User.UserRole.SUPER_ADMIN && !currentUser.isSuperAdmin()) {
+            log.warn("Regular admin {} attempted to create super admin user", currentUser.getUsername());
+            return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                    .body(new ErrorResponse("Only super administrators can create super admin accounts"));
+        }
 
         // Check if username exists
         if (userRepository.existsByUsername(request.getUsername())) {
@@ -100,7 +133,7 @@ public class UserController {
                         .body(new ErrorResponse("This driver is already linked to another user account"));
             }
 
-            log.info("Linking user to existing driver: {} ({})", 
+            log.info("Linking user to existing driver: {} ({})",
                     driver.getDriverNumber(), driver.getFirstName() + " " + driver.getLastName());
         }
 
@@ -128,40 +161,58 @@ public class UserController {
      * PUT /api/users/{id}
      */
     @PutMapping("/{id}")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN')")
     public ResponseEntity<?> updateUser(
             @PathVariable Long id,
-            @Valid @RequestBody UpdateUserRequest request) {
-        
+            @Valid @RequestBody UpdateUserRequest request,
+            @AuthenticationPrincipal UserDetails userDetails) {
+
         log.info("Updating user ID: {}", id);
 
-        User user = userRepository.findById(id)
+        User targetUser = userRepository.findById(id)
                 .orElseThrow(() -> new RuntimeException("User not found with ID: " + id));
 
+        User currentUser = userRepository.findByUsername(userDetails.getUsername())
+                .orElseThrow(() -> new RuntimeException("Current user not found"));
+
+        // Prevent regular admins from modifying super admins
+        if (targetUser.isSuperAdmin() && !currentUser.isSuperAdmin()) {
+            log.warn("Regular admin {} attempted to modify super admin {}",
+                    currentUser.getUsername(), targetUser.getUsername());
+            return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                    .body(new ErrorResponse("Cannot modify super administrator accounts"));
+        }
+
+        // Prevent promoting users to SUPER_ADMIN unless current user is SUPER_ADMIN
+        if (request.getRole() == User.UserRole.SUPER_ADMIN && !currentUser.isSuperAdmin()) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                    .body(new ErrorResponse("Only super administrators can assign super admin role"));
+        }
+
         // Update email if changed and not duplicate
-        if (request.getEmail() != null && !request.getEmail().equals(user.getEmail())) {
+        if (request.getEmail() != null && !request.getEmail().equals(targetUser.getEmail())) {
             if (userRepository.existsByEmail(request.getEmail())) {
                 return ResponseEntity.badRequest()
                         .body(new ErrorResponse("Email is already in use"));
             }
-            user.setEmail(request.getEmail());
+            targetUser.setEmail(request.getEmail());
         }
 
         // Update other fields
-        user.setFirstName(request.getFirstName());
-        user.setLastName(request.getLastName());
-        user.setPhone(request.getPhone());
-        user.setRole(request.getRole());
+        targetUser.setFirstName(request.getFirstName());
+        targetUser.setLastName(request.getLastName());
+        targetUser.setPhone(request.getPhone());
+        targetUser.setRole(request.getRole());
 
         // Update password if provided
         if (request.getPassword() != null && !request.getPassword().isEmpty()) {
-            user.setPassword(passwordEncoder.encode(request.getPassword()));
+            targetUser.setPassword(passwordEncoder.encode(request.getPassword()));
         }
 
-        user = userRepository.save(user);
-        log.info("User updated successfully: {}", user.getUsername());
+        targetUser = userRepository.save(targetUser);
+        log.info("User updated successfully: {}", targetUser.getUsername());
 
-        return ResponseEntity.ok(new UserResponse(user));
+        return ResponseEntity.ok(new UserResponse(targetUser));
     }
 
     /**
@@ -169,19 +220,31 @@ public class UserController {
      * PUT /api/users/{id}/toggle-active
      */
     @PutMapping("/{id}/toggle-active")
-    @PreAuthorize("hasRole('ADMIN')")
-    public ResponseEntity<?> toggleActive(@PathVariable Long id) {
+    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN')")
+    public ResponseEntity<?> toggleActive(@PathVariable Long id,
+                                         @AuthenticationPrincipal UserDetails userDetails) {
         log.info("Toggling active status for user ID: {}", id);
 
-        User user = userRepository.findById(id)
+        User targetUser = userRepository.findById(id)
                 .orElseThrow(() -> new RuntimeException("User not found with ID: " + id));
 
-        user.setActive(!user.isActive());
-        user = userRepository.save(user);
+        User currentUser = userRepository.findByUsername(userDetails.getUsername())
+                .orElseThrow(() -> new RuntimeException("Current user not found"));
 
-        log.info("User {} status changed to: {}", user.getUsername(), user.isActive() ? "ACTIVE" : "INACTIVE");
+        // Prevent regular admins from toggling super admin status
+        if (targetUser.isSuperAdmin() && !currentUser.isSuperAdmin()) {
+            log.warn("Regular admin {} attempted to toggle super admin {}",
+                    currentUser.getUsername(), targetUser.getUsername());
+            return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                    .body(new ErrorResponse("Cannot modify super administrator accounts"));
+        }
 
-        return ResponseEntity.ok(new UserResponse(user));
+        targetUser.setActive(!targetUser.isActive());
+        targetUser = userRepository.save(targetUser);
+
+        log.info("User {} status changed to: {}", targetUser.getUsername(), targetUser.isActive() ? "ACTIVE" : "INACTIVE");
+
+        return ResponseEntity.ok(new UserResponse(targetUser));
     }
 
     /**
@@ -189,15 +252,27 @@ public class UserController {
      * PUT /api/users/{userId}/link-driver/{driverId}
      */
     @PutMapping("/{userId}/link-driver/{driverId}")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN')")
     public ResponseEntity<?> linkDriverToUser(
             @PathVariable Long userId,
-            @PathVariable Long driverId) {
-        
+            @PathVariable Long driverId,
+            @AuthenticationPrincipal UserDetails userDetails) {
+
         log.info("Linking driver {} to user {}", driverId, userId);
 
-        User user = userRepository.findById(userId)
+        User targetUser = userRepository.findById(userId)
                 .orElseThrow(() -> new RuntimeException("User not found with ID: " + userId));
+
+        User currentUser = userRepository.findByUsername(userDetails.getUsername())
+                .orElseThrow(() -> new RuntimeException("Current user not found"));
+
+        // Prevent regular admins from modifying super admins
+        if (targetUser.isSuperAdmin() && !currentUser.isSuperAdmin()) {
+            log.warn("Regular admin {} attempted to modify super admin {}",
+                    currentUser.getUsername(), targetUser.getUsername());
+            return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                    .body(new ErrorResponse("Cannot modify super administrator accounts"));
+        }
 
         Driver driver = driverRepository.findById(driverId)
                 .orElseThrow(() -> new RuntimeException("Driver not found with ID: " + driverId));
@@ -208,12 +283,12 @@ public class UserController {
                     .body(new ErrorResponse("This driver is already linked to another user account"));
         }
 
-        user.setDriver(driver);
-        userRepository.save(user);
+        targetUser.setDriver(driver);
+        userRepository.save(targetUser);
 
-        log.info("Successfully linked driver {} to user {}", driver.getDriverNumber(), user.getUsername());
+        log.info("Successfully linked driver {} to user {}", driver.getDriverNumber(), targetUser.getUsername());
 
-        return ResponseEntity.ok(new UserResponse(user));
+        return ResponseEntity.ok(new UserResponse(targetUser));
     }
 
     // ===== DTOs =====

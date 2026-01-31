@@ -32,7 +32,7 @@ public class TaxiCallerSchedulerController {
      * This allows you to test the import without waiting for the scheduled time
      */
     @PostMapping("/trigger-import")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN')")
     public ResponseEntity<Map<String, Object>> triggerManualImport(
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate startDate,
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate endDate) {
@@ -104,7 +104,7 @@ public class TaxiCallerSchedulerController {
      * Convenience endpoint to import yesterday's data
      */
     @PostMapping("/trigger-yesterday")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN')")
     public ResponseEntity<Map<String, Object>> triggerYesterdayImport() {
         LocalDate yesterday = LocalDate.now().minusDays(1);
         return triggerManualImport(yesterday, yesterday);
@@ -115,7 +115,7 @@ public class TaxiCallerSchedulerController {
      * GET /api/taxicaller/scheduler/status
      */
     @GetMapping("/status")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN')")
     public ResponseEntity<Map<String, Object>> getSchedulerStatus() {
         Map<String, Object> response = new HashMap<>();
         

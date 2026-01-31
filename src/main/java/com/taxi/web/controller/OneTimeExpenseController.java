@@ -188,7 +188,7 @@ public class OneTimeExpenseController {
     }
 
     @DeleteMapping("/{id}")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN')")
     public ResponseEntity<Void> delete(@PathVariable Long id) {
         try {
             oneTimeExpenseService.delete(id);

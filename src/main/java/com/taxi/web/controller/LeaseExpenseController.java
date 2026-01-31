@@ -216,7 +216,7 @@ public class LeaseExpenseController {
      * Delete lease expense
      */
     @DeleteMapping("/{id}")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN')")
     public ResponseEntity<Void> deleteLeaseExpense(@PathVariable Long id) {
         try {
             leaseExpenseService.delete(id);

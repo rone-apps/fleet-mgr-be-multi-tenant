@@ -120,7 +120,7 @@ public class AccountCustomerController {
 
     // Bulk activate customers by account_id
     @PutMapping("/account/{accountId}/activate-all")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN')")
     public ResponseEntity<List<AccountCustomer>> activateCustomersByAccountId(@PathVariable String accountId) {
         List<AccountCustomer> customers = accountCustomerService.activateCustomersByAccountId(accountId);
         return ResponseEntity.ok(customers);
@@ -128,7 +128,7 @@ public class AccountCustomerController {
 
     // Bulk deactivate customers by account_id
     @PutMapping("/account/{accountId}/deactivate-all")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN')")
     public ResponseEntity<List<AccountCustomer>> deactivateCustomersByAccountId(@PathVariable String accountId) {
         List<AccountCustomer> customers = accountCustomerService.deactivateCustomersByAccountId(accountId);
         return ResponseEntity.ok(customers);

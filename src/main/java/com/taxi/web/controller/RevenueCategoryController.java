@@ -222,7 +222,7 @@ public class RevenueCategoryController {
      * DELETE /api/revenue-categories/{id}
      */
     @DeleteMapping("/{id}")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN')")
     public ResponseEntity<Void> delete(@PathVariable Long id) {
         try {
             revenueCategoryService.delete(id);

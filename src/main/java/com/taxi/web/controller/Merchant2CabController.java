@@ -72,7 +72,7 @@ public class Merchant2CabController {
     }
     
     @DeleteMapping("/{id}")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN')")
     public ResponseEntity<Void> deleteMapping(@PathVariable Long id) {
         merchant2CabService.deleteMapping(id);
         return ResponseEntity.noContent().build();

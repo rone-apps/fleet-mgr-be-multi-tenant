@@ -118,7 +118,7 @@ public class LeasePlanController {
      * DELETE is NOT ALLOWED - returns error with explanation
      */
     @DeleteMapping("/{id}")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN')")
     public ResponseEntity<?> deletePlan(@PathVariable Long id) {
         return ResponseEntity.status(HttpStatus.METHOD_NOT_ALLOWED)
             .body(Map.of(
@@ -249,7 +249,7 @@ public class LeasePlanController {
      * UPDATE rate - NOT ALLOWED - returns error with explanation
      */
     @PutMapping("/rates/{rateId}")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN')")
     public ResponseEntity<?> updateRate(
             @PathVariable Long rateId,
             @RequestBody LeaseRate updates) {
@@ -265,7 +265,7 @@ public class LeasePlanController {
      * DELETE rate - NOT ALLOWED - returns error with explanation
      */
     @DeleteMapping("/rate/{rateId}")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN')")
     public ResponseEntity<?> deleteRate(@PathVariable Long rateId) {
         return ResponseEntity.status(HttpStatus.METHOD_NOT_ALLOWED)
             .body(Map.of(
@@ -325,7 +325,7 @@ public class LeasePlanController {
      * Normally runs on schedule, but can be triggered manually
      */
     @PostMapping("/auto-deactivate")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN')")
     public ResponseEntity<Map<String, String>> autoDeactivateExpiredPlans() {
         try {
             leasePlanService.autoDeactivateExpiredPlans();

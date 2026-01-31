@@ -24,7 +24,7 @@ public class TenantConfigController {
      * Get current tenant's configuration
      */
     @GetMapping
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN')")
     public ResponseEntity<Map<String, Object>> getCurrentConfig() {
         Map<String, Object> response = new HashMap<>();
         String tenantId = TenantContext.getCurrentTenant();
@@ -53,7 +53,7 @@ public class TenantConfigController {
      * Save or update TaxiCaller configuration for a tenant
      */
     @PostMapping
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN')")
     public ResponseEntity<Map<String, Object>> saveConfig(@RequestBody TenantConfigRequest request) {
         Map<String, Object> response = new HashMap<>();
         
@@ -95,7 +95,7 @@ public class TenantConfigController {
      * Get configuration for a specific tenant (super admin only)
      */
     @GetMapping("/{tenantId}")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN')")
     public ResponseEntity<Map<String, Object>> getConfigByTenant(@PathVariable String tenantId) {
         Map<String, Object> response = new HashMap<>();
         

@@ -92,6 +92,7 @@ public class User {
      * User Roles for authorization
      */
     public enum UserRole {
+        SUPER_ADMIN("Super Administrator", "Full system access with user management privileges"),
         ADMIN("Administrator", "Full system access"),
         DRIVER("Driver", "Can operate shifts and view own data"),
         ACCOUNTANT("Accountant", "Manages expenses and financials"),
@@ -117,10 +118,37 @@ public class User {
     }
 
     /**
+     * Business logic: Check if user is super admin
+     */
+    public boolean isSuperAdmin() {
+        return role == UserRole.SUPER_ADMIN;
+    }
+
+    /**
+     * Business logic: Check if user has admin privileges (ADMIN or SUPER_ADMIN)
+     */
+    public boolean hasAdminPrivileges() {
+        return role == UserRole.ADMIN || role == UserRole.SUPER_ADMIN;
+    }
+
+    /**
      * Business logic: Check if user is admin
      */
     public boolean isAdmin() {
         return role == UserRole.ADMIN;
+    }
+
+    /**
+     * Business logic: Check if current user can see target user based on role hierarchy
+     */
+    public boolean canSeeUser(User targetUser) {
+        if (this.isSuperAdmin()) {
+            return true; // Super admins see everyone
+        }
+        if (this.isAdmin()) {
+            return !targetUser.isSuperAdmin(); // Admins cannot see super admins
+        }
+        return this.id.equals(targetUser.getId()); // Others see only themselves
     }
 
     /**

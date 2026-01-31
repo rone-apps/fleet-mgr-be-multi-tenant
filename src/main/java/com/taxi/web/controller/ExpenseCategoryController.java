@@ -53,7 +53,7 @@ public class ExpenseCategoryController {
     }
 
     @DeleteMapping("/{id}")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN')")
     public ResponseEntity<Void> deleteCategory(@PathVariable Long id) {
         try {
             expenseCategoryService.deleteCategory(id);

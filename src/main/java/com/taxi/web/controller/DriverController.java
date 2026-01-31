@@ -34,7 +34,7 @@ public class DriverController {
      * GET /api/drivers
      */
     @GetMapping
-    @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER', 'DISPATCHER')")
+    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN', 'MANAGER', 'DISPATCHER')")
     public ResponseEntity<List<DriverDTO>> getAllDrivers() {
         log.info("GET /api/drivers - Get all drivers");
         List<DriverDTO> drivers = driverService.getAllDrivers();
@@ -46,7 +46,7 @@ public class DriverController {
      * GET /api/drivers/active
      */
     @GetMapping("/active")
-    @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER', 'DISPATCHER')")
+    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN', 'MANAGER', 'DISPATCHER')")
     public ResponseEntity<List<DriverDTO>> getActiveDrivers() {
         log.info("GET /api/drivers/active - Get active drivers");
         List<DriverDTO> drivers = driverService.getActiveDrivers();
@@ -58,7 +58,7 @@ public class DriverController {
      * GET /api/drivers/status/{status}
      */
     @GetMapping("/status/{status}")
-    @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER')")
+    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN', 'MANAGER')")
     public ResponseEntity<List<DriverDTO>> getDriversByStatus(@PathVariable String status) {
         log.info("GET /api/drivers/status/{} - Get drivers by status", status);
         try {
@@ -76,7 +76,7 @@ public class DriverController {
      * GET /api/drivers/search?name={name}
      */
     @GetMapping("/search")
-    @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER', 'DISPATCHER')")
+    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN', 'MANAGER', 'DISPATCHER')")
     public ResponseEntity<List<DriverDTO>> searchDrivers(@RequestParam String name) {
         log.info("GET /api/drivers/search?name={} - Search drivers", name);
         List<DriverDTO> drivers = driverService.searchDriversByName(name);
@@ -177,7 +177,7 @@ public class DriverController {
      * DELETE /api/drivers/{id}
      */
     @DeleteMapping("/{id}")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN')")
     public ResponseEntity<?> deleteDriver(@PathVariable Long id) {
         log.info("DELETE /api/drivers/{} - Delete driver", id);
         try {
