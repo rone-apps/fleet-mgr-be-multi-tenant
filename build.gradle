@@ -24,20 +24,27 @@ dependencies {
     implementation 'org.springframework.boot:spring-boot-starter-validation'
     implementation 'org.springframework.boot:spring-boot-starter-cache'
     implementation 'com.github.ben-manes.caffeine:caffeine:3.1.8'
-    
+
     // Security & JWT (keeping from original)
     implementation 'org.springframework.boot:spring-boot-starter-security'
     implementation 'io.jsonwebtoken:jjwt-api:0.11.5'
     runtimeOnly 'io.jsonwebtoken:jjwt-impl:0.11.5'
     runtimeOnly 'io.jsonwebtoken:jjwt-jackson:0.11.5'
-    
+
     // Database - Updated for MySQL 9.x compatibility
     runtimeOnly 'com.mysql:mysql-connector-j:9.1.0'
-    
+
     // JSON parsing
     implementation 'org.json:json:20240303'
 
     implementation 'com.opencsv:opencsv:5.9'
+
+    // Email Support
+    implementation 'org.springframework.boot:spring-boot-starter-mail'
+
+    // PDF Generation (iText)
+    implementation 'com.itextpdf:itextpdf:5.5.13.3'
+    implementation 'com.itextpdf:html2pdf:5.0.4'
     
     // Lombok
     compileOnly 'org.projectlombok:lombok:1.18.30'

@@ -4,6 +4,7 @@ import com.taxi.domain.account.dto.InvoiceSummaryDTO;
 import com.taxi.domain.account.dto.InvoiceDetailsDTO;
 import com.taxi.domain.account.model.Invoice;
 import com.taxi.domain.account.service.InvoiceService;
+import com.taxi.domain.account.service.EmailService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.ResponseEntity;
@@ -21,6 +22,7 @@ import java.util.Map;
 public class InvoiceController {
 
     private final InvoiceService invoiceService;
+    private final com.taxi.domain.account.service.EmailService emailService;
 
     @GetMapping
     @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER', 'ACCOUNTANT')")
@@ -176,5 +178,77 @@ public class InvoiceController {
     public ResponseEntity<Map<String, Object>> getInvoiceSummary(@PathVariable Long customerId) {
         Map<String, Object> summary = invoiceService.getInvoiceSummary(customerId);
         return ResponseEntity.ok(summary);
+    }
+
+    /**
+     * Download invoice as PDF
+     */
+    @GetMapping("/{id}/pdf")
+    @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER', 'ACCOUNTANT', 'DISPATCHER')")
+    public ResponseEntity<byte[]> downloadInvoicePDF(@PathVariable Long id) {
+        byte[] pdfContent = invoiceService.generateInvoicePDF(id);
+
+        return ResponseEntity.ok()
+                .header("Content-Type", "application/pdf")
+                .header("Content-Disposition", "attachment; filename=invoice_" + id + ".pdf")
+                .body(pdfContent);
+    }
+
+    /**
+     * Send invoice via email to customer
+     */
+    @PostMapping("/{id}/send-email")
+    @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER', 'ACCOUNTANT')")
+    public ResponseEntity<Map<String, String>> sendInvoiceViaEmail(
+            @PathVariable Long id,
+            @RequestParam String recipientEmail) {
+        try {
+            invoiceService.sendInvoiceViaEmail(id, recipientEmail);
+            return ResponseEntity.ok(Map.of(
+                    "success", "true",
+                    "message", "Invoice sent successfully to " + recipientEmail
+            ));
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body(Map.of(
+                    "success", "false",
+                    "message", "Failed to send invoice: " + e.getMessage()
+            ));
+        }
+    }
+
+    /**
+     * Get email send history for invoice
+     */
+    @GetMapping("/{id}/email-history")
+    @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER', 'ACCOUNTANT')")
+    public ResponseEntity<Map<String, Object>> getEmailHistory(@PathVariable Long id) {
+        Invoice invoice = invoiceService.getInvoiceById(id);
+        return ResponseEntity.ok(Map.of(
+                "lastEmailSentAt", invoice.getLastEmailSentAt(),
+                "lastEmailSentTo", invoice.getLastEmailSentTo(),
+                "emailSendCount", invoice.getEmailSendCount()
+        ));
+    }
+
+    /**
+     * Test email configuration
+     * This endpoint helps debug email configuration without needing an invoice
+     */
+    @PostMapping("/test/send-email")
+    @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER', 'ACCOUNTANT')")
+    public ResponseEntity<Map<String, String>> testEmailConfiguration(
+            @RequestParam String recipientEmail) {
+        try {
+            emailService.sendTestEmail(recipientEmail);
+            return ResponseEntity.ok(Map.of(
+                    "success", "true",
+                    "message", "Test email sent successfully to " + recipientEmail + ". Check your inbox and spam folder."
+            ));
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body(Map.of(
+                    "success", "false",
+                    "message", "Failed to send test email: " + e.getMessage()
+            ));
+        }
     }
 }

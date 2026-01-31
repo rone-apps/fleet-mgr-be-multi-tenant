@@ -1,0 +1,209 @@
+services:
+  # ==========================================
+  # BONNY'S TAXI BACKEND
+  # ==========================================
+  bonnys-backend:
+    platform: linux/amd64
+    image: hpooni/fleet-manager-app-backend
+    container_name: bonnys-backend
+    environment:
+      TZ: America/Los_Angeles
+      SPRING_PROFILES_ACTIVE: dev
+
+      # ==================== Database Configuration ====================
+      MYSQL_HOST: rone2.ci2owkd8ejjp.us-west-2.rds.amazonaws.com
+      SPRING_DATASOURCE_USERNAME: hpooni1
+      SPRING_DATASOURCE_PASSWORD: "!Inder101"
+      SPRING_DATASOURCE_URL: jdbc:mysql://rone2.ci2owkd8ejjp.us-west-2.rds.amazonaws.com:3306/fareflow_bonny?useSSL=false&serverTimezone=America/Los_Angeles
+      SPRING_JPA_HIBERNATE_DDL_AUTO: update
+
+      # ==================== Email Configuration (Gmail SMTP) ====================
+      SPRING_MAIL_USERNAME: pooni.harjot@gmail.com
+      SPRING_MAIL_PASSWORD: "zkkt gwot qvyo hxjm"
+      SPRING_MAIL_SENDER_NAME: "Bonny's Taxi"
+
+      # ==================== JWT Configuration ====================
+      JWT_SECRET: 5367566B59703373367639792F423F4528482B4D6251655468576D5A71347437772A462D4A614E645267556A586E3272357538782F413F4428472B4B6250655368
+      JWT_EXPIRATION: 86400000
+
+      # ==================== Server Configuration ====================
+      SERVER_PORT: 8080
+    ports:
+      - "8081:8080"
+    restart: unless-stopped
+
+  # ==========================================
+  # MACLURES CABS BACKEND
+  # ==========================================
+  maclures-backend:
+    platform: linux/amd64
+    image: hpooni/fleet-manager-app-backend
+    container_name: maclures-backend
+    environment:
+      TZ: America/Los_Angeles
+      SPRING_PROFILES_ACTIVE: dev
+
+      # ==================== Database Configuration ====================
+      MYSQL_HOST: rone2.ci2owkd8ejjp.us-west-2.rds.amazonaws.com
+      SPRING_DATASOURCE_USERNAME: hpooni1
+      SPRING_DATASOURCE_PASSWORD: "!Inder101"
+      SPRING_DATASOURCE_URL: jdbc:mysql://rone2.ci2owkd8ejjp.us-west-2.rds.amazonaws.com:3306/fareflow?useSSL=false&serverTimezone=America/Los_Angeles
+      SPRING_JPA_HIBERNATE_DDL_AUTO: update
+
+      # ==================== Email Configuration (Gmail SMTP) ====================
+      SPRING_MAIL_USERNAME: pooni.harjot@gmail.com
+      SPRING_MAIL_PASSWORD: "zkkt gwot qvyo hxjm"
+      SPRING_MAIL_SENDER_NAME: "Maclures Cabs"
+
+      # ==================== JWT Configuration ====================
+      JWT_SECRET: 5367566B59703373367639792F423F4528482B4D6251655468576D5A71347437772A462D4A614E645267556A586E3272357538782F413F4428472B4B6250655368
+      JWT_EXPIRATION: 86400000
+
+      # ==================== Server Configuration ====================
+      SERVER_PORT: 8080
+    ports:
+      - "8082:8080"
+    restart: unless-stopped
+
+  # ==========================================
+  # FRONTEND
+  # ==========================================
+  # IMPORTANT: Environment variables set here WON'T WORK
+  # because Next.js bakes them at BUILD time, not runtime.
+  # You need to rebuild your frontend image with these variables.
+  # ==========================================
+  frontend:
+    platform: linux/amd64
+    image: hpooni/fleet-manager-app-frontend
+    container_name: fareflow-frontend
+    environment:
+      TZ: America/Los_Angeles
+    ports:
+      - "80:3000"
+    depends_on:
+      - bonnys-backend
+      - maclures-backend
+    restart: unless-stopped
+
+# ==========================================
+# WHAT'S NEW IN THIS VERSION
+# ==========================================
+#
+# EMAIL CONFIGURATION ADDED:
+# - SPRING_MAIL_USERNAME: Gmail account
+# - SPRING_MAIL_PASSWORD: Gmail App Password
+# - SPRING_MAIL_SENDER_NAME: Company name (different for each backend)
+#
+# JWT CONFIGURATION ADDED:
+# - JWT_SECRET: Signing key for JWT tokens
+# - JWT_EXPIRATION: 24 hours in milliseconds
+#
+# DATABASE CONFIGURATION ADDED:
+# - SPRING_JPA_HIBERNATE_DDL_AUTO: set to 'update' for dev
+#
+# ==========================================
+# HOW TO USE THIS FILE
+# ==========================================
+#
+# STEP 1: Build the backend Docker image with new email/PDF features
+# ------------------------------------------------------------------
+# cd /path/to/backend
+# docker build -t hpooni/fleet-manager-app-backend:latest .
+#
+# STEP 2: Push to registry (optional)
+# -----------------------------------
+# docker push hpooni/fleet-manager-app-backend:latest
+#
+# STEP 3: Start the containers
+# ----------------------------
+# docker-compose -f docker-compose-works.yml up -d
+#
+# STEP 4: Verify both backends are running
+# ----------------------------------------
+# docker-compose -f docker-compose-works.yml ps
+#
+# # Should show:
+# # - bonnys-backend (port 8081)
+# # - maclures-backend (port 8082)
+# # - fareflow-frontend (port 80)
+#
+# STEP 5: Test email configuration (optional)
+# -------------------------------------------
+# curl -X POST "http://localhost:8082/api/invoices/test/send-email?recipientEmail=your-email@gmail.com" \
+#   -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+#   -H "X-Tenant-ID: fareflow"
+#
+# ==========================================
+# IMPORTANT: HOW TO MAKE FRONTEND WORK
+# ==========================================
+#
+# The environment variables above WON'T work for Next.js.
+# You need to rebuild your frontend image WITH the variables.
+#
+# STEP 1: Update your frontend code
+# ---------------------------------
+# Copy these files to your frontend project:
+#   - lib/api.js (from the package)
+#   - signin/page.js (from the package)
+#
+# STEP 2: Create .env.local in your frontend directory
+# -----------------------------------------------------
+# cat > .env.local << 'EOF'
+# NEXT_PUBLIC_API_BONNYS=http://localhost:8081/api
+# NEXT_PUBLIC_API_BONNY=http://localhost:8081/api
+# NEXT_PUBLIC_API_MACLURES=http://localhost:8082/api
+# NEXT_PUBLIC_API_MAC_CABS=http://localhost:8082/api
+# NEXT_PUBLIC_API_MACCABS=http://localhost:8082/api
+# EOF
+#
+# NOTE: Use "localhost" NOT container names because:
+# - Browser runs on user's machine
+# - Browser needs to access Docker host's ports
+# - Container names only work inside Docker network
+#
+# STEP 3: Rebuild your frontend Docker image
+# -------------------------------------------
+# docker build -t hpooni/fleet-manager-app-frontend:latest .
+#
+# STEP 4: Push to registry (if you use one)
+# ------------------------------------------
+# docker push hpooni/fleet-manager-app-frontend:latest
+#
+# STEP 5: Restart containers
+# ---------------------------
+# docker-compose -f docker-compose-works.yml down
+# docker-compose -f docker-compose-works.yml up -d
+#
+# ==========================================
+# TESTING WITHOUT DOCKER REBUILD (FASTER)
+# ==========================================
+#
+# You can test locally without rebuilding Docker:
+#
+# 1. Start only backends:
+#    docker-compose -f docker-compose-works.yml up -d bonnys-backend maclures-backend
+#
+# 2. Run frontend locally:
+#    cd /path/to/frontend
+#    # Create .env.local with localhost URLs (see above)
+#    npm run dev
+#
+# 3. Access at http://localhost:3000
+#
+# ==========================================
+# COMPANY IDs TO USE
+# ==========================================
+# When logging in, use these company IDs:
+# - Bonny's: "bonny-taxi" (schema: fareflow_bonny)
+# - Maclures: "mac-cabs" (schema: fareflow)
+#
+# ==========================================
+# FEATURES READY TO USE
+# ==========================================
+# ✅ Email invoices with PDF attachment
+# ✅ Invoice overlapping period validation
+# ✅ Resend invoice email support
+# ✅ Track email send history
+# ✅ Dynamic company branding in PDFs and emails
+# ✅ JWT token authentication
+# ✅ Multi-tenant support (separate databases per company)

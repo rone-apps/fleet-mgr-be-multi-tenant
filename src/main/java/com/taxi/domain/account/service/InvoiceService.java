@@ -8,6 +8,7 @@ import com.taxi.domain.account.repository.AccountCustomerRepository;
 import com.taxi.domain.account.repository.InvoiceLineItemRepository;
 import com.taxi.domain.account.repository.InvoiceRepository;
 import com.taxi.domain.account.repository.PaymentRepository;
+import com.taxi.domain.tenant.service.TenantConfigService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -29,15 +30,37 @@ public class InvoiceService {
     private final InvoiceLineItemRepository invoiceLineItemRepository;
     private final AccountCustomerRepository customerRepository;
     private final AccountChargeRepository chargeRepository;
+    private final EmailService emailService;
+    private final InvoicePDFService pdfService;
+    private final TenantConfigService tenantConfigService;
 
     /**
      * Generate invoice for customer for a specific billing period
      */
-    public Invoice generateInvoice(Long customerId, LocalDate periodStart, LocalDate periodEnd, 
+    public Invoice generateInvoice(Long customerId, LocalDate periodStart, LocalDate periodEnd,
                                    BigDecimal taxRate, String terms) {
         // Get customer
         AccountCustomer customer = customerRepository.findById(customerId)
                 .orElseThrow(() -> new IllegalArgumentException("Customer not found"));
+
+        // Check for overlapping invoices
+        List<Invoice> overlappingInvoices = invoiceRepository.findInvoicesWithOverlappingPeriod(
+                customerId, periodStart, periodEnd);
+
+        if (!overlappingInvoices.isEmpty()) {
+            DateTimeFormatter formatter = DateTimeFormatter.ofPattern("MMM dd, yyyy");
+            StringBuilder details = new StringBuilder();
+            for (Invoice existing : overlappingInvoices) {
+                details.append(existing.getInvoiceNumber())
+                        .append(" (")
+                        .append(existing.getBillingPeriodStart().format(formatter))
+                        .append(" - ")
+                        .append(existing.getBillingPeriodEnd().format(formatter))
+                        .append("), ");
+            }
+            throw new IllegalStateException("An invoice with an overlapping period already exists. " +
+                    "Existing invoice(s): " + details.toString().replaceAll(", $", ""));
+        }
 
         // Get unpaid charges for the period that are NOT already on an invoice
         List<AccountCharge> charges = chargeRepository
@@ -482,12 +505,58 @@ public class InvoiceService {
                         invoice.getCustomer().getId(),
                         invoice.getBillingPeriodStart(),
                         invoice.getBillingPeriodEnd());
-        
+
         for (AccountCharge charge : charges) {
             if (invoice.getInvoiceNumber().equals(charge.getInvoiceNumber())) {
                 charge.markAsPaid(invoice.getInvoiceNumber());
             }
         }
         chargeRepository.saveAll(charges);
+    }
+
+    /**
+     * Generate PDF invoice as byte array
+     */
+    @Transactional(readOnly = true)
+    public byte[] generateInvoicePDF(Long invoiceId) {
+        Invoice invoice = getInvoiceById(invoiceId);
+        // Fetch line items if needed
+        List<InvoiceLineItem> lineItems = invoiceLineItemRepository.findByInvoiceId(invoiceId);
+        if (lineItems != null && !lineItems.isEmpty()) {
+            invoice.setLineItems(lineItems);
+        }
+
+        // Get company name from tenant config
+        String companyName = tenantConfigService.getCurrentTenantConfig()
+                .map(config -> config.getCompanyName())
+                .orElse("Maclures Cabs");
+
+        return pdfService.generateInvoicePDF(invoice, companyName);
+    }
+
+    /**
+     * Send invoice via email to customer
+     */
+    public void sendInvoiceViaEmail(Long invoiceId, String recipientEmail) {
+        Invoice invoice = getInvoiceById(invoiceId);
+
+        // Generate PDF
+        byte[] pdfContent = generateInvoicePDF(invoiceId);
+
+        // Get company name from tenant config
+        String companyName = tenantConfigService.getCurrentTenantConfig()
+                .map(config -> config.getCompanyName())
+                .orElse("Maclures Cabs");
+
+        // Send email
+        emailService.sendInvoiceEmail(invoice, pdfContent, recipientEmail, companyName);
+
+        // Update invoice status to SENT
+        invoice.markAsSent();
+
+        // Record email send for resend tracking
+        invoice.recordEmailSent(recipientEmail);
+
+        invoiceRepository.save(invoice);
     }
 }

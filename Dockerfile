@@ -39,19 +39,33 @@ COPY newrelic.yml /app/newrelic/newrelic.yml
 
 EXPOSE 8080
 
-# JVM tuning (keep yours)
+# ===== JVM Tuning =====
 ENV JAVA_TOOL_OPTIONS="-XX:MaxRAMPercentage=75 \
  -XX:InitialRAMPercentage=50 \
  -XX:+UseG1GC \
  -XX:MaxGCPauseMillis=200 \
  -XX:+ExitOnOutOfMemoryError"
 
-# New Relic config via env
+# ===== New Relic Configuration =====
 ENV NEW_RELIC_APP_NAME="FareFlow Backend"
 ENV NEW_RELIC_DISTRIBUTED_TRACING_ENABLED=true
 
-# Extra JVM args hook (optional)
+# ===== Extra JVM Args (Optional) =====
 ENV JAVA_OPTS=""
+
+# ===== Required Environment Variables (Pass via docker-compose or -e flags) =====
+# Database:
+#   - MYSQL_ROOT_PASSWORD (required)
+#   - SPRING_DATASOURCE_PASSWORD (required, same as MYSQL_ROOT_PASSWORD)
+#
+# Email (Gmail SMTP):
+#   - SPRING_MAIL_USERNAME (required, e.g., pooni.harjot@gmail.com)
+#   - SPRING_MAIL_PASSWORD (required, Gmail App Password)
+#   - SPRING_MAIL_SENDER_NAME (optional, defaults to "FareFlow - Yellow Cabs Newyork")
+#
+# JWT:
+#   - JWT_SECRET (optional, defaults to embedded secret)
+#   - JWT_EXPIRATION (optional, defaults to 86400000 ms = 24 hours)
 
 # IMPORTANT: javaagent must come BEFORE -jar
 ENTRYPOINT ["sh", "-c", "\

@@ -90,4 +90,13 @@ public interface InvoiceRepository extends JpaRepository<Invoice, Long> {
            "SUM(i.balanceDue) as balanceDue) " +
            "FROM Invoice i WHERE i.customer.id = :customerId")
     List<Object> getInvoiceSummaryByCustomer(@Param("customerId") Long customerId);
+
+    // Find invoices with overlapping billing periods (excluding cancelled invoices)
+    @Query("SELECT i FROM Invoice i WHERE i.customer.id = :customerId " +
+           "AND i.status != 'CANCELLED' " +
+           "AND ((i.billingPeriodStart <= :periodEnd AND i.billingPeriodEnd >= :periodStart))")
+    List<Invoice> findInvoicesWithOverlappingPeriod(
+            @Param("customerId") Long customerId,
+            @Param("periodStart") LocalDate periodStart,
+            @Param("periodEnd") LocalDate periodEnd);
 }

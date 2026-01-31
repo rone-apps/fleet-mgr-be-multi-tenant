@@ -1,31 +1,178 @@
 services:
-  db:
-    image: mysql:8.4
-    environment:
-      MYSQL_DATABASE: fareflow
-      MYSQL_ROOT_PASSWORD: Inder-101
-    ports:
-      - "3306:3306"
-    volumes:
-      - mysql_data:/var/lib/mysql
-    healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-pInder-101"]
-      interval: 5s
-      timeout: 5s
-      retries: 20
-
-  app:
-    image: fleet-manager-be:latest
-    depends_on:
-      db:
-        condition: service_healthy
+  backend:
+    image: hpooni/fleet-manager-app-backend
+    container_name: fareflow-backend
     ports:
       - "8080:8080"
     environment:
-      SPRING_DATASOURCE_URL: jdbc:mysql://db:3306/fareflow?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true
-      SPRING_DATASOURCE_USERNAME: root
-      SPRING_DATASOURCE_PASSWORD: Inder-101
-      SPRING_JPA_HIBERNATE_DDL_AUTO: update
+      TZ: America/Los_Angeles
+      SPRING_PROFILES_ACTIVE: production
 
-volumes:
-  mysql_data:
+      # ==================== Database Configuration ====================
+      MYSQL_HOST: rone2.ci2owkd8ejjp.us-west-2.rds.amazonaws.com
+      SPRING_DATASOURCE_USERNAME: hpooni1
+      SPRING_DATASOURCE_PASSWORD: "!Inder101"
+      SPRING_JPA_HIBERNATE_DDL_AUTO: validate
+
+      # ==================== Email Configuration (Gmail SMTP) ====================
+      SPRING_MAIL_USERNAME: pooni.harjot@gmail.com
+      SPRING_MAIL_PASSWORD: "zkkt gwot qvyo hxjm"
+      SPRING_MAIL_SENDER_NAME: "FareFlow Systems (TaxiMgr.com)"
+
+      # ==================== JWT Configuration ====================
+      JWT_SECRET: 5367566B59703373367639792F423F4528482B4D6251655468576D5A71347437772A462D4A614E645267556A586E3272357538782F413F4428472B4B6250655368
+      JWT_EXPIRATION: 86400000
+
+      # ==================== New Relic Monitoring ====================
+      NEW_RELIC_LICENSE_KEY: ${NEW_RELIC_LICENSE_KEY}
+      NEW_RELIC_APP_NAME: "FareFlow Backend"
+      NEW_RELIC_DISTRIBUTED_TRACING_ENABLED: "true"
+
+      # ==================== JVM Configuration ====================
+      JAVA_TOOL_OPTIONS: >
+        -XX:+UseContainerSupport
+        -XX:MaxRAMPercentage=75
+        -XX:+ExitOnOutOfMemoryError
+
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  frontend:
+    image: hpooni/fleet-manager-app-frontend
+    container_name: fareflow-frontend
+    ports:
+      - "3000:3000"
+    environment:
+      TZ: America/Los_Angeles
+    depends_on:
+      - backend
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+# ==========================================
+# PRODUCTION DEPLOYMENT GUIDE
+# ==========================================
+#
+# STEP 1: Build backend image with all new features
+# -------------------------------------------------
+# docker build -t hpooni/fleet-manager-app-backend:latest .
+# docker push hpooni/fleet-manager-app-backend:latest
+#
+# STEP 2: Build frontend image
+# ----------------------------
+# cd /path/to/frontend
+# docker build -t hpooni/fleet-manager-app-frontend:latest .
+# docker push hpooni/fleet-manager-app-frontend:latest
+#
+# STEP 3: Pull latest images on production server
+# -----------------------------------------------
+# docker pull hpooni/fleet-manager-app-backend:latest
+# docker pull hpooni/fleet-manager-app-frontend:latest
+#
+# STEP 4: Set New Relic License Key (if using monitoring)
+# -------------------------------------------------------
+# export NEW_RELIC_LICENSE_KEY="your-new-relic-key-here"
+#
+# STEP 5: Deploy containers
+# -------------------------
+# docker-compose -f docker-compose.yml up -d
+#
+# STEP 6: Verify deployment
+# --------------------------
+# docker-compose ps
+# docker-compose logs -f backend
+#
+# ==========================================
+# FEATURES INCLUDED
+# ==========================================
+# ✅ Email invoices with PDF attachment
+# ✅ Invoice overlapping period validation
+# ✅ Resend invoice email support
+# ✅ Track email send history
+# ✅ Dynamic company branding in PDFs and emails
+# ✅ JWT token authentication (24 hour expiration)
+# ✅ Multi-tenant support (Maclures Cabs + Bonny's Taxi)
+# ✅ New Relic monitoring integration
+# ✅ Docker logging with rotation
+#
+# ==========================================
+# PRODUCTION SETTINGS
+# ==========================================
+# ✅ SPRING_PROFILES_ACTIVE: production
+# ✅ SPRING_JPA_HIBERNATE_DDL_AUTO: validate (schema pre-created, no modifications)
+# ✅ Logging: JSON format with rotation (10MB max per file, 3 files)
+# ✅ JVM: Container aware, 75% RAM usage, OOM exit handler
+#
+# ==========================================
+# IMPORTANT SECURITY NOTES
+# ==========================================
+# ⚠️  Gmail App Password: Stored in docker-compose.yml
+#    - Only deploy to trusted servers
+#    - Restrict docker-compose.yml file permissions
+#    - Consider using Docker secrets in production Swarm
+#
+# ⚠️  Database Password: Stored in docker-compose.yml
+#    - Same as above - secure file permissions
+#    - Consider Docker secrets or AWS Secrets Manager
+#
+# ⚠️  New Relic Key: Set via environment variable
+#    - Never commit real key to git
+#    - export on production server: export NEW_RELIC_LICENSE_KEY="..."
+#    - Or use: docker-compose -e NEW_RELIC_LICENSE_KEY=... up -d
+#
+# ==========================================
+# ROLLING BACK
+# ==========================================
+# If you need to rollback to a previous version:
+#
+# 1. Verify the old image still exists:
+#    docker images | grep fleet-manager-app-backend
+#
+# 2. Update docker-compose.yml with the old image tag
+#    docker build -t hpooni/fleet-manager-app-backend:v1.0 ...
+#
+# 3. Restart with old version:
+#    docker-compose down
+#    docker-compose up -d
+#
+# ==========================================
+# MONITORING & LOGS
+# ==========================================
+# View backend logs:
+#   docker-compose logs -f backend
+#
+# View frontend logs:
+#   docker-compose logs -f frontend
+#
+# View all logs:
+#   docker-compose logs -f
+#
+# Tail last 100 lines:
+#   docker-compose logs --tail=100 backend
+#
+# ==========================================
+# TROUBLESHOOTING
+# ==========================================
+# If email not sending:
+#   1. Check logs: docker-compose logs backend | grep EMAIL
+#   2. Verify Gmail App Password is correct
+#   3. Test endpoint: curl -X POST "http://localhost:8080/api/invoices/test/send-email?recipientEmail=test@gmail.com"
+#
+# If database connection fails:
+#   1. Verify MYSQL_HOST is reachable
+#   2. Check credentials: SPRING_DATASOURCE_USERNAME and SPRING_DATASOURCE_PASSWORD
+#   3. Verify security groups allow inbound 3306 from your server
+#
+# If containers won't start:
+#   1. Check logs: docker-compose logs
+#   2. Verify images exist: docker images
+#   3. Clear old containers: docker-compose down -v
+#   4. Rebuild: docker-compose up --build

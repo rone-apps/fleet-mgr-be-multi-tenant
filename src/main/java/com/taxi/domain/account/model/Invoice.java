@@ -102,6 +102,17 @@ public class Invoice {
     @Column(name = "paid_at")
     private LocalDateTime paidAt;
 
+    // Email tracking
+    @Column(name = "last_email_sent_at")
+    private LocalDateTime lastEmailSentAt;
+
+    @Column(name = "last_email_sent_to", length = 255)
+    private String lastEmailSentTo;
+
+    @Column(name = "email_send_count")
+    @Builder.Default
+    private Integer emailSendCount = 0;
+
     // Relationships
     @OneToMany(mappedBy = "invoice", cascade = CascadeType.ALL, orphanRemoval = true)
     @Builder.Default
@@ -187,6 +198,16 @@ public class Invoice {
     public void markAsSent() {
         this.status = InvoiceStatus.SENT;
         this.sentAt = LocalDateTime.now();
+    }
+
+    public void recordEmailSent(String emailAddress) {
+        this.lastEmailSentAt = LocalDateTime.now();
+        this.lastEmailSentTo = emailAddress;
+        this.emailSendCount = (emailSendCount != null ? emailSendCount : 0) + 1;
+        // Mark as sent if not already
+        if (this.status == InvoiceStatus.DRAFT) {
+            this.status = InvoiceStatus.SENT;
+        }
     }
 
     public void markAsCancelled() {
