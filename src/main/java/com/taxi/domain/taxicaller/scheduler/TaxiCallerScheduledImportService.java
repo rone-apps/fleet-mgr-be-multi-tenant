@@ -46,7 +46,7 @@ public class TaxiCallerScheduledImportService {
     private final TaxiCallerDriverShiftImportService driverShiftImportService;
     private final TaxiCallerAccountChargeImportService accountChargeImportService;
     
-    @Value("${taxicaller.scheduler.import-previous-days:1}")
+    @Value("${taxicaller.scheduler.import-previous-days:2}")
     private int importPreviousDays;
 
     /**
