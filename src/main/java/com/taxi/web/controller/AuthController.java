@@ -170,16 +170,13 @@ public class AuthController {
         String clientIp = getClientIp(request);
         long loginStartTime = System.currentTimeMillis();
 
+        log.info("=== LOGIN ATTEMPT START ===");
+        log.info("Username: {}", loginRequest.getUsername());
+        log.info("Client IP: {}", clientIp);
+        log.info("Timestamp: {}", java.time.LocalDateTime.now());
+
         try {
-            log.info("=== LOGIN ATTEMPT START ===");
-            log.info("Username: {}", loginRequest.getUsername());
-            log.info("Client IP: {}", clientIp);
-            log.info("Timestamp: {}", java.time.LocalDateTime.now());
-
-            // Get user details
-            User user = userDetailsService.loadUserEntityByUsername(loginRequest.getUsername());
-
-            // Authenticate user
+            // Authenticate user first (this validates username and password)
             Authentication authentication = authenticationManager.authenticate(
                     new UsernamePasswordAuthenticationToken(
                             loginRequest.getUsername(),
@@ -188,6 +185,9 @@ public class AuthController {
             );
 
             SecurityContextHolder.getContext().setAuthentication(authentication);
+
+            // Get user details AFTER successful authentication
+            User user = userDetailsService.loadUserEntityByUsername(loginRequest.getUsername());
 
             // Generate JWT token with role
             String jwt = jwtUtils.generateTokenWithUserIdAndRole(user.getUsername(), user.getId(), user.getRole().toString());
