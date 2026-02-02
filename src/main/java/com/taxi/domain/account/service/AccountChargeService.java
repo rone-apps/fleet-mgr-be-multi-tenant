@@ -362,8 +362,13 @@ public Map<String, Object> getChargesSummary(String customerName, Long cabId, Lo
     // Ensure all fields have proper types and defaults
     Map<String, Object> result = new java.util.HashMap<>();
     result.put("outstandingBalance", stats.getOrDefault("outstandingBalance", BigDecimal.ZERO));
-    result.put("unpaidChargesCount", ((Number) stats.getOrDefault("unpaidChargesCount", 0L)).longValue());
-    result.put("totalChargesCount", ((Number) stats.getOrDefault("totalChargesCount", 0L)).longValue());
+
+    // Safely handle null values from database query
+    Object unpaidCountObj = stats.getOrDefault("unpaidChargesCount", 0L);
+    result.put("unpaidChargesCount", unpaidCountObj != null && unpaidCountObj instanceof Number ? ((Number) unpaidCountObj).longValue() : 0L);
+
+    Object totalCountObj = stats.getOrDefault("totalChargesCount", 0L);
+    result.put("totalChargesCount", totalCountObj != null && totalCountObj instanceof Number ? ((Number) totalCountObj).longValue() : 0L);
 
     return result;
 }
