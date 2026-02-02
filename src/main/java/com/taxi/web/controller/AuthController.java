@@ -19,10 +19,12 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
+import com.newrelic.api.agent.NewRelic;
 
 /**
  * Authentication Controller
@@ -42,102 +44,232 @@ public class AuthController {
     private final CustomUserDetailsService userDetailsService;
 
     /**
-     * Register new user
+     * Register new user with detailed logging for New Relic
      */
     @PostMapping("/signup")
-    public ResponseEntity<?> registerUser(@Valid @RequestBody SignupRequest signupRequest) {
-        log.info("Registration request for username: {}", signupRequest.getUsername());
+    public ResponseEntity<?> registerUser(@Valid @RequestBody SignupRequest signupRequest, HttpServletRequest request) {
+        String clientIp = getClientIp(request);
+        long signupStartTime = System.currentTimeMillis();
 
-        // Check if username exists
-        if (userRepository.existsByUsername(signupRequest.getUsername())) {
-            return ResponseEntity.badRequest()
-                    .body(new MessageResponse("Error: Username is already taken!"));
-        }
+        try {
+            log.info("=== SIGNUP ATTEMPT START ===");
+            log.info("Username: {}", signupRequest.getUsername());
+            log.info("Email: {}", signupRequest.getEmail());
+            log.info("Role: {}", signupRequest.getRole());
+            log.info("Client IP: {}", clientIp);
+            log.info("Timestamp: {}", java.time.LocalDateTime.now());
 
-        // Check if email exists
-        if (signupRequest.getEmail() != null && userRepository.existsByEmail(signupRequest.getEmail())) {
-            return ResponseEntity.badRequest()
-                    .body(new MessageResponse("Error: Email is already in use!"));
-        }
+            // Check if username exists
+            if (userRepository.existsByUsername(signupRequest.getUsername())) {
+                log.warn("Signup failed - Username already taken: {}", signupRequest.getUsername());
+                NewRelic.addCustomParameter("signup.username", signupRequest.getUsername());
+                NewRelic.addCustomParameter("signup.status", "FAILED");
+                NewRelic.addCustomParameter("signup.reason", "Username already taken");
+                return ResponseEntity.badRequest()
+                        .body(new MessageResponse("Error: Username is already taken!"));
+            }
 
-        // Create driver entity if user is a driver
-        Driver driver = null;
-        if (signupRequest.getRole() == User.UserRole.DRIVER) {
-            // Generate driver number (e.g., DRV-001, DRV-002, etc.)
-            String driverNumber = generateDriverNumber();
-            
-            driver = Driver.builder()
-                    .driverNumber(driverNumber)
+            // Check if email exists
+            if (signupRequest.getEmail() != null && userRepository.existsByEmail(signupRequest.getEmail())) {
+                log.warn("Signup failed - Email already in use: {}", signupRequest.getEmail());
+                NewRelic.addCustomParameter("signup.email", signupRequest.getEmail());
+                NewRelic.addCustomParameter("signup.status", "FAILED");
+                NewRelic.addCustomParameter("signup.reason", "Email already in use");
+                return ResponseEntity.badRequest()
+                        .body(new MessageResponse("Error: Email is already in use!"));
+            }
+
+            // Create driver entity if user is a driver
+            Driver driver = null;
+            if (signupRequest.getRole() == User.UserRole.DRIVER) {
+                // Generate driver number (e.g., DRV-001, DRV-002, etc.)
+                String driverNumber = generateDriverNumber();
+
+                driver = Driver.builder()
+                        .driverNumber(driverNumber)
+                        .firstName(signupRequest.getFirstName())
+                        .lastName(signupRequest.getLastName())
+                        .phone(signupRequest.getPhone())
+                        .email(signupRequest.getEmail())
+                        .licenseNumber(signupRequest.getLicenseNumber())
+                        .status(Driver.DriverStatus.ACTIVE)
+                        .build();
+                driver = driverRepository.save(driver);
+                log.info("Created driver entity with ID: {} and driver number: {}", driver.getId(), driver.getDriverNumber());
+            }
+
+            // Create user with encrypted password
+            User user = User.builder()
+                    .username(signupRequest.getUsername())
+                    .password(passwordEncoder.encode(signupRequest.getPassword()))  // Encrypt password
+                    .email(signupRequest.getEmail())
                     .firstName(signupRequest.getFirstName())
                     .lastName(signupRequest.getLastName())
                     .phone(signupRequest.getPhone())
-                    .email(signupRequest.getEmail())
-                    .licenseNumber(signupRequest.getLicenseNumber())
-                    .status(Driver.DriverStatus.ACTIVE)
+                    .role(signupRequest.getRole() != null ? signupRequest.getRole() : User.UserRole.DRIVER)
+                    .driver(driver)
+                    .isActive(true)
                     .build();
-            driver = driverRepository.save(driver);
-            log.info("Created driver entity with ID: {} and driver number: {}", driver.getId(), driver.getDriverNumber());
+
+            user = userRepository.save(user);
+
+            long signupDuration = System.currentTimeMillis() - signupStartTime;
+
+            log.info("=== SIGNUP SUCCESS ===");
+            log.info("User ID: {}", user.getId());
+            log.info("Username: {}", user.getUsername());
+            log.info("Email: {}", user.getEmail());
+            log.info("Role: {}", user.getRole());
+            log.info("Client IP: {}", clientIp);
+            log.info("Duration: {} ms", signupDuration);
+            log.info("First Name: {}", user.getFirstName());
+            log.info("Last Name: {}", user.getLastName());
+            log.info("Timestamp: {}", java.time.LocalDateTime.now());
+
+            // Send custom attributes to New Relic
+            NewRelic.addCustomParameter("signup.userId", user.getId());
+            NewRelic.addCustomParameter("signup.username", user.getUsername());
+            NewRelic.addCustomParameter("signup.email", user.getEmail());
+            NewRelic.addCustomParameter("signup.role", user.getRole().toString());
+            NewRelic.addCustomParameter("signup.clientIp", clientIp);
+            NewRelic.addCustomParameter("signup.duration_ms", signupDuration);
+            NewRelic.addCustomParameter("signup.status", "SUCCESS");
+
+            return ResponseEntity.ok(new MessageResponse(
+                    "User registered successfully!",
+                    user.getId(),
+                    user.getUsername(),
+                    user.getRole().toString()
+            ));
+
+        } catch (Exception e) {
+            long signupDuration = System.currentTimeMillis() - signupStartTime;
+
+            log.error("=== SIGNUP FAILED ===");
+            log.error("Username: {}", signupRequest.getUsername());
+            log.error("Email: {}", signupRequest.getEmail());
+            log.error("Error: {}", e.getMessage());
+            log.error("Client IP: {}", clientIp);
+            log.error("Duration: {} ms", signupDuration);
+
+            NewRelic.addCustomParameter("signup.username", signupRequest.getUsername());
+            NewRelic.addCustomParameter("signup.email", signupRequest.getEmail());
+            NewRelic.addCustomParameter("signup.error", e.getMessage());
+            NewRelic.addCustomParameter("signup.status", "FAILED");
+
+            return ResponseEntity.badRequest()
+                    .body(new MessageResponse("Error: Signup failed. Please try again."));
         }
-
-        // Create user with encrypted password
-        User user = User.builder()
-                .username(signupRequest.getUsername())
-                .password(passwordEncoder.encode(signupRequest.getPassword()))  // Encrypt password
-                .email(signupRequest.getEmail())
-                .firstName(signupRequest.getFirstName())
-                .lastName(signupRequest.getLastName())
-                .phone(signupRequest.getPhone())
-                .role(signupRequest.getRole() != null ? signupRequest.getRole() : User.UserRole.DRIVER)
-                .driver(driver)
-                .isActive(true)
-                .build();
-
-        user = userRepository.save(user);
-        log.info("User registered successfully with ID: {}, Role: {}", user.getId(), user.getRole());
-
-        return ResponseEntity.ok(new MessageResponse(
-                "User registered successfully!",
-                user.getId(),
-                user.getUsername(),
-                user.getRole().toString()
-        ));
     }
 
     /**
-     * Login user
+     * Login user with detailed logging for New Relic
      */
     @PostMapping("/login")
-    public ResponseEntity<?> authenticateUser(@Valid @RequestBody LoginRequest loginRequest) {
-        log.info("Login attempt for username: {}", loginRequest.getUsername());
+    public ResponseEntity<?> authenticateUser(@Valid @RequestBody LoginRequest loginRequest, HttpServletRequest request) {
+        String clientIp = getClientIp(request);
+        long loginStartTime = System.currentTimeMillis();
 
-        // Get user details
-        User user = userDetailsService.loadUserEntityByUsername(loginRequest.getUsername());
+        try {
+            log.info("=== LOGIN ATTEMPT START ===");
+            log.info("Username: {}", loginRequest.getUsername());
+            log.info("Client IP: {}", clientIp);
+            log.info("Timestamp: {}", java.time.LocalDateTime.now());
 
-        // Authenticate user
-        Authentication authentication = authenticationManager.authenticate(
-                new UsernamePasswordAuthenticationToken(
-                        loginRequest.getUsername(),
-                        loginRequest.getPassword()
-                )
-        );
+            // Get user details
+            User user = userDetailsService.loadUserEntityByUsername(loginRequest.getUsername());
 
-        SecurityContextHolder.getContext().setAuthentication(authentication);
+            // Authenticate user
+            Authentication authentication = authenticationManager.authenticate(
+                    new UsernamePasswordAuthenticationToken(
+                            loginRequest.getUsername(),
+                            loginRequest.getPassword()
+                    )
+            );
 
-        // Generate JWT token with role
-        String jwt = jwtUtils.generateTokenWithUserIdAndRole(user.getUsername(), user.getId(), user.getRole().toString());
+            SecurityContextHolder.getContext().setAuthentication(authentication);
 
-        log.info("User logged in successfully: {}, Role: {}", user.getUsername(), user.getRole());
+            // Generate JWT token with role
+            String jwt = jwtUtils.generateTokenWithUserIdAndRole(user.getUsername(), user.getId(), user.getRole().toString());
 
-        return ResponseEntity.ok(new JwtResponse(
-                jwt,
-                user.getId(),
-                user.getUsername(),
-                user.getEmail(),
-                user.getFirstName(),
-                user.getLastName(),
-                user.getRole().toString(),
-                user.getDriver() != null ? user.getDriver().getId() : null
-        ));
+            long loginDuration = System.currentTimeMillis() - loginStartTime;
+
+            // Log successful login with all details
+            log.info("=== LOGIN SUCCESS ===");
+            log.info("Username: {}", user.getUsername());
+            log.info("User ID: {}", user.getId());
+            log.info("Role: {}", user.getRole());
+            log.info("Email: {}", user.getEmail());
+            log.info("Client IP: {}", clientIp);
+            log.info("Duration: {} ms", loginDuration);
+            log.info("First Name: {}", user.getFirstName());
+            log.info("Last Name: {}", user.getLastName());
+            log.info("Is Active: {}", user.isActive());
+            log.info("Timestamp: {}", java.time.LocalDateTime.now());
+
+            // Send custom attributes to New Relic for monitoring
+            NewRelic.addCustomParameter("login.username", user.getUsername());
+            NewRelic.addCustomParameter("login.userId", user.getId());
+            NewRelic.addCustomParameter("login.role", user.getRole().toString());
+            NewRelic.addCustomParameter("login.email", user.getEmail());
+            NewRelic.addCustomParameter("login.clientIp", clientIp);
+            NewRelic.addCustomParameter("login.duration_ms", loginDuration);
+            NewRelic.addCustomParameter("login.firstName", user.getFirstName());
+            NewRelic.addCustomParameter("login.lastName", user.getLastName());
+            NewRelic.addCustomParameter("login.status", "SUCCESS");
+
+            return ResponseEntity.ok(new JwtResponse(
+                    jwt,
+                    user.getId(),
+                    user.getUsername(),
+                    user.getEmail(),
+                    user.getFirstName(),
+                    user.getLastName(),
+                    user.getRole().toString(),
+                    user.getDriver() != null ? user.getDriver().getId() : null
+            ));
+
+        } catch (Exception e) {
+            long loginDuration = System.currentTimeMillis() - loginStartTime;
+
+            // Log failed login attempt
+            log.error("=== LOGIN FAILED ===");
+            log.error("Username: {}", loginRequest.getUsername());
+            log.error("Client IP: {}", clientIp);
+            log.error("Error: {}", e.getMessage());
+            log.error("Duration: {} ms", loginDuration);
+            log.error("Timestamp: {}", java.time.LocalDateTime.now());
+
+            // Send failed login to New Relic
+            NewRelic.addCustomParameter("login.username", loginRequest.getUsername());
+            NewRelic.addCustomParameter("login.clientIp", clientIp);
+            NewRelic.addCustomParameter("login.error", e.getMessage());
+            NewRelic.addCustomParameter("login.duration_ms", loginDuration);
+            NewRelic.addCustomParameter("login.status", "FAILED");
+
+            return ResponseEntity.badRequest().body(
+                    new MessageResponse("Invalid username or password")
+            );
+        }
+    }
+
+    /**
+     * Extract client IP address from HTTP request
+     * Handles X-Forwarded-For header for proxied requests
+     */
+    private String getClientIp(HttpServletRequest request) {
+        String xForwardedFor = request.getHeader("X-Forwarded-For");
+        if (xForwardedFor != null && !xForwardedFor.isEmpty()) {
+            // X-Forwarded-For can contain multiple IPs, take the first one
+            return xForwardedFor.split(",")[0].trim();
+        }
+
+        String xRealIp = request.getHeader("X-Real-IP");
+        if (xRealIp != null && !xRealIp.isEmpty()) {
+            return xRealIp;
+        }
+
+        return request.getRemoteAddr();
     }
 
     /**
