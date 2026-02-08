@@ -1,6 +1,7 @@
 package com.taxi.domain.expense.service;
 
 import com.taxi.domain.expense.model.ExpenseCategory;
+import com.taxi.domain.expense.model.ExpenseCategoryRule;
 import com.taxi.domain.expense.repository.ExpenseCategoryRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -87,5 +88,46 @@ public class ExpenseCategoryService {
 
     public List<ExpenseCategory> getCategoriesByAppliesTo(ExpenseCategory.AppliesTo appliesTo) {
         return expenseCategoryRepository.findByAppliesTo(appliesTo);
+    }
+
+    /**
+     * Create category with associated rule
+     */
+    public ExpenseCategory createCategoryWithRule(ExpenseCategory category, ExpenseCategoryRule rule) {
+        log.info("Creating category {} with rule", category.getCategoryName());
+
+        ExpenseCategory saved = expenseCategoryRepository.save(category);
+
+        if (rule != null) {
+            rule.setExpenseCategory(saved);
+            rule.setId(null); // Ensure new rule
+            // Note: Rule will be saved through cascade
+        }
+
+        return saved;
+    }
+
+    /**
+     * Get category rule if it exists
+     */
+    public ExpenseCategoryRule getCategoryRule(Long categoryId) {
+        // This would normally come from a repository, but we can access through the category
+        ExpenseCategory category = getCategory(categoryId);
+        return category.getCategoryRule();
+    }
+
+    /**
+     * Update or create category rule
+     */
+    public ExpenseCategoryRule updateCategoryRule(Long categoryId, ExpenseCategoryRule rule) {
+        log.info("Updating category rule for category ID: {}", categoryId);
+
+        ExpenseCategory category = getCategory(categoryId);
+        rule.setExpenseCategory(category);
+        category.setCategoryRule(rule);
+
+        expenseCategoryRepository.save(category);
+
+        return rule;
     }
 }

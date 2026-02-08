@@ -175,8 +175,9 @@ public class Merchant2CabService {
             dto.setYear(cab.getYear());
             dto.setColor(cab.getColor());
             dto.setRegistrationNumber(cab.getRegistrationNumber());
-            dto.setCabType(cab.getCabType() != null ? cab.getCabType().toString() : null);
-            dto.setCabStatus(cab.getStatus() != null ? cab.getStatus().toString() : null);
+            // Attributes are now at shift level, not cab level
+            dto.setCabType(null);
+            dto.setCabStatus(null);
             
             // Populate owner driver details
             Driver owner = cab.getOwnerDriver();

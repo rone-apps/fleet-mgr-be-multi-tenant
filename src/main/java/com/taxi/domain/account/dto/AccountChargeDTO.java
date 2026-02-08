@@ -72,7 +72,7 @@ public class AccountChargeDTO {
                 .cab(charge.getCab() != null ? CabDTO.builder()
                         .id(charge.getCab().getId())
                         .cabNumber(charge.getCab().getCabNumber())
-                        .cabType(charge.getCab().getCabType() != null ? charge.getCab().getCabType().toString() : null)
+                        .cabType(null)  // Attributes moved to shift level
                         .build() : null)
                 .driver(charge.getDriver() != null ? DriverDTO.builder()
                         .id(charge.getDriver().getId())

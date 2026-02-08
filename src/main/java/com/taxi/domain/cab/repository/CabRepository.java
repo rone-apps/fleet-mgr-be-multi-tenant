@@ -21,26 +21,23 @@ public interface CabRepository extends JpaRepository<Cab, Long> {
 
     Optional<Cab> findByRegistrationNumber(String registrationNumber);
 
-    List<Cab> findByCabType(CabType cabType);
+    // Note: cabType, status, hasAirportLicense are now at shift level, not cab level
+    // Use CabShiftRepository to query by these attributes
 
-    List<Cab> findByStatus(Cab.CabStatus status);
-    
     // Original method - might have lazy loading issues
     List<Cab> findByOwnerDriver(Driver ownerDriver);
-    
+
     // RECOMMENDED: Query by owner driver ID (fixes lazy loading issues)
     @Query("SELECT c FROM Cab c WHERE c.ownerDriver.id = :ownerId")
     List<Cab> findByOwnerDriverId(@Param("ownerId") Long ownerId);
-    
+
     // ALTERNATIVE: Query by driver number directly (most efficient)
     @Query("SELECT c FROM Cab c WHERE c.ownerDriver.driverNumber = :driverNumber")
     List<Cab> findByOwnerDriverNumber(@Param("driverNumber") String driverNumber);
 
-    @Query("SELECT c FROM Cab c WHERE c.status = 'ACTIVE' ORDER BY c.cabNumber")
-    List<Cab> findAllActiveCabs();
-
-    @Query("SELECT c FROM Cab c WHERE c.hasAirportLicense = true AND c.status = 'ACTIVE'")
-    List<Cab> findCabsWithAirportLicense();
+    // Get all cabs (filtering by shift status should be done via CabShiftRepository)
+    @Query("SELECT DISTINCT c FROM Cab c ORDER BY c.cabNumber")
+    List<Cab> findAllOrderByNumber();
 
     boolean existsByCabNumber(String cabNumber);
 

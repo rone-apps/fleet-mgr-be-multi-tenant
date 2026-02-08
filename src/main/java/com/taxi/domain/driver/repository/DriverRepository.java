@@ -47,5 +47,12 @@ public interface DriverRepository extends JpaRepository<Driver, Long>, JpaSpecif
     @Query("SELECT d.driverNumber FROM Driver d WHERE LOWER(d.firstName) = LOWER(:firstName) AND LOWER(d.lastName) = LOWER(:lastName)")
     Optional<String> findDriverNumberByName(@Param("firstName") String firstName, @Param("lastName") String lastName);
 
-   // Optional<Driver> findByDriverNumber(String driverNumber);
+    /**
+     * Find all drivers who are not shift owners (for ALL_NON_OWNER_DRIVERS application type)
+     * Returns active drivers who don't have any shift ownership
+     */
+    @Query("SELECT d FROM Driver d WHERE d.status = 'ACTIVE' " +
+           "AND d.id NOT IN (SELECT DISTINCT so.owner.id FROM ShiftOwnership so WHERE so.endDate IS NULL) " +
+           "ORDER BY d.lastName, d.firstName")
+    List<Driver> findNonOwnerDrivers();
 }

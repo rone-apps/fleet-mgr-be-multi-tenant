@@ -4,6 +4,7 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 import com.taxi.domain.shift.model.CabShift;
 import lombok.*;
 
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 
 /**
@@ -38,13 +39,38 @@ public class CabShiftDTO {
     
     // Status
     private String status;  // ACTIVE, INACTIVE
-    
+
     @JsonProperty("isActive")
     private boolean isActive;
-    
+
+    // Shift-level attributes
+    private String cabType;  // SEDAN, HANDICAP_VAN
+    private String shareType;  // VOTING_SHARE, NON_VOTING_SHARE, null
+    private Boolean hasAirportLicense;
+    private String airportLicenseNumber;
+    private LocalDate airportLicenseExpiry;
+
     private String notes;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
+
+    // Profile information
+    private CurrentProfileDTO currentProfile;
+
+    /**
+     * DTO for current profile (nested)
+     */
+    @Data
+    @NoArgsConstructor
+    @AllArgsConstructor
+    @Builder
+    public static class CurrentProfileDTO {
+        private Long id;
+        private String profileCode;
+        private String profileName;
+        private String category;
+        private String colorCode;
+    }
 
     /**
      * Convert CabShift entity to DTO
@@ -63,6 +89,11 @@ public class CabShiftDTO {
                 .shiftHours(shift.getStartTime() + " - " + shift.getEndTime())
                 .status(shift.getStatus().name())
                 .isActive(shift.getStatus() == CabShift.ShiftStatus.ACTIVE)
+                .cabType(shift.getCabType() != null ? shift.getCabType().name() : null)
+                .shareType(shift.getShareType() != null ? shift.getShareType().name() : null)
+                .hasAirportLicense(shift.getHasAirportLicense())
+                .airportLicenseNumber(shift.getAirportLicenseNumber())
+                .airportLicenseExpiry(shift.getAirportLicenseExpiry())
                 .notes(shift.getNotes())
                 .createdAt(shift.getCreatedAt())
                 .updatedAt(shift.getUpdatedAt());
@@ -79,6 +110,17 @@ public class CabShiftDTO {
             builder.currentOwnerId(shift.getCurrentOwner().getId())
                    .currentOwnerDriverNumber(shift.getCurrentOwner().getDriverNumber())
                    .currentOwnerName(shift.getCurrentOwner().getFirstName() + " " + shift.getCurrentOwner().getLastName());
+        }
+
+        // Add current profile info
+        if (shift.getCurrentProfile() != null) {
+            builder.currentProfile(CurrentProfileDTO.builder()
+                    .id(shift.getCurrentProfile().getId())
+                    .profileCode(shift.getCurrentProfile().getProfileCode())
+                    .profileName(shift.getCurrentProfile().getProfileName())
+                    .category(shift.getCurrentProfile().getCategory())
+                    .colorCode(shift.getCurrentProfile().getColorCode())
+                    .build());
         }
 
         return builder.build();

@@ -36,6 +36,17 @@ public class ShiftService {
     private final DriverRepository driverRepository;
 
     /**
+     * Get all shifts
+     */
+    @Transactional(readOnly = true)
+    public List<CabShiftDTO> getAllShifts() {
+        log.info("Getting all shifts");
+        return cabShiftRepository.findAll().stream()
+                .map(CabShiftDTO::fromEntity)
+                .collect(Collectors.toList());
+    }
+
+    /**
      * Get all shifts for a cab
      */
     @Transactional(readOnly = true)

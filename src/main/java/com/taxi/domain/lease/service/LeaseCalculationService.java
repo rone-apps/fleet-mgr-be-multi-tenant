@@ -50,8 +50,9 @@ public class LeaseCalculationService {
                 "No active lease plan found for date: " + date));
 
         // Determine criteria for rate lookup
-        CabType cabType = cab.getCabType();
-        Boolean hasAirportLicense = cab.getHasAirportLicense();
+        // Attributes are now at shift level, not cab level
+        CabType cabType = shift.getCabType();
+        Boolean hasAirportLicense = shift.getHasAirportLicense();
         ShiftType shiftType = shift.getShiftType();
         DayOfWeek dayOfWeek = date.getDayOfWeek();
 
@@ -103,8 +104,9 @@ public class LeaseCalculationService {
             .orElseThrow(() -> new LeaseCalculationException(
                 "No active lease plan found for date: " + date));
 
-        CabType cabType = cab.getCabType();
-        Boolean hasAirportLicense = cab.getHasAirportLicense();
+        // Attributes are now at shift level, not cab level
+        CabType cabType = shift.getCabType();
+        Boolean hasAirportLicense = shift.getHasAirportLicense();
         ShiftType shiftType = shift.getShiftType();
         DayOfWeek dayOfWeek = date.getDayOfWeek();
 

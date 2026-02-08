@@ -1,6 +1,7 @@
 package com.taxi.domain.cab.model;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import com.taxi.domain.shift.model.CabShift;
 import jakarta.persistence.*;
 import lombok.*;
 import java.time.LocalDate;
@@ -29,7 +30,7 @@ import java.time.LocalDateTime;
 @NoArgsConstructor
 @AllArgsConstructor
 @Builder
-@ToString(exclude = {"cab", "attributeType"})
+@ToString(exclude = {"cab", "attributeType", "shift"})
 @EqualsAndHashCode(of = "id")
 public class CabAttributeValue {
 
@@ -44,6 +45,11 @@ public class CabAttributeValue {
     @ManyToOne(fetch = FetchType.EAGER)
     @JoinColumn(name = "attribute_type_id", nullable = false)
     private CabAttributeType attributeType;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "shift_id")
+    @JsonIgnoreProperties({"hibernateLazyInitializer", "handler"})
+    private CabShift shift;
 
     // Optional value (e.g., license number, transponder ID)
     @Column(name = "attribute_value", length = 255)

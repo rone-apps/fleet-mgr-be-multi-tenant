@@ -30,6 +30,18 @@ public class ShiftController {
     private final ShiftService shiftService;
 
     /**
+     * Get all shifts
+     * GET /api/shifts
+     */
+    @GetMapping
+    @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER', 'DISPATCHER')")
+    public ResponseEntity<List<CabShiftDTO>> getAllShifts() {
+        log.info("GET /api/shifts - Get all shifts");
+        List<CabShiftDTO> shifts = shiftService.getAllShifts();
+        return ResponseEntity.ok(shifts);
+    }
+
+    /**
      * Get all shifts for a cab
      * GET /api/shifts/cab/{cabId}
      */

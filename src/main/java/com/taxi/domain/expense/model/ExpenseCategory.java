@@ -1,6 +1,9 @@
 package com.taxi.domain.expense.model;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import com.taxi.domain.driver.model.Driver;
+import com.taxi.domain.shift.model.CabShift;
 import jakarta.persistence.*;
 import lombok.*;
 
@@ -58,6 +61,40 @@ public class ExpenseCategory {
     @Builder.Default
     private boolean isActive = true;
 
+    @Enumerated(EnumType.STRING)
+    @Column(name = "application_type", nullable = false, length = 30)
+    private ApplicationType applicationType;
+
+    @Column(name = "shift_profile_id")
+    private Long shiftProfileId;  // Link to shift profile for SHIFT_PROFILE application type
+
+    @Column(name = "specific_shift_id")
+    private Long specificShiftId;  // Link to specific shift for SPECIFIC_SHIFT application type
+
+    @Column(name = "specific_owner_id")
+    private Long specificOwnerId;  // Link to specific owner for SPECIFIC_OWNER_DRIVER application type
+
+    @Column(name = "specific_driver_id")
+    private Long specificDriverId;  // Link to specific driver for SPECIFIC_OWNER_DRIVER application type
+
+    // Relationships for eager loading in DTOs (read-only via JoinColumn insertable=false, updatable=false)
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "specific_shift_id", insertable = false, updatable = false)
+    private CabShift specificShift;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "specific_owner_id", insertable = false, updatable = false)
+    private Driver specificOwner;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "specific_driver_id", insertable = false, updatable = false)
+    private Driver specificDriver;
+
+    // Legacy support - kept for backward compatibility but will be deprecated
+    @OneToOne(mappedBy = "expenseCategory", cascade = CascadeType.ALL, orphanRemoval = true)
+    @JsonIgnore
+    private ExpenseCategoryRule categoryRule;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;
 
@@ -68,11 +105,50 @@ public class ExpenseCategory {
     protected void onCreate() {
         createdAt = LocalDateTime.now();
         updatedAt = LocalDateTime.now();
+        validateApplicationType();
     }
 
     @PreUpdate
     protected void onUpdate() {
         updatedAt = LocalDateTime.now();
+        validateApplicationType();
+    }
+
+    /**
+     * Validate that application type and related fields are consistent
+     * This ensures data integrity across all application type scenarios
+     */
+    private void validateApplicationType() {
+        if (applicationType == null) {
+            throw new IllegalStateException("Application type is required");
+        }
+
+        switch (applicationType) {
+            case SHIFT_PROFILE:
+                if (shiftProfileId == null) {
+                    throw new IllegalStateException("Shift profile ID required for SHIFT_PROFILE application type");
+                }
+                break;
+            case SPECIFIC_SHIFT:
+                if (specificShiftId == null) {
+                    throw new IllegalStateException("Specific shift ID required for SPECIFIC_SHIFT application type");
+                }
+                break;
+            case SPECIFIC_OWNER_DRIVER:
+                boolean hasOwner = specificOwnerId != null;
+                boolean hasDriver = specificDriverId != null;
+                if (!hasOwner && !hasDriver) {
+                    throw new IllegalStateException("Either owner ID or driver ID required for SPECIFIC_OWNER_DRIVER application type");
+                }
+                if (hasOwner && hasDriver) {
+                    throw new IllegalStateException("Cannot set both owner and driver for SPECIFIC_OWNER_DRIVER application type");
+                }
+                break;
+            case ALL_ACTIVE_SHIFTS:
+            case ALL_NON_OWNER_DRIVERS:
+                // No additional validation needed
+                break;
+        }
     }
 
     /**

@@ -6,6 +6,8 @@ import com.taxi.domain.cab.model.CabAttributeValue;
 import com.taxi.domain.cab.repository.CabAttributeValueRepository;
 import com.taxi.domain.cab.repository.CabRepository;
 import com.taxi.domain.cab.repository.CabAttributeTypeRepository;
+import com.taxi.domain.shift.model.CabShift;
+import com.taxi.domain.shift.repository.CabShiftRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -25,6 +27,7 @@ public class CabAttributeValueService {
     private final CabAttributeValueRepository attributeValueRepository;
     private final CabRepository cabRepository;
     private final CabAttributeTypeRepository attributeTypeRepository;
+    private final CabShiftRepository cabShiftRepository;
 
     /**
      * Assign an attribute to a cab with date range
@@ -223,6 +226,226 @@ public class CabAttributeValueService {
     @Transactional
     public void deleteAttributeValue(Long id) {
         log.info("Deleting attribute value ID: {}", id);
+        attributeValueRepository.deleteById(id);
+    }
+
+    // ============================================================================
+    // SHIFT-LEVEL ATTRIBUTE OPERATIONS
+    // ============================================================================
+    // New methods for managing custom attributes at shift level
+
+    /**
+     * Assign an attribute to a shift with date range
+     */
+    @Transactional
+    public CabAttributeValue assignAttributeToShift(
+            Long shiftId,
+            Long attributeTypeId,
+            String attributeValue,
+            LocalDate startDate,
+            LocalDate endDate,
+            String notes) {
+
+        log.info("Assigning attribute {} to shift {}", attributeTypeId, shiftId);
+
+        CabShift shift = cabShiftRepository.findByIdWithCab(shiftId)
+                .orElseThrow(() -> new RuntimeException("Shift not found: " + shiftId));
+
+        CabAttributeType attributeType = attributeTypeRepository.findById(attributeTypeId)
+                .orElseThrow(() -> new RuntimeException("Attribute type not found: " + attributeTypeId));
+
+        // Validate dates
+        if (endDate != null && startDate.isAfter(endDate)) {
+            throw new RuntimeException("Start date must be before or equal to end date");
+        }
+
+        // Check for overlapping assignments
+        List<CabAttributeValue> overlapping = attributeValueRepository.findOverlappingAttributesForShift(
+            shift, attributeType, startDate, endDate != null ? endDate : LocalDate.of(9999, 12, 31), -1L);
+
+        if (!overlapping.isEmpty()) {
+            throw new RuntimeException(
+                "Attribute assignment overlaps with existing assignment(s). " +
+                "Please end the current assignment first or choose a different date range.");
+        }
+
+        // Validate attribute value if required
+        if (attributeType.isRequiresValue() && (attributeValue == null || attributeValue.trim().isEmpty())) {
+            throw new RuntimeException("Attribute value is required for: " + attributeType.getAttributeName());
+        }
+
+        CabAttributeValue value = CabAttributeValue.builder()
+                .cab(shift.getCab())  // Set cab from shift
+                .shift(shift)
+                .attributeType(attributeType)
+                .attributeValue(attributeValue)
+                .startDate(startDate)
+                .endDate(endDate)
+                .notes(notes)
+                .build();
+
+        return attributeValueRepository.save(value);
+    }
+
+    /**
+     * Update an existing shift attribute assignment
+     */
+    @Transactional
+    public CabAttributeValue updateShiftAttributeValue(Long id, String attributeValue,
+            LocalDate startDate, LocalDate endDate, String notes) {
+
+        log.info("Updating shift attribute value ID: {}", id);
+
+        CabAttributeValue value = attributeValueRepository.findById(id)
+                .orElseThrow(() -> new RuntimeException("Attribute value not found: " + id));
+
+        if (value.getShift() == null) {
+            throw new RuntimeException("This attribute is not a shift-level attribute");
+        }
+
+        // Validate dates if provided
+        LocalDate newStartDate = startDate != null ? startDate : value.getStartDate();
+        LocalDate newEndDate = endDate != null ? endDate : value.getEndDate();
+
+        if (newEndDate != null && newStartDate.isAfter(newEndDate)) {
+            throw new RuntimeException("Start date must be before or equal to end date");
+        }
+
+        // Check for overlapping assignments (excluding this one)
+        List<CabAttributeValue> overlapping = attributeValueRepository.findOverlappingAttributesForShift(
+            value.getShift(), value.getAttributeType(), newStartDate,
+            newEndDate != null ? newEndDate : LocalDate.of(9999, 12, 31), id);
+
+        if (!overlapping.isEmpty()) {
+            throw new RuntimeException("Updated dates overlap with existing assignment(s)");
+        }
+
+        if (attributeValue != null) {
+            value.setAttributeValue(attributeValue);
+        }
+        if (startDate != null) {
+            value.setStartDate(startDate);
+        }
+        value.setEndDate(endDate);
+        if (notes != null) {
+            value.setNotes(notes);
+        }
+
+        return attributeValueRepository.save(value);
+    }
+
+    /**
+     * End a shift attribute assignment (set end date)
+     */
+    @Transactional
+    public void endShiftAttributeAssignment(Long id, LocalDate endDate) {
+        log.info("Ending shift attribute assignment ID: {} on {}", id, endDate);
+
+        CabAttributeValue value = attributeValueRepository.findById(id)
+                .orElseThrow(() -> new RuntimeException("Attribute value not found: " + id));
+
+        if (value.getShift() == null) {
+            throw new RuntimeException("This attribute is not a shift-level attribute");
+        }
+
+        if (endDate.isBefore(value.getStartDate())) {
+            throw new RuntimeException("End date cannot be before start date");
+        }
+
+        value.setEndDate(endDate);
+        attributeValueRepository.save(value);
+    }
+
+    /**
+     * Get current attributes for a shift
+     */
+    @Transactional(readOnly = true)
+    public List<CabAttributeValue> getCurrentAttributesByShift(Long shiftId) {
+        log.info("Getting current attributes for shift ID: {}", shiftId);
+        return attributeValueRepository.findCurrentAttributesByShiftId(shiftId);
+    }
+
+    /**
+     * Get attributes active on a specific date for a shift
+     */
+    @Transactional(readOnly = true)
+    public List<CabAttributeValue> getAttributesOnDateByShift(Long shiftId, LocalDate date) {
+        log.info("Getting attributes for shift {} on {}", shiftId, date);
+
+        CabShift shift = cabShiftRepository.findById(shiftId)
+                .orElseThrow(() -> new RuntimeException("Shift not found: " + shiftId));
+
+        return attributeValueRepository.findAttributesActiveOnDateByShift(shift, date);
+    }
+
+    /**
+     * Get full attribute history for a shift
+     */
+    @Transactional(readOnly = true)
+    public List<CabAttributeValue> getAttributeHistoryByShift(Long shiftId) {
+        log.info("Getting attribute history for shift ID: {}", shiftId);
+
+        CabShift shift = cabShiftRepository.findById(shiftId)
+                .orElseThrow(() -> new RuntimeException("Shift not found: " + shiftId));
+
+        return attributeValueRepository.findByShiftOrderByStartDateDesc(shift);
+    }
+
+    /**
+     * Get history for a specific attribute type on a shift
+     */
+    @Transactional(readOnly = true)
+    public List<CabAttributeValue> getAttributeHistoryByShiftAndType(Long shiftId, Long attributeTypeId) {
+        log.info("Getting attribute history for shift {} and type {}", shiftId, attributeTypeId);
+
+        CabShift shift = cabShiftRepository.findById(shiftId)
+                .orElseThrow(() -> new RuntimeException("Shift not found: " + shiftId));
+
+        CabAttributeType attributeType = attributeTypeRepository.findById(attributeTypeId)
+                .orElseThrow(() -> new RuntimeException("Attribute type not found: " + attributeTypeId));
+
+        return attributeValueRepository.findAttributeHistoryByShiftAndType(shift, attributeType);
+    }
+
+    /**
+     * Check if shift has a specific attribute currently
+     */
+    @Transactional(readOnly = true)
+    public boolean hasShiftAttributeNow(Long shiftId, String attributeCode) {
+        CabShift shift = cabShiftRepository.findById(shiftId)
+                .orElseThrow(() -> new RuntimeException("Shift not found: " + shiftId));
+
+        CabAttributeType attributeType = attributeTypeRepository.findByAttributeCode(attributeCode)
+                .orElseThrow(() -> new RuntimeException("Attribute type not found: " + attributeCode));
+
+        return attributeValueRepository.findCurrentAttributeByShiftAndType(shift, attributeType).isPresent();
+    }
+
+    /**
+     * Get all shifts with a specific attribute currently
+     */
+    @Transactional(readOnly = true)
+    public List<CabAttributeValue> getShiftsWithAttribute(Long attributeTypeId) {
+        CabAttributeType attributeType = attributeTypeRepository.findById(attributeTypeId)
+                .orElseThrow(() -> new RuntimeException("Attribute type not found: " + attributeTypeId));
+
+        return attributeValueRepository.findShiftsWithCurrentAttribute(attributeType);
+    }
+
+    /**
+     * Delete a shift attribute assignment
+     */
+    @Transactional
+    public void deleteShiftAttributeValue(Long id) {
+        log.info("Deleting shift attribute value ID: {}", id);
+
+        CabAttributeValue value = attributeValueRepository.findById(id)
+                .orElseThrow(() -> new RuntimeException("Attribute value not found: " + id));
+
+        if (value.getShift() == null) {
+            throw new RuntimeException("This attribute is not a shift-level attribute");
+        }
+
         attributeValueRepository.deleteById(id);
     }
 }

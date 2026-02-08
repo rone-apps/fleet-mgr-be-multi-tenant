@@ -52,6 +52,7 @@ public class CabDTO {
 
     /**
      * Convert Cab entity to DTO
+     * Note: Attributes like cabType, shareType, status are now at shift level
      */
     public static CabDTO fromEntity(Cab cab) {
         if (cab == null) {
@@ -66,14 +67,15 @@ public class CabDTO {
                 .model(cab.getModel())
                 .year(cab.getYear())
                 .color(cab.getColor())
-                .cabType(cab.getCabType() != null ? cab.getCabType().name() : null)
-                .shareType(cab.getShareType() != null ? cab.getShareType().name() : null)
-                .cabShiftType(cab.getCabShiftType() != null ? cab.getCabShiftType().name() : null)
-                .hasAirportLicense(Boolean.TRUE.equals(cab.getHasAirportLicense()))
-                .airportLicenseNumber(cab.getAirportLicenseNumber())
-                .airportLicenseExpiry(cab.getAirportLicenseExpiry())
-                .airportLicenseExpired(cab.isAirportLicenseExpired())
-                .status(cab.getStatus() != null ? cab.getStatus().name() : null)
+                // Attributes are now at shift level, not cab level
+                .cabType(null)
+                .shareType(null)
+                .cabShiftType(null)
+                .hasAirportLicense(false)
+                .airportLicenseNumber(null)
+                .airportLicenseExpiry(null)
+                .airportLicenseExpired(false)
+                .status(null)
                 .notes(cab.getNotes())
                 .isCompanyOwned(cab.isCompanyOwned())
                 .createdAt(cab.getCreatedAt())

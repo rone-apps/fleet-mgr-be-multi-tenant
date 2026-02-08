@@ -72,4 +72,27 @@ public interface CabShiftRepository extends JpaRepository<CabShift, Long> {
      */
     @Query("SELECT cs FROM CabShift cs WHERE cs.cab.cabNumber = :cabNumber AND cs.shiftType = :shiftType")
     Optional<CabShift> findByCabNumberAndShiftType(@Param("cabNumber") String cabNumber, @Param("shiftType") ShiftType shiftType);
+
+    /**
+     * Find shift by ID with cab eagerly loaded (to avoid LazyInitializationException)
+     */
+    @Query("SELECT cs FROM CabShift cs LEFT JOIN FETCH cs.cab WHERE cs.id = :id")
+    Optional<CabShift> findByIdWithCab(@Param("id") Long id);
+
+    /**
+     * Find all shifts with a specific current profile
+     */
+    List<CabShift> findByCurrentProfileId(Long profileId);
+
+    /**
+     * Find all active shifts with a specific current profile
+     */
+    @Query("SELECT cs FROM CabShift cs WHERE cs.currentProfile.id = :profileId AND cs.status = 'ACTIVE'")
+    List<CabShift> findActiveByCurrentProfileId(@Param("profileId") Long profileId);
+
+    /**
+     * Find all currently active shifts (for ALL_ACTIVE_SHIFTS application type)
+     */
+    @Query("SELECT cs FROM CabShift cs WHERE cs.status = 'ACTIVE'")
+    List<CabShift> findAllActiveShifts();
 }

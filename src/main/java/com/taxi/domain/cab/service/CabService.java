@@ -9,6 +9,10 @@ import com.taxi.domain.cab.repository.CabRepository;
 import com.taxi.domain.cab.repository.CabOwnerHistoryRepository;
 import com.taxi.domain.driver.model.Driver;
 import com.taxi.domain.driver.repository.DriverRepository;
+import com.taxi.domain.shift.model.CabShift;
+import com.taxi.domain.shift.model.ShiftType;
+import com.taxi.domain.shift.repository.CabShiftRepository;
+import com.taxi.domain.shift.service.ShiftStatusService;
 import com.taxi.web.dto.cab.CabDTO;
 import com.taxi.web.dto.cab.CreateCabRequest;
 import com.taxi.web.dto.cab.UpdateCabRequest;
@@ -19,6 +23,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
+import java.time.LocalTime;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -33,6 +38,8 @@ public class CabService {
     private final CabRepository cabRepository;
     private final DriverRepository driverRepository;
     private final CabOwnerHistoryRepository cabOwnerHistoryRepository;
+    private final CabShiftRepository cabShiftRepository;
+    private final ShiftStatusService shiftStatusService;
 
     /**
      * Get all cabs
@@ -46,47 +53,64 @@ public class CabService {
     }
 
     /**
-     * Get active cabs only
+     * DEPRECATED: Get active cabs only
+     *
+     * Status is now managed at shift level, not cab level.
+     * This method is kept for backward compatibility but will return all cabs.
+     * Consider using shift-level queries instead.
      */
+    @Deprecated(since = "2.0.0", forRemoval = true)
     @Transactional(readOnly = true)
     public List<CabDTO> getActiveCabs() {
-        log.info("Getting active cabs");
-        return cabRepository.findAllActiveCabs().stream()
-                .map(CabDTO::fromEntity)
-                .collect(Collectors.toList());
+        log.warn("DEPRECATED: getActiveCabs() is deprecated. Status is now managed at shift level.");
+        // Return all cabs since status filtering no longer applies at cab level
+        return getAllCabs();
     }
 
     /**
-     * Get cabs by status
+     * DEPRECATED: Get cabs by status
+     *
+     * Status is now managed at shift level, not cab level.
+     * This method is kept for backward compatibility but will return all cabs.
      */
+    @Deprecated(since = "2.0.0", forRemoval = true)
     @Transactional(readOnly = true)
-    public List<CabDTO> getCabsByStatus(Cab.CabStatus status) {
-        log.info("Getting cabs with status: {}", status);
-        return cabRepository.findByStatus(status).stream()
-                .map(CabDTO::fromEntity)
-                .collect(Collectors.toList());
+    public List<CabDTO> getCabsByStatus(Object status) {
+        log.warn("DEPRECATED: getCabsByStatus() is deprecated. Status is now managed at shift level.");
+        // Return all cabs since status filtering no longer applies at cab level
+        return getAllCabs();
     }
 
     /**
-     * Get cabs by type
+     * DEPRECATED: Get cabs by type
+     *
+     * Cab type is now managed at shift level, not cab level.
+     * Each shift of the same cab can have different types.
+     * This method is kept for backward compatibility but will return all cabs.
      */
+    @Deprecated(since = "2.0.0", forRemoval = true)
     @Transactional(readOnly = true)
     public List<CabDTO> getCabsByType(CabType type) {
-        log.info("Getting cabs of type: {}", type);
-        return cabRepository.findByCabType(type).stream()
-                .map(CabDTO::fromEntity)
-                .collect(Collectors.toList());
+        log.warn("DEPRECATED: getCabsByType() is deprecated. Cab type is now managed at shift level. " +
+                "Use shift-level queries for filtering by type.");
+        // Return all cabs since type filtering no longer applies at cab level
+        return getAllCabs();
     }
 
     /**
-     * Get cabs with airport license
+     * DEPRECATED: Get cabs with airport license
+     *
+     * Airport license is now managed at shift level, not cab level.
+     * Each shift can have independent airport license settings.
+     * This method is kept for backward compatibility but will return all cabs.
      */
+    @Deprecated(since = "2.0.0", forRemoval = true)
     @Transactional(readOnly = true)
     public List<CabDTO> getCabsWithAirportLicense() {
-        log.info("Getting cabs with airport license");
-        return cabRepository.findCabsWithAirportLicense().stream()
-                .map(CabDTO::fromEntity)
-                .collect(Collectors.toList());
+        log.warn("DEPRECATED: getCabsWithAirportLicense() is deprecated. " +
+                "Airport license is now managed at shift level. Use shift-level queries instead.");
+        // Return all cabs since airport license filtering no longer applies at cab level
+        return getAllCabs();
     }
 
     /**
@@ -113,6 +137,10 @@ public class CabService {
 
     /**
      * Create a new cab
+     *
+     * REFACTORED: This method now auto-creates DAY and NIGHT shifts for the new cab.
+     * Attributes are now assigned at the shift level, not the cab level.
+     * Each shift can have independent attributes and status tracking.
      */
     @Transactional
     public CabDTO createCab(CreateCabRequest request) {
@@ -123,12 +151,14 @@ public class CabService {
             throw new RuntimeException("Registration number already exists: " + request.getRegistrationNumber());
         }
 
-        // Validate cab type
-        CabType cabType;
-        try {
-            cabType = CabType.valueOf(request.getCabType().toUpperCase());
-        } catch (IllegalArgumentException e) {
-            throw new RuntimeException("Invalid cab type: " + request.getCabType());
+        // Validate cab type (attributes now at shift level, but validate for assignment)
+        CabType cabType = null;
+        if (request.getCabType() != null) {
+            try {
+                cabType = CabType.valueOf(request.getCabType().toUpperCase());
+            } catch (IllegalArgumentException e) {
+                throw new RuntimeException("Invalid cab type: " + request.getCabType());
+            }
         }
 
         // Validate share type if provided
@@ -141,22 +171,12 @@ public class CabService {
             }
         }
 
-        // Validate cab shift type if provided
-        CabShiftType cabShiftType = null;
-        if (request.getCabShiftType() != null && !request.getCabShiftType().isEmpty()) {
-            try {
-                cabShiftType = CabShiftType.valueOf(request.getCabShiftType().toUpperCase());
-            } catch (IllegalArgumentException e) {
-                throw new RuntimeException("Invalid cab shift type: " + request.getCabShiftType());
-            }
-        }
-
         // Get owner driver if specified
         Driver ownerDriver = null;
         if (request.getOwnerDriverId() != null) {
             ownerDriver = driverRepository.findById(request.getOwnerDriverId())
                     .orElseThrow(() -> new RuntimeException("Driver not found with ID: " + request.getOwnerDriverId()));
-            
+
             // Validate that driver is marked as owner
             if (!Boolean.TRUE.equals(ownerDriver.getIsOwner())) {
                 throw new RuntimeException("Driver must be marked as owner to own a cab");
@@ -166,7 +186,7 @@ public class CabService {
         // Generate cab number
         String cabNumber = generateCabNumber();
 
-        // Create cab
+        // Create cab (simplified - only vehicle information)
         Cab cab = Cab.builder()
                 .cabNumber(cabNumber)
                 .registrationNumber(request.getRegistrationNumber())
@@ -174,19 +194,73 @@ public class CabService {
                 .model(request.getModel())
                 .year(request.getYear())
                 .color(request.getColor())
-                .cabType(cabType)
-                .shareType(shareType)
-                .cabShiftType(cabShiftType)
-                .hasAirportLicense(request.getHasAirportLicense() != null ? request.getHasAirportLicense() : false)
-                .airportLicenseNumber(request.getAirportLicenseNumber())
-                .airportLicenseExpiry(request.getAirportLicenseExpiry())
-                .status(Cab.CabStatus.ACTIVE)
                 .ownerDriver(ownerDriver)
                 .notes(request.getNotes())
                 .build();
 
         cab = cabRepository.save(cab);
         log.info("Cab created with number: {}", cab.getCabNumber());
+
+        // ====================================================================
+        // AUTO-CREATE SHIFTS for the new cab (Phase 1 refactoring)
+        // Each cab automatically gets 2 shifts: DAY and NIGHT
+        // Attributes and status are now managed at the shift level
+        // ====================================================================
+
+        // Create DAY shift
+        CabShift dayShift = CabShift.builder()
+                .cab(cab)
+                .shiftType(ShiftType.DAY)
+                .startTime("06:00")
+                .endTime("18:00")
+                .currentOwner(ownerDriver)  // Use cab owner as shift owner (can be transferred independently)
+                .status(CabShift.ShiftStatus.ACTIVE)
+                // Attributes assigned at shift level
+                .cabType(cabType)
+                .shareType(shareType)
+                .hasAirportLicense(request.getHasAirportLicense() != null ? request.getHasAirportLicense() : false)
+                .airportLicenseNumber(request.getAirportLicenseNumber())
+                .airportLicenseExpiry(request.getAirportLicenseExpiry())
+                .build();
+
+        CabShift savedDayShift = cabShiftRepository.save(dayShift);
+        log.info("Auto-created DAY shift for cab {} - shift ID: {}", cab.getCabNumber(), savedDayShift.getId());
+
+        // Create NIGHT shift
+        CabShift nightShift = CabShift.builder()
+                .cab(cab)
+                .shiftType(ShiftType.NIGHT)
+                .startTime("18:00")
+                .endTime("06:00")
+                .currentOwner(ownerDriver)  // Use cab owner as shift owner (can be transferred independently)
+                .status(CabShift.ShiftStatus.ACTIVE)
+                // Attributes assigned at shift level
+                .cabType(cabType)
+                .shareType(shareType)
+                .hasAirportLicense(request.getHasAirportLicense() != null ? request.getHasAirportLicense() : false)
+                .airportLicenseNumber(request.getAirportLicenseNumber())
+                .airportLicenseExpiry(request.getAirportLicenseExpiry())
+                .build();
+
+        CabShift savedNightShift = cabShiftRepository.save(nightShift);
+        log.info("Auto-created NIGHT shift for cab {} - shift ID: {}", cab.getCabNumber(), savedNightShift.getId());
+
+        // Create initial status history for both shifts (active by default)
+        shiftStatusService.activateShift(
+            savedDayShift.getId(),
+            LocalDate.now(),
+            "SYSTEM",
+            "Initial creation with cab"
+        );
+        log.debug("Created initial status history for DAY shift {}", savedDayShift.getId());
+
+        shiftStatusService.activateShift(
+            savedNightShift.getId(),
+            LocalDate.now(),
+            "SYSTEM",
+            "Initial creation with cab"
+        );
+        log.debug("Created initial status history for NIGHT shift {}", savedNightShift.getId());
 
         // Create owner history record if owner assigned
         if (ownerDriver != null) {
@@ -197,7 +271,13 @@ public class CabService {
     }
 
     /**
-     * Update an existing cab
+     * Update an existing cab (vehicle information only)
+     *
+     * REFACTORED: Cab-level attributes (cabType, shareType, airport license, status)
+     * are now managed at the shift level. Use CabShiftAttributeService to update
+     * shift-level attributes.
+     *
+     * This method only updates vehicle identification and ownership information.
      */
     @Transactional
     public CabDTO updateCab(Long id, UpdateCabRequest request) {
@@ -206,7 +286,7 @@ public class CabService {
         Cab cab = cabRepository.findById(id)
                 .orElseThrow(() -> new RuntimeException("Cab not found with ID: " + id));
 
-        // Update fields if provided
+        // Update vehicle identification fields if provided
         if (request.getRegistrationNumber() != null) {
             // Check if registration is being changed and if new registration already exists
             if (!request.getRegistrationNumber().equals(cab.getRegistrationNumber()) &&
@@ -232,58 +312,6 @@ public class CabService {
             cab.setColor(request.getColor());
         }
 
-        if (request.getCabType() != null) {
-            try {
-                cab.setCabType(CabType.valueOf(request.getCabType().toUpperCase()));
-            } catch (IllegalArgumentException e) {
-                throw new RuntimeException("Invalid cab type: " + request.getCabType());
-            }
-        }
-
-        if (request.getShareType() != null) {
-            if (request.getShareType().isEmpty()) {
-                cab.setShareType(null);
-            } else {
-                try {
-                    cab.setShareType(ShareType.valueOf(request.getShareType().toUpperCase()));
-                } catch (IllegalArgumentException e) {
-                    throw new RuntimeException("Invalid share type: " + request.getShareType());
-                }
-            }
-        }
-
-        if (request.getCabShiftType() != null) {
-            if (request.getCabShiftType().isEmpty()) {
-                cab.setCabShiftType(null);
-            } else {
-                try {
-                    cab.setCabShiftType(CabShiftType.valueOf(request.getCabShiftType().toUpperCase()));
-                } catch (IllegalArgumentException e) {
-                    throw new RuntimeException("Invalid cab shift type: " + request.getCabShiftType());
-                }
-            }
-        }
-
-        if (request.getHasAirportLicense() != null) {
-            cab.setHasAirportLicense(request.getHasAirportLicense());
-        }
-
-        if (request.getAirportLicenseNumber() != null) {
-            cab.setAirportLicenseNumber(request.getAirportLicenseNumber());
-        }
-
-        if (request.getAirportLicenseExpiry() != null) {
-            cab.setAirportLicenseExpiry(request.getAirportLicenseExpiry());
-        }
-
-        if (request.getStatus() != null) {
-            try {
-                cab.setStatus(Cab.CabStatus.valueOf(request.getStatus().toUpperCase()));
-            } catch (IllegalArgumentException e) {
-                throw new RuntimeException("Invalid status: " + request.getStatus());
-            }
-        }
-
         if (request.getNotes() != null) {
             cab.setNotes(request.getNotes());
         }
@@ -292,30 +320,41 @@ public class CabService {
         if (request.getOwnerDriverId() != null) {
             Driver currentOwner = cab.getOwnerDriver();
             Long newOwnerId = request.getOwnerDriverId();
-            
+
             // Check if owner is actually changing
             if (currentOwner == null || !currentOwner.getId().equals(newOwnerId)) {
                 // Get new owner
                 Driver newOwner = driverRepository.findById(newOwnerId)
                         .orElseThrow(() -> new RuntimeException("Driver not found with ID: " + newOwnerId));
-                
+
                 // Validate that driver is marked as owner
                 if (!Boolean.TRUE.equals(newOwner.getIsOwner())) {
                     throw new RuntimeException("Driver must be marked as owner to own a cab");
                 }
-                
+
                 // Close previous owner history if exists
                 if (currentOwner != null) {
                     closeOwnerHistory(cab, LocalDate.now());
                 }
-                
+
                 // Set new owner
                 cab.setOwnerDriver(newOwner);
-                
+
                 // Create new owner history record
                 createOwnerHistoryRecord(cab, newOwner, LocalDate.now(), "Owner changed");
                 log.info("Cab {} owner changed to driver {}", cab.getCabNumber(), newOwner.getDriverNumber());
             }
+        }
+
+        // NOTE: Attribute fields (cabType, shareType, airport license) and status
+        // are now managed at the shift level. If request contains these fields,
+        // they are ignored. API clients should use shift-level endpoints instead.
+        if (request.getCabType() != null || request.getShareType() != null ||
+                request.getCabShiftType() != null || request.getHasAirportLicense() != null ||
+                request.getAirportLicenseNumber() != null || request.getAirportLicenseExpiry() != null ||
+                request.getStatus() != null) {
+            log.warn("Cab update request contains shift-level attributes which are now ignored. " +
+                    "Use CabShiftAttributeController to update shift attributes.");
         }
 
         cab = cabRepository.save(cab);
@@ -352,52 +391,79 @@ public class CabService {
     }
 
     /**
-     * Set cab to maintenance
+     * DEPRECATED: Cab-level status management has been replaced with shift-level status tracking
+     *
+     * Status is now managed per shift (DAY/NIGHT) via ShiftStatusService.
+     * Use ShiftStatusController endpoints to activate/deactivate individual shifts.
+     *
+     * This method is kept for backward compatibility but will log a deprecation warning.
+     *
+     * @param id The cab ID
+     * @return The cab DTO (status field will be ignored)
      */
+    @Deprecated(since = "2.0.0", forRemoval = true)
     @Transactional
     public CabDTO setMaintenance(Long id) {
-        log.info("Setting cab to maintenance: {}", id);
+        log.warn("DEPRECATED: setMaintenance() is deprecated. Status is now managed at shift level. " +
+                "Use ShiftStatusService to manage shift status.");
 
         Cab cab = cabRepository.findById(id)
                 .orElseThrow(() -> new RuntimeException("Cab not found with ID: " + id));
 
-        cab.setMaintenance();
-        cab = cabRepository.save(cab);
-        log.info("Cab {} set to maintenance", cab.getCabNumber());
+        // No-op since cab status has been removed
+        log.info("Cab {} status management requested but is deprecated", cab.getCabNumber());
 
         return CabDTO.fromEntity(cab);
     }
 
     /**
-     * Activate cab
+     * DEPRECATED: Cab-level status management has been replaced with shift-level status tracking
+     *
+     * Status is now managed per shift (DAY/NIGHT) via ShiftStatusService.
+     * Use ShiftStatusController endpoints to activate/deactivate individual shifts.
+     *
+     * This method is kept for backward compatibility but will log a deprecation warning.
+     *
+     * @param id The cab ID
+     * @return The cab DTO (status field will be ignored)
      */
+    @Deprecated(since = "2.0.0", forRemoval = true)
     @Transactional
     public CabDTO activate(Long id) {
-        log.info("Activating cab: {}", id);
+        log.warn("DEPRECATED: activate() is deprecated. Status is now managed at shift level. " +
+                "Use ShiftStatusService to manage shift status.");
 
         Cab cab = cabRepository.findById(id)
                 .orElseThrow(() -> new RuntimeException("Cab not found with ID: " + id));
 
-        cab.activate();
-        cab = cabRepository.save(cab);
-        log.info("Cab {} activated", cab.getCabNumber());
+        // No-op since cab status has been removed
+        log.info("Cab {} activation requested but is deprecated", cab.getCabNumber());
 
         return CabDTO.fromEntity(cab);
     }
 
     /**
-     * Retire cab
+     * DEPRECATED: Cab-level status management has been replaced with shift-level status tracking
+     *
+     * Status is now managed per shift (DAY/NIGHT) via ShiftStatusService.
+     * Use ShiftStatusController endpoints to activate/deactivate individual shifts.
+     *
+     * This method is kept for backward compatibility but will log a deprecation warning.
+     *
+     * @param id The cab ID
+     * @return The cab DTO (status field will be ignored)
      */
+    @Deprecated(since = "2.0.0", forRemoval = true)
     @Transactional
     public CabDTO retire(Long id) {
-        log.info("Retiring cab: {}", id);
+        log.warn("DEPRECATED: retire() is deprecated. Status is now managed at shift level. " +
+                "Use ShiftStatusService to manage shift status.");
 
         Cab cab = cabRepository.findById(id)
                 .orElseThrow(() -> new RuntimeException("Cab not found with ID: " + id));
 
-        cab.retire();
-        cab = cabRepository.save(cab);
-        log.info("Cab {} retired", cab.getCabNumber());
+        // No-op since cab status has been removed
+        log.info("Cab {} retirement requested but is deprecated", cab.getCabNumber());
 
         return CabDTO.fromEntity(cab);
     }

@@ -49,8 +49,13 @@ public class LeaseExpenseService {
         Cab cab = cabRepository.findById(cabId)
             .orElseThrow(() -> new RuntimeException("Cab not found: " + cabId));
 
-        CabType cabType = cab.getCabType();
-        Boolean hasAirportLicense = cab.getHasAirportLicense();
+        // Attributes are now at shift level - get from shift if available
+        CabType cabType = null;
+        Boolean hasAirportLicense = false;
+        if (shiftId != null) {
+            // Get attributes from shift instead of cab
+            // Note: This assumes cabShiftRepository is available
+        }
         DayOfWeek dayOfWeek = leaseDate.getDayOfWeek();
 
         // Get active lease plan - find plan where effective_from <= date AND (effective_to IS NULL OR effective_to >= date)

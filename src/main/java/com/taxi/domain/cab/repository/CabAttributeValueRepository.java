@@ -3,6 +3,7 @@ package com.taxi.domain.cab.repository;
 import com.taxi.domain.cab.model.Cab;
 import com.taxi.domain.cab.model.CabAttributeType;
 import com.taxi.domain.cab.model.CabAttributeValue;
+import com.taxi.domain.shift.model.CabShift;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -141,4 +142,155 @@ public interface CabAttributeValueRepository extends JpaRepository<CabAttributeV
         @Param("startDate") LocalDate startDate,
         @Param("endDate") LocalDate endDate,
         @Param("excludeId") Long excludeId);
+
+    /**
+     * Find all attributes active on a specific date for a cab
+     * Convenience method for temporal matching queries
+     */
+    @Query("SELECT v FROM CabAttributeValue v " +
+           "WHERE v.cab = :cab " +
+           "AND v.startDate <= :date " +
+           "AND (v.endDate IS NULL OR v.endDate >= :date)")
+    List<CabAttributeValue> findByCabAndActiveOn(
+        @Param("cab") Cab cab,
+        @Param("date") LocalDate date);
+
+    // ============================================================================
+    // SHIFT-LEVEL ATTRIBUTE QUERIES
+    // ============================================================================
+    // Methods for managing custom attributes at shift level (new feature)
+
+    /**
+     * Get all attribute values for a shift (including history)
+     */
+    @Query("SELECT v FROM CabAttributeValue v " +
+           "JOIN FETCH v.shift " +
+           "JOIN FETCH v.attributeType " +
+           "WHERE v.shift = :shift " +
+           "ORDER BY v.startDate DESC")
+    List<CabAttributeValue> findByShiftOrderByStartDateDesc(@Param("shift") CabShift shift);
+
+    /**
+     * Get current attributes for a shift (where endDate is null)
+     */
+    @Query("SELECT v FROM CabAttributeValue v " +
+           "JOIN FETCH v.shift " +
+           "JOIN FETCH v.attributeType " +
+           "WHERE v.shift = :shift AND v.endDate IS NULL")
+    List<CabAttributeValue> findCurrentAttributesByShift(@Param("shift") CabShift shift);
+
+    /**
+     * Get current attributes by shift ID (more efficient)
+     */
+    @Query("SELECT v FROM CabAttributeValue v " +
+           "JOIN FETCH v.shift " +
+           "JOIN FETCH v.attributeType " +
+           "WHERE v.shift.id = :shiftId AND v.endDate IS NULL")
+    List<CabAttributeValue> findCurrentAttributesByShiftId(@Param("shiftId") Long shiftId);
+
+    /**
+     * Get attributes active on a specific date for a shift
+     */
+    @Query("SELECT v FROM CabAttributeValue v " +
+           "JOIN FETCH v.shift " +
+           "JOIN FETCH v.attributeType " +
+           "WHERE v.shift = :shift " +
+           "AND v.startDate <= :date " +
+           "AND (v.endDate IS NULL OR v.endDate >= :date)")
+    List<CabAttributeValue> findAttributesActiveOnDateByShift(
+        @Param("shift") CabShift shift,
+        @Param("date") LocalDate date);
+
+    /**
+     * Check if shift has a specific attribute currently
+     */
+    @Query("SELECT v FROM CabAttributeValue v " +
+           "WHERE v.shift = :shift " +
+           "AND v.attributeType = :attributeType " +
+           "AND v.endDate IS NULL")
+    Optional<CabAttributeValue> findCurrentAttributeByShiftAndType(
+        @Param("shift") CabShift shift,
+        @Param("attributeType") CabAttributeType attributeType);
+
+    /**
+     * Check if shift has a specific attribute on a date
+     */
+    @Query("SELECT v FROM CabAttributeValue v " +
+           "WHERE v.shift = :shift " +
+           "AND v.attributeType = :attributeType " +
+           "AND v.startDate <= :date " +
+           "AND (v.endDate IS NULL OR v.endDate >= :date)")
+    Optional<CabAttributeValue> findAttributeOnDateByShift(
+        @Param("shift") CabShift shift,
+        @Param("attributeType") CabAttributeType attributeType,
+        @Param("date") LocalDate date);
+
+    /**
+     * Get attribute history for a specific type on a shift
+     */
+    @Query("SELECT v FROM CabAttributeValue v " +
+           "JOIN FETCH v.shift " +
+           "JOIN FETCH v.attributeType " +
+           "WHERE v.shift = :shift " +
+           "AND v.attributeType = :attributeType " +
+           "ORDER BY v.startDate DESC")
+    List<CabAttributeValue> findAttributeHistoryByShiftAndType(
+        @Param("shift") CabShift shift,
+        @Param("attributeType") CabAttributeType attributeType);
+
+    /**
+     * Find all shifts with a specific attribute currently
+     */
+    @Query("SELECT v FROM CabAttributeValue v " +
+           "JOIN FETCH v.shift " +
+           "JOIN FETCH v.attributeType " +
+           "WHERE v.shift IS NOT NULL " +
+           "AND v.attributeType = :attributeType " +
+           "AND v.endDate IS NULL")
+    List<CabAttributeValue> findShiftsWithCurrentAttribute(
+        @Param("attributeType") CabAttributeType attributeType);
+
+    /**
+     * Find all shifts with a specific attribute on a date
+     */
+    @Query("SELECT v FROM CabAttributeValue v " +
+           "JOIN FETCH v.shift " +
+           "JOIN FETCH v.attributeType " +
+           "WHERE v.shift IS NOT NULL " +
+           "AND v.attributeType = :attributeType " +
+           "AND v.startDate <= :date " +
+           "AND (v.endDate IS NULL OR v.endDate >= :date)")
+    List<CabAttributeValue> findShiftsWithAttributeOnDate(
+        @Param("attributeType") CabAttributeType attributeType,
+        @Param("date") LocalDate date);
+
+    /**
+     * Check for overlapping attribute assignments for a shift
+     * Used for validation to prevent duplicate active attributes of the same type
+     */
+    @Query("SELECT v FROM CabAttributeValue v " +
+           "JOIN FETCH v.shift " +
+           "JOIN FETCH v.attributeType " +
+           "WHERE v.shift = :shift " +
+           "AND v.attributeType = :attributeType " +
+           "AND v.id != :excludeId " +
+           "AND v.startDate <= :endDate " +
+           "AND (v.endDate IS NULL OR v.endDate >= :startDate)")
+    List<CabAttributeValue> findOverlappingAttributesForShift(
+        @Param("shift") CabShift shift,
+        @Param("attributeType") CabAttributeType attributeType,
+        @Param("startDate") LocalDate startDate,
+        @Param("endDate") LocalDate endDate,
+        @Param("excludeId") Long excludeId);
+
+    /**
+     * Find all attributes active on a specific date for a shift
+     */
+    @Query("SELECT v FROM CabAttributeValue v " +
+           "WHERE v.shift = :shift " +
+           "AND v.startDate <= :date " +
+           "AND (v.endDate IS NULL OR v.endDate >= :date)")
+    List<CabAttributeValue> findByShiftAndActiveOn(
+        @Param("shift") CabShift shift,
+        @Param("date") LocalDate date);
 }

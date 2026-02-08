@@ -2,21 +2,22 @@ package com.taxi.domain.cab.model;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.taxi.domain.driver.model.Driver;
+import com.taxi.domain.shift.model.CabShift;
 import jakarta.persistence.*;
 import lombok.*;
 
-import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.List;
+import java.util.stream.Collectors;
+import java.time.LocalDate;
 
 /**
  * Cab entity - represents a physical taxi vehicle
  */
 @Entity
-@Table(name = "cab", 
+@Table(name = "cab",
        uniqueConstraints = @UniqueConstraint(columnNames = {"cab_number"}),
        indexes = {
-           @Index(name = "idx_cab_status", columnList = "status"),
-           @Index(name = "idx_cab_type", columnList = "cab_type"),
            @Index(name = "idx_cab_owner_driver", columnList = "owner_driver_id")
        })
 @JsonIgnoreProperties({"hibernateLazyInitializer", "handler"})
@@ -51,38 +52,19 @@ public class Cab {
     @Column(name = "color", length = 30)
     private String color;
 
-    @Enumerated(EnumType.STRING)
-    @Column(name = "cab_type", nullable = false, length = 20)
-    private CabType cabType;
-
-    @Enumerated(EnumType.STRING)
-    @Column(name = "share_type", length = 20)
-    private ShareType shareType;
-
-    @Enumerated(EnumType.STRING)
-    @Column(name = "cab_shift_type", length = 20)
-    private CabShiftType cabShiftType;
-
-    @Column(name = "has_airport_license")
-    @Builder.Default
-    private Boolean hasAirportLicense = false;
-
-    @Column(name = "airport_license_number", length = 50)
-    private String airportLicenseNumber;
-
-    @Column(name = "airport_license_expiry")
-    private LocalDate airportLicenseExpiry;
-
-    @Enumerated(EnumType.STRING)
-    @Column(name = "status", nullable = false, length = 20)
-    @Builder.Default
-    private CabStatus status = CabStatus.ACTIVE;
-
     // Current owner driver (nullable - cab might be company-owned)
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "owner_driver_id")
     @JsonIgnoreProperties({"hibernateLazyInitializer", "handler"})
     private Driver ownerDriver;
+
+    // ============================================================================
+    // Shifts relationship
+    // Every cab has exactly 2 shifts: DAY and NIGHT
+    // Attributes and status are now tracked at the shift level, not the cab level
+    // ============================================================================
+    @OneToMany(mappedBy = "cab", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.LAZY)
+    private List<CabShift> shifts;
 
     @Column(name = "notes", length = 1000)
     private String notes;
@@ -105,15 +87,6 @@ public class Cab {
     }
 
     /**
-     * Business logic: Check if airport license is expired
-     */
-    public boolean isAirportLicenseExpired() {
-        return Boolean.TRUE.equals(hasAirportLicense) && 
-               airportLicenseExpiry != null && 
-               airportLicenseExpiry.isBefore(LocalDate.now());
-    }
-
-    /**
      * Business logic: Check if cab is company-owned (no owner driver)
      */
     public boolean isCompanyOwned() {
@@ -121,29 +94,32 @@ public class Cab {
     }
 
     /**
-     * Business logic: Activate cab
+     * Get shifts that are active on a specific date
+     * Filters shifts based on their historical status
+     *
+     * @param date The date to check
+     * @return List of shifts that were active on the given date
      */
-    public void activate() {
-        this.status = CabStatus.ACTIVE;
+    public List<CabShift> getActiveShiftsOn(LocalDate date) {
+        if (shifts == null || shifts.isEmpty()) {
+            return List.of();
+        }
+        return shifts.stream()
+            .filter(s -> s.isActiveOn(date))
+            .collect(Collectors.toList());
     }
 
     /**
-     * Business logic: Put cab in maintenance
+     * Get all shifts that are currently active
+     *
+     * @return List of currently active shifts
      */
-    public void setMaintenance() {
-        this.status = CabStatus.MAINTENANCE;
-    }
-
-    /**
-     * Business logic: Retire cab
-     */
-    public void retire() {
-        this.status = CabStatus.RETIRED;
-    }
-
-    public enum CabStatus {
-        ACTIVE,
-        MAINTENANCE,
-        RETIRED
+    public List<CabShift> getCurrentActiveShifts() {
+        if (shifts == null || shifts.isEmpty()) {
+            return List.of();
+        }
+        return shifts.stream()
+            .filter(CabShift::isCurrentlyActive)
+            .collect(Collectors.toList());
     }
 }

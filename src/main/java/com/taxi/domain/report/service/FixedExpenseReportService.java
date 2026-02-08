@@ -41,12 +41,13 @@ public class FixedExpenseReportService {
     private final CabShiftRepository cabShiftRepository;
 
     /**
-     * Check if a cab is active (ACTIVE status only)
-     * RETIRED and MAINTENANCE cabs should not incur expenses
+     * Check if a cab has at least one active shift
+     * Note: Cab status has been moved to shift level
      */
     private boolean isCabActive(Cab cab) {
-        if (cab == null) return false;
-        return cab.getStatus() == Cab.CabStatus.ACTIVE;
+        if (cab == null || cab.getShifts() == null) return false;
+        return cab.getShifts().stream()
+                .anyMatch(shift -> shift.getStatus() == CabShift.ShiftStatus.ACTIVE);
     }
     
     /**
@@ -125,8 +126,8 @@ public class FixedExpenseReportService {
         
         // ✅ BUSINESS RULE: Skip expenses for INACTIVE cabs
         if (!isCabActive(cab)) {
-            log.debug("   Skipping expense for INACTIVE cab: {} (status: {})", 
-                    cab.getCabNumber(), cab.getStatus());
+            log.debug("   Skipping expense for cab with no active shifts: {}",
+                    cab.getCabNumber());
             return;
         }
         
@@ -176,8 +177,8 @@ public class FixedExpenseReportService {
             // ✅ BUSINESS RULE: Skip shifts on RETIRED or MAINTENANCE cabs
             if (!isCabActive(shift.getCab())) {
                 skippedInactive++;
-                log.debug("   Skipping shift expense - cab {} is {} (not ACTIVE)", 
-                        shift.getCab().getCabNumber(), shift.getCab().getStatus());
+                log.debug("   Skipping shift expense - cab {} has no active shifts",
+                        shift.getCab().getCabNumber());
                 continue;
             }
 
@@ -344,8 +345,8 @@ public class FixedExpenseReportService {
         
         // ✅ BUSINESS RULE: Skip expenses for INACTIVE cabs
         if (!isCabActive(cab)) {
-            log.debug("   Skipping one-time expense for INACTIVE cab: {} (status: {})", 
-                    cab.getCabNumber(), cab.getStatus());
+            log.debug("   Skipping one-time expense for cab with no active shifts: {}",
+                    cab.getCabNumber());
             return;
         }
         
@@ -409,10 +410,9 @@ public class FixedExpenseReportService {
             return;
         }
         
-        // ✅ BUSINESS RULE: Skip INACTIVE shifts or shifts on INACTIVE cabs
+        // ✅ BUSINESS RULE: Skip INACTIVE shifts or shifts on cabs with no active shifts
         if (!isCabShiftActive(shift)) {
-            log.debug("   Skipping one-time shift expense - shift is INACTIVE or cab is {}", 
-                    shift.getCab().getStatus());
+            log.debug("   Skipping one-time shift expense - shift is INACTIVE or cab has no active shifts");
             return;
         }
         

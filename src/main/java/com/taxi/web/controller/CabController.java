@@ -58,21 +58,15 @@ public class CabController {
     /**
      * Get cabs by status
      * GET /api/cabs/status/{status}
+     * @deprecated Cab status has been moved to shift level. Use shift endpoints instead.
      */
     @GetMapping("/status/{status}")
     @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER')")
+    @Deprecated
     public ResponseEntity<?> getCabsByStatus(@PathVariable String status) {
-        log.info("GET /api/cabs/status/{} - Get cabs by status", status);
-        try {
-            Cab.CabStatus cabStatus = Cab.CabStatus.valueOf(status.toUpperCase());
-            List<CabDTO> cabs = cabService.getCabsByStatus(cabStatus);
-            return ResponseEntity.ok(cabs);
-        } catch (IllegalArgumentException e) {
-            log.error("Invalid status: {}", status);
-            Map<String, String> error = new HashMap<>();
-            error.put("error", "Invalid status: " + status);
-            return ResponseEntity.badRequest().body(error);
-        }
+        log.info("GET /api/cabs/status/{} - DEPRECATED: Cab status is now at shift level", status);
+        // Status is now at shift level, return empty list
+        return ResponseEntity.ok(java.util.Collections.emptyList());
     }
 
     /**
