@@ -320,9 +320,12 @@ public class CabAttributeValueService {
             // Create recurring expense with application type
             RecurringExpense recurringExpense = RecurringExpense.builder()
                     .cab(shift.getCab())
-                    .shift(shift)
                     .amount(cost.getPrice())
-                    .billingMethod(cost.getBillingUnit().name())
+                    .billingMethod(
+                        cost.getBillingUnit() == com.taxi.domain.cab.model.AttributeCost.BillingUnit.MONTHLY
+                            ? RecurringExpense.BillingMethod.MONTHLY
+                            : RecurringExpense.BillingMethod.DAILY
+                    )
                     .effectiveFrom(startDate)
                     .effectiveTo(endDate)
                     .notes("Auto-created from attribute cost: " + attributeType.getAttributeName())
@@ -330,7 +333,6 @@ public class CabAttributeValueService {
                     // Application type fields - charge to this specific shift
                     .applicationTypeEnum(com.taxi.domain.expense.model.ApplicationType.SPECIFIC_SHIFT)
                     .specificShiftId(shift.getId())
-                    .createdBy("system")
                     .build();
 
             recurringExpenseService.create(recurringExpense);

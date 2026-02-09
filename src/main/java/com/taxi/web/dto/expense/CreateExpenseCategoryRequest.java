@@ -45,6 +45,7 @@ public class CreateExpenseCategoryRequest {
     private Long specificOwnerId;
     private Long specificDriverId;
 
+    @Builder.Default
     private boolean isActive = true;
 
     /**
