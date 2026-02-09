@@ -4,6 +4,7 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 import com.taxi.domain.cab.model.Cab;
 import com.taxi.domain.driver.model.Driver;
 import com.taxi.domain.shift.model.ShiftType;  // ✅ USE EXISTING ENUM
+import com.taxi.domain.expense.model.ApplicationType;
 import jakarta.persistence.*;
 import lombok.*;
 
@@ -43,11 +44,12 @@ public class RecurringExpense {
     @JoinColumn(name = "expense_category_id", nullable = false)
     private ExpenseCategory expenseCategory;
 
+    // Legacy entity type system (kept for backward compatibility)
     @Enumerated(EnumType.STRING)
-    @Column(name = "entity_type", nullable = false, length = 20)
+    @Column(name = "entity_type", length = 20)
     private EntityType entityType;
 
-    @Column(name = "entity_id", nullable = false)
+    @Column(name = "entity_id")
     private Long entityId;
 
     @ManyToOne(fetch = FetchType.LAZY)
@@ -66,6 +68,23 @@ public class RecurringExpense {
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "driver_id", insertable = false, updatable = false)
     private Driver driver;
+
+    // New application type system - simplified criteria for recurring expenses
+    @Enumerated(EnumType.STRING)
+    @Column(name = "application_type", length = 30)
+    private ApplicationType applicationTypeEnum;
+
+    @Column(name = "shift_profile_id")
+    private Long shiftProfileId;
+
+    @Column(name = "specific_shift_id")
+    private Long specificShiftId;
+
+    @Column(name = "specific_owner_id")
+    private Long specificOwnerId;
+
+    @Column(name = "specific_driver_id")
+    private Long specificDriverId;
 
     @Column(name = "amount", nullable = false, precision = 10, scale = 2)
     private BigDecimal amount;

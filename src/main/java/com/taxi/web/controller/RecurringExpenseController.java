@@ -1,9 +1,5 @@
 package com.taxi.web.controller;
 
-import com.taxi.domain.cab.model.Cab;
-import com.taxi.domain.cab.repository.CabRepository;
-import com.taxi.domain.driver.model.Driver;
-import com.taxi.domain.driver.repository.DriverRepository;
 import com.taxi.domain.expense.model.ExpenseCategory;
 import com.taxi.domain.expense.model.RecurringExpense;
 import com.taxi.domain.expense.repository.ExpenseCategoryRepository;
@@ -34,8 +30,6 @@ public class RecurringExpenseController {
 
     private final RecurringExpenseService recurringExpenseService;
     private final ExpenseCategoryRepository expenseCategoryRepository;
-    private final CabRepository cabRepository;  // ✅ ADDED
-    private final DriverRepository driverRepository;  // ✅ ADDED
 
     @GetMapping("/test")
     public ResponseEntity<String> test() {
@@ -57,59 +51,36 @@ public class RecurringExpenseController {
 
     /**
      * Create a new recurring expense
-     * ✅ UPDATED - Properly sets cab_id, driver_id, owner_id, shift_type based on entityType
+     * Application type and entity details are determined by the selected expense category
      */
     @PostMapping
     @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER', 'ACCOUNTANT')")
     public ResponseEntity<?> create(@RequestBody RecurringExpenseRequest request) {
         try {
+            // Get the expense category - it contains all application type info
             ExpenseCategory category = expenseCategoryRepository.findById(request.getExpenseCategoryId())
                 .orElseThrow(() -> new RuntimeException("Expense category not found: " + request.getExpenseCategoryId()));
-            
-            RecurringExpense.RecurringExpenseBuilder builder = RecurringExpense.builder()
+
+            // Build the recurring expense using category's application type settings
+            RecurringExpense expense = RecurringExpense.builder()
                 .expenseCategory(category)
-                .entityType(request.getEntityType())
-                .entityId(request.getEntityId())
                 .amount(request.getAmount())
                 .billingMethod(request.getBillingMethod())
                 .effectiveFrom(request.getEffectiveFrom())
                 .effectiveTo(request.getEffectiveTo())
                 .notes(request.getNotes())
-                .isActive(request.getIsActive() != null ? request.getIsActive() : true);
-            
-            // ✅ Set the appropriate FK field based on entityType
-            switch (request.getEntityType()) {
-                case CAB -> {
-                    Cab cab = cabRepository.findById(request.getEntityId())
-                        .orElseThrow(() -> new RuntimeException("Cab not found: " + request.getEntityId()));
-                    builder.cab(cab);
-                }
-                case SHIFT -> {
-                    if (request.getShiftType() == null) {
-                        throw new RuntimeException("Shift type is required for SHIFT entity type");
-                    }
-                    builder.shiftType(request.getShiftType());
-                    // entityId for SHIFT is just 1 or 2 (placeholder, not a real FK)
-                }
-                case DRIVER -> {
-                    Driver driver = driverRepository.findById(request.getEntityId())
-                        .orElseThrow(() -> new RuntimeException("Driver not found: " + request.getEntityId()));
-                    builder.driver(driver);
-                }
-                case OWNER -> {
-                    Driver owner = driverRepository.findById(request.getEntityId())
-                        .orElseThrow(() -> new RuntimeException("Owner not found: " + request.getEntityId()));
-                    builder.owner(owner);
-                }
-                case COMPANY -> {
-                    // No FK needed for COMPANY
-                }
-            }
-            
-            RecurringExpense expense = builder.build();
+                .isActive(request.getIsActive() != null ? request.getIsActive() : true)
+                // Copy application type settings from category
+                .applicationTypeEnum(category.getApplicationType())
+                .shiftProfileId(category.getShiftProfileId())
+                .specificShiftId(category.getSpecificShiftId())
+                .specificOwnerId(category.getSpecificOwnerId())
+                .specificDriverId(category.getSpecificDriverId())
+                .build();
+
             RecurringExpense created = recurringExpenseService.create(expense);
             return ResponseEntity.status(HttpStatus.CREATED).body(created);
-            
+
         } catch (Exception e) {
             log.error("Error creating recurring expense", e);
             return ResponseEntity.badRequest().body(e.getMessage());
@@ -118,68 +89,40 @@ public class RecurringExpenseController {
 
     /**
      * Update a recurring expense
-     * ✅ UPDATED - Properly updates cab_id, driver_id, owner_id, shift_type based on entityType
+     * Application type and entity details are determined by the selected expense category
      */
     @PutMapping("/{id}")
     @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER', 'ACCOUNTANT')")
     public ResponseEntity<?> update(@PathVariable Long id, @RequestBody RecurringExpenseRequest request) {
         try {
             RecurringExpense existing = recurringExpenseService.getById(id);
-            
+
+            // Get the expense category - it contains all application type info
             ExpenseCategory category = expenseCategoryRepository.findById(request.getExpenseCategoryId())
                 .orElseThrow(() -> new RuntimeException("Expense category not found: " + request.getExpenseCategoryId()));
-            
-            // Update basic fields
+
+            // Update all fields from request and category
             existing.setExpenseCategory(category);
-            existing.setEntityType(request.getEntityType());
-            existing.setEntityId(request.getEntityId());
             existing.setAmount(request.getAmount());
             existing.setBillingMethod(request.getBillingMethod());
             existing.setEffectiveFrom(request.getEffectiveFrom());
             existing.setEffectiveTo(request.getEffectiveTo());
             existing.setNotes(request.getNotes());
-            
+
             if (request.getIsActive() != null) {
                 existing.setActive(request.getIsActive());
             }
-            
-            // ✅ Clear all FK fields first
-            existing.setCab(null);
-            existing.setDriver(null);
-            existing.setOwner(null);
-            existing.setShiftType(null);
-            
-            // ✅ Set the appropriate FK field based on entityType
-            switch (request.getEntityType()) {
-                case CAB -> {
-                    Cab cab = cabRepository.findById(request.getEntityId())
-                        .orElseThrow(() -> new RuntimeException("Cab not found: " + request.getEntityId()));
-                    existing.setCab(cab);
-                }
-                case SHIFT -> {
-                    if (request.getShiftType() == null) {
-                        throw new RuntimeException("Shift type is required for SHIFT entity type");
-                    }
-                    existing.setShiftType(request.getShiftType());
-                }
-                case DRIVER -> {
-                    Driver driver = driverRepository.findById(request.getEntityId())
-                        .orElseThrow(() -> new RuntimeException("Driver not found: " + request.getEntityId()));
-                    existing.setDriver(driver);
-                }
-                case OWNER -> {
-                    Driver owner = driverRepository.findById(request.getEntityId())
-                        .orElseThrow(() -> new RuntimeException("Owner not found: " + request.getEntityId()));
-                    existing.setOwner(owner);
-                }
-                case COMPANY -> {
-                    // No FK needed for COMPANY
-                }
-            }
-            
+
+            // Copy application type settings from category
+            existing.setApplicationTypeEnum(category.getApplicationType());
+            existing.setShiftProfileId(category.getShiftProfileId());
+            existing.setSpecificShiftId(category.getSpecificShiftId());
+            existing.setSpecificOwnerId(category.getSpecificOwnerId());
+            existing.setSpecificDriverId(category.getSpecificDriverId());
+
             RecurringExpense updated = recurringExpenseService.update(existing);
             return ResponseEntity.ok(updated);
-            
+
         } catch (Exception e) {
             log.error("Error updating recurring expense", e);
             return ResponseEntity.badRequest().body(e.getMessage());

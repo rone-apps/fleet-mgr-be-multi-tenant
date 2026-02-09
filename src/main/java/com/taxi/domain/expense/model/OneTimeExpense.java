@@ -3,6 +3,7 @@ package com.taxi.domain.expense.model;
 import com.taxi.domain.cab.model.Cab;
 import com.taxi.domain.driver.model.Driver;
 import com.taxi.domain.shift.model.ShiftType;  // ✅ USE SHARED ENUM
+import com.taxi.domain.expense.model.ApplicationType;
 import jakarta.persistence.*;
 import lombok.*;
 
@@ -42,17 +43,37 @@ public class OneTimeExpense {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
+    @Column(name = "name", nullable = false, length = 200)
+    private String name;
+
     @ManyToOne(fetch = FetchType.EAGER)
-    @JoinColumn(name = "expense_category_id", nullable = false)
+    @JoinColumn(name = "expense_category_id", nullable = true)
     private ExpenseCategory expenseCategory;
 
-    // Polymorphic relationship
+    // Polymorphic relationship (legacy - kept for backward compatibility)
     @Enumerated(EnumType.STRING)
-    @Column(name = "entity_type", nullable = false, length = 20)
+    @Column(name = "entity_type", length = 20)
     private EntityType entityType;
 
-    @Column(name = "entity_id", nullable = false)
+    @Column(name = "entity_id")
     private Long entityId;
+
+    // New application type system - simplified criteria for one-time expenses
+    @Enumerated(EnumType.STRING)
+    @Column(name = "application_type", length = 30)
+    private ApplicationType applicationType;
+
+    @Column(name = "shift_profile_id")
+    private Long shiftProfileId;
+
+    @Column(name = "specific_shift_id")
+    private Long specificShiftId;
+
+    @Column(name = "specific_owner_id")
+    private Long specificOwnerId;
+
+    @Column(name = "specific_driver_id")
+    private Long specificDriverId;
 
     // Optional relationships for convenience
     @ManyToOne(fetch = FetchType.LAZY)

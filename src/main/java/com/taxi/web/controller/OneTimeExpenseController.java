@@ -1,9 +1,5 @@
 package com.taxi.web.controller;
 
-import com.taxi.domain.cab.model.Cab;
-import com.taxi.domain.cab.repository.CabRepository;
-import com.taxi.domain.driver.model.Driver;
-import com.taxi.domain.driver.repository.DriverRepository;
 import com.taxi.domain.expense.model.ExpenseCategory;
 import com.taxi.domain.expense.model.OneTimeExpense;
 import com.taxi.domain.expense.repository.ExpenseCategoryRepository;
@@ -33,8 +29,6 @@ public class OneTimeExpenseController {
 
     private final OneTimeExpenseService oneTimeExpenseService;
     private final ExpenseCategoryRepository expenseCategoryRepository;
-    private final CabRepository cabRepository;  // ✅ ADDED
-    private final DriverRepository driverRepository;  // ✅ ADDED
 
     @GetMapping("/test")
     public ResponseEntity<String> test() {
@@ -43,19 +37,44 @@ public class OneTimeExpenseController {
 
     /**
      * Create a new one-time expense
-     * ✅ UPDATED - Properly sets cab_id, driver_id, owner_id, shift_type based on entityType
+     * Charges to entities via application type (shift profile, specific shift, owner/driver, etc.)
      */
     @PostMapping
     @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER', 'DISPATCHER', 'ACCOUNTANT')")
     public ResponseEntity<?> create(@RequestBody OneTimeExpenseRequest request) {
         try {
-            ExpenseCategory category = expenseCategoryRepository.findById(request.getExpenseCategoryId())
-                .orElseThrow(() -> new RuntimeException("Expense category not found: " + request.getExpenseCategoryId()));
-            
-            OneTimeExpense.OneTimeExpenseBuilder builder = OneTimeExpense.builder()
-                .expenseCategory(category)
-                .entityType(request.getEntityType())
-                .entityId(request.getEntityId())
+            // Validate application type and required fields
+            if (request.getApplicationType() == null) {
+                throw new RuntimeException("Application type is required to charge the expense");
+            }
+
+            // Validate based on application type
+            switch (request.getApplicationType()) {
+                case SHIFT_PROFILE:
+                    if (request.getShiftProfileId() == null) {
+                        throw new RuntimeException("Shift profile ID is required for SHIFT_PROFILE application type");
+                    }
+                    break;
+                case SPECIFIC_SHIFT:
+                    if (request.getSpecificShiftId() == null) {
+                        throw new RuntimeException("Specific shift ID is required for SPECIFIC_SHIFT application type");
+                    }
+                    break;
+                case SPECIFIC_OWNER_DRIVER:
+                    if ((request.getSpecificOwnerId() == null && request.getSpecificDriverId() == null) ||
+                        (request.getSpecificOwnerId() != null && request.getSpecificDriverId() != null)) {
+                        throw new RuntimeException("Exactly one of owner ID or driver ID must be set for SPECIFIC_OWNER_DRIVER application type");
+                    }
+                    break;
+                case ALL_ACTIVE_SHIFTS:
+                case ALL_NON_OWNER_DRIVERS:
+                    // No additional validation needed
+                    break;
+            }
+
+            // Build the one-time expense
+            OneTimeExpense expense = OneTimeExpense.builder()
+                .name(request.getName())
                 .amount(request.getAmount())
                 .expenseDate(request.getExpenseDate())
                 .paidBy(request.getPaidBy())
@@ -65,40 +84,18 @@ public class OneTimeExpenseController {
                 .receiptUrl(request.getReceiptUrl())
                 .invoiceNumber(request.getInvoiceNumber())
                 .isReimbursable(request.getIsReimbursable() != null && request.getIsReimbursable())
-                .notes(request.getNotes());
-            
-            // ✅ Set the appropriate FK field based on entityType
-            switch (request.getEntityType()) {
-                case CAB -> {
-                    Cab cab = cabRepository.findById(request.getEntityId())
-                        .orElseThrow(() -> new RuntimeException("Cab not found: " + request.getEntityId()));
-                    builder.cab(cab);
-                }
-                case SHIFT -> {
-                    if (request.getShiftType() == null) {
-                        throw new RuntimeException("Shift type is required for SHIFT entity type");
-                    }
-                    builder.shiftType(request.getShiftType());
-                }
-                case DRIVER -> {
-                    Driver driver = driverRepository.findById(request.getEntityId())
-                        .orElseThrow(() -> new RuntimeException("Driver not found: " + request.getEntityId()));
-                    builder.driver(driver);
-                }
-                case OWNER -> {
-                    Driver owner = driverRepository.findById(request.getEntityId())
-                        .orElseThrow(() -> new RuntimeException("Owner not found: " + request.getEntityId()));
-                    builder.owner(owner);
-                }
-                case COMPANY -> {
-                    // No FK needed
-                }
-            }
-            
-            OneTimeExpense expense = builder.build();
+                .notes(request.getNotes())
+                // Application type fields
+                .applicationType(request.getApplicationType())
+                .shiftProfileId(request.getShiftProfileId())
+                .specificShiftId(request.getSpecificShiftId())
+                .specificOwnerId(request.getSpecificOwnerId())
+                .specificDriverId(request.getSpecificDriverId())
+                .build();
+
             OneTimeExpense created = oneTimeExpenseService.create(expense);
             return ResponseEntity.status(HttpStatus.CREATED).body(created);
-            
+
         } catch (Exception e) {
             log.error("Error creating one-time expense", e);
             return ResponseEntity.badRequest().body(e.getMessage());
@@ -125,14 +122,38 @@ public class OneTimeExpenseController {
     public ResponseEntity<?> update(@PathVariable Long id, @RequestBody OneTimeExpenseRequest request) {
         try {
             OneTimeExpense existing = oneTimeExpenseService.getById(id);
-            
-            ExpenseCategory category = expenseCategoryRepository.findById(request.getExpenseCategoryId())
-                .orElseThrow(() -> new RuntimeException("Expense category not found: " + request.getExpenseCategoryId()));
-            
-            // Update basic fields
-            existing.setExpenseCategory(category);
-            existing.setEntityType(request.getEntityType());
-            existing.setEntityId(request.getEntityId());
+
+            // Validate application type and required fields
+            if (request.getApplicationType() == null) {
+                throw new RuntimeException("Application type is required to charge the expense");
+            }
+
+            // Validate based on application type
+            switch (request.getApplicationType()) {
+                case SHIFT_PROFILE:
+                    if (request.getShiftProfileId() == null) {
+                        throw new RuntimeException("Shift profile ID is required for SHIFT_PROFILE application type");
+                    }
+                    break;
+                case SPECIFIC_SHIFT:
+                    if (request.getSpecificShiftId() == null) {
+                        throw new RuntimeException("Specific shift ID is required for SPECIFIC_SHIFT application type");
+                    }
+                    break;
+                case SPECIFIC_OWNER_DRIVER:
+                    if ((request.getSpecificOwnerId() == null && request.getSpecificDriverId() == null) ||
+                        (request.getSpecificOwnerId() != null && request.getSpecificDriverId() != null)) {
+                        throw new RuntimeException("Exactly one of owner ID or driver ID must be set for SPECIFIC_OWNER_DRIVER application type");
+                    }
+                    break;
+                case ALL_ACTIVE_SHIFTS:
+                case ALL_NON_OWNER_DRIVERS:
+                    // No additional validation needed
+                    break;
+            }
+
+            // Update all fields from request
+            existing.setName(request.getName());
             existing.setAmount(request.getAmount());
             existing.setExpenseDate(request.getExpenseDate());
             existing.setPaidBy(request.getPaidBy());
@@ -143,44 +164,16 @@ public class OneTimeExpenseController {
             existing.setInvoiceNumber(request.getInvoiceNumber());
             existing.setReimbursable(request.getIsReimbursable() != null && request.getIsReimbursable());
             existing.setNotes(request.getNotes());
-            
-            // ✅ Clear all FK fields first
-            existing.setCab(null);
-            existing.setDriver(null);
-            existing.setOwner(null);
-            existing.setShiftType(null);
-            
-            // ✅ Set the appropriate FK field based on entityType
-            switch (request.getEntityType()) {
-                case CAB -> {
-                    Cab cab = cabRepository.findById(request.getEntityId())
-                        .orElseThrow(() -> new RuntimeException("Cab not found: " + request.getEntityId()));
-                    existing.setCab(cab);
-                }
-                case SHIFT -> {
-                    if (request.getShiftType() == null) {
-                        throw new RuntimeException("Shift type is required for SHIFT entity type");
-                    }
-                    existing.setShiftType(request.getShiftType());
-                }
-                case DRIVER -> {
-                    Driver driver = driverRepository.findById(request.getEntityId())
-                        .orElseThrow(() -> new RuntimeException("Driver not found: " + request.getEntityId()));
-                    existing.setDriver(driver);
-                }
-                case OWNER -> {
-                    Driver owner = driverRepository.findById(request.getEntityId())
-                        .orElseThrow(() -> new RuntimeException("Owner not found: " + request.getEntityId()));
-                    existing.setOwner(owner);
-                }
-                case COMPANY -> {
-                    // No FK needed
-                }
-            }
-            
+            // Application type fields
+            existing.setApplicationType(request.getApplicationType());
+            existing.setShiftProfileId(request.getShiftProfileId());
+            existing.setSpecificShiftId(request.getSpecificShiftId());
+            existing.setSpecificOwnerId(request.getSpecificOwnerId());
+            existing.setSpecificDriverId(request.getSpecificDriverId());
+
             OneTimeExpense updated = oneTimeExpenseService.update(id, existing);
             return ResponseEntity.ok(updated);
-            
+
         } catch (Exception e) {
             log.error("Error updating one-time expense", e);
             return ResponseEntity.badRequest().body(e.getMessage());

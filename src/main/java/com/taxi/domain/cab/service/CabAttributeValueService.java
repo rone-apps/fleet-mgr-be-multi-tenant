@@ -3,9 +3,12 @@ package com.taxi.domain.cab.service;
 import com.taxi.domain.cab.model.Cab;
 import com.taxi.domain.cab.model.CabAttributeType;
 import com.taxi.domain.cab.model.CabAttributeValue;
+import com.taxi.domain.cab.model.AttributeCost;
 import com.taxi.domain.cab.repository.CabAttributeValueRepository;
 import com.taxi.domain.cab.repository.CabRepository;
 import com.taxi.domain.cab.repository.CabAttributeTypeRepository;
+import com.taxi.domain.expense.model.RecurringExpense;
+import com.taxi.domain.expense.service.RecurringExpenseService;
 import com.taxi.domain.shift.model.CabShift;
 import com.taxi.domain.shift.repository.CabShiftRepository;
 import lombok.RequiredArgsConstructor;
@@ -14,6 +17,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Optional;
 
 /**
  * Service for managing cab attribute values (temporal assignments)
@@ -28,6 +32,8 @@ public class CabAttributeValueService {
     private final CabRepository cabRepository;
     private final CabAttributeTypeRepository attributeTypeRepository;
     private final CabShiftRepository cabShiftRepository;
+    private final AttributeCostService attributeCostService;
+    private final RecurringExpenseService recurringExpenseService;
 
     /**
      * Assign an attribute to a cab with date range
@@ -284,7 +290,58 @@ public class CabAttributeValueService {
                 .notes(notes)
                 .build();
 
-        return attributeValueRepository.save(value);
+        CabAttributeValue savedValue = attributeValueRepository.save(value);
+
+        // Auto-create recurring expense if cost exists for this attribute
+        autoCreateRecurringExpense(shift, attributeType, startDate, endDate);
+
+        return savedValue;
+    }
+
+    /**
+     * Auto-create recurring expense when attribute is assigned if active cost exists
+     */
+    private void autoCreateRecurringExpense(CabShift shift, CabAttributeType attributeType,
+                                           LocalDate startDate, LocalDate endDate) {
+        try {
+            // Check if there's an active cost for this attribute on the start date
+            Optional<AttributeCost> costOpt = attributeCostService.getActiveOn(attributeType.getId(), startDate);
+
+            if (costOpt.isEmpty()) {
+                log.debug("No active cost found for attribute {} on date {}, skipping recurring expense creation",
+                    attributeType.getId(), startDate);
+                return;
+            }
+
+            AttributeCost cost = costOpt.get();
+            log.info("Auto-creating recurring expense for shift {} with attribute {} cost {}",
+                shift.getId(), attributeType.getId(), cost.getPrice());
+
+            // Create recurring expense with application type
+            RecurringExpense recurringExpense = RecurringExpense.builder()
+                    .cab(shift.getCab())
+                    .shift(shift)
+                    .amount(cost.getPrice())
+                    .billingMethod(cost.getBillingUnit().name())
+                    .effectiveFrom(startDate)
+                    .effectiveTo(endDate)
+                    .notes("Auto-created from attribute cost: " + attributeType.getAttributeName())
+                    .isActive(true)
+                    // Application type fields - charge to this specific shift
+                    .applicationTypeEnum(com.taxi.domain.expense.model.ApplicationType.SPECIFIC_SHIFT)
+                    .specificShiftId(shift.getId())
+                    .createdBy("system")
+                    .build();
+
+            recurringExpenseService.create(recurringExpense);
+            log.info("Successfully auto-created recurring expense for shift {} attribute {}",
+                shift.getId(), attributeType.getId());
+
+        } catch (Exception e) {
+            log.warn("Failed to auto-create recurring expense for attribute assignment. " +
+                "Will need to create manually. Error: {}", e.getMessage());
+            // Don't throw - attribute assignment should succeed even if recurring expense creation fails
+        }
     }
 
     /**
