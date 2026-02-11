@@ -1,13 +1,51 @@
 common: &default_settings
   license_key: ${NEW_RELIC_LICENSE_KEY}
   app_name: ${NEW_RELIC_APP_NAME}
-  distributed_tracing:
-    enabled: true
+
+  # Logging Configuration
   logging:
     level: info
+    enabled: true
 
+  # Distributed Tracing
+  distributed_tracing:
+    enabled: true
+
+  # Enable Log Forwarding
+  application_logging:
+    enabled: true
+    forwarding:
+      enabled: true
+
+  # Transaction Tracing
+  transaction_tracer:
+    enabled: true
+    transaction_threshold: apdex_f
+    record_sql: raw
+    log_sql: false
+
+  # Error Collector
+  error_collector:
+    enabled: true
+    capture_events: true
+    max_event_samples_stored: 100
+
+  # Slow Transactions
+  slow_transaction_threshold: 2.0
+
+  # URL Rules
   rules:
     ignore_url_regexes:
       - ".*/actuator/.*"
       - ".*/health"
+      - ".*/swagger.*"
+      - ".*/api-docs.*"
 
+development:
+  <<: *default_settings
+  transaction_tracer:
+    enabled: true
+    record_sql: raw
+
+production:
+  <<: *default_settings

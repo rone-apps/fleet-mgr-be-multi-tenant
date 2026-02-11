@@ -218,6 +218,11 @@ public class AuthController {
             NewRelic.addCustomParameter("login.lastName", user.getLastName());
             NewRelic.addCustomParameter("login.status", "SUCCESS");
 
+            // Log structured login event for easier New Relic querying
+            log.info("🔐 LOGIN_SUCCESS|username:{}|userId:{}|role:{}|email:{}|clientIp:{}|duration_ms:{}|firstName:{}|lastName:{}|timestamp:{}",
+                    user.getUsername(), user.getId(), user.getRole().toString(), user.getEmail(),
+                    clientIp, loginDuration, user.getFirstName(), user.getLastName(), java.time.LocalDateTime.now());
+
             return ResponseEntity.ok(new JwtResponse(
                     jwt,
                     user.getId(),
@@ -246,6 +251,10 @@ public class AuthController {
             NewRelic.addCustomParameter("login.error", e.getMessage());
             NewRelic.addCustomParameter("login.duration_ms", loginDuration);
             NewRelic.addCustomParameter("login.status", "FAILED");
+
+            // Log structured failed login event for easier New Relic querying
+            log.warn("🔐 LOGIN_FAILED|username:{}|clientIp:{}|error:{}|duration_ms:{}|timestamp:{}",
+                    loginRequest.getUsername(), clientIp, e.getMessage(), loginDuration, java.time.LocalDateTime.now());
 
             return ResponseEntity.badRequest().body(
                     new MessageResponse("Invalid username or password")
