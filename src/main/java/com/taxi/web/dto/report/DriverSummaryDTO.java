@@ -16,8 +16,9 @@ import java.math.BigDecimal;
 @NoArgsConstructor
 @AllArgsConstructor
 public class DriverSummaryDTO {
-    
+
     // Driver identification
+    private Long driverId;                 // ✅ Driver ID for fetching detailed reports
     private String driverNumber;
     private String driverName;
     private Boolean isOwner;

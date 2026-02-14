@@ -195,14 +195,14 @@ public class AuthController {
             long loginDuration = System.currentTimeMillis() - loginStartTime;
 
             // Log successful login with all details
-            log.info("=== LOGIN SUCCESS ===");
-            log.info("Username: {}", user.getUsername());
-            log.info("User ID: {}", user.getId());
+            log.warn("=== LOGIN SUCCESS ===");
+            log.warn("Username: {}", user.getUsername());
+            log.warn("User ID: {}", user.getId());
             log.info("Role: {}", user.getRole());
             log.info("Email: {}", user.getEmail());
-            log.info("Client IP: {}", clientIp);
+            log.warn("Client IP: {}", clientIp);
             log.info("Duration: {} ms", loginDuration);
-            log.info("First Name: {}", user.getFirstName());
+            log.warn("First Name: {}", user.getFirstName());
             log.info("Last Name: {}", user.getLastName());
             log.info("Is Active: {}", user.isActive());
             log.info("Timestamp: {}", java.time.LocalDateTime.now());
@@ -219,7 +219,7 @@ public class AuthController {
             NewRelic.addCustomParameter("login.status", "SUCCESS");
 
             // Log structured login event for easier New Relic querying
-            log.info("🔐 LOGIN_SUCCESS|username:{}|userId:{}|role:{}|email:{}|clientIp:{}|duration_ms:{}|firstName:{}|lastName:{}|timestamp:{}",
+            log.warn("🔐 LOGIN_SUCCESS|username:{}|userId:{}|role:{}|email:{}|clientIp:{}|duration_ms:{}|firstName:{}|lastName:{}|timestamp:{}",
                     user.getUsername(), user.getId(), user.getRole().toString(), user.getEmail(),
                     clientIp, loginDuration, user.getFirstName(), user.getLastName(), java.time.LocalDateTime.now());
 

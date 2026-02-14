@@ -36,8 +36,9 @@ public class ExpenseCategoryController {
 
     @PostMapping
     @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER')")
-    public ResponseEntity<ExpenseCategory> createCategory(@RequestBody ExpenseCategory category) {
+    public ResponseEntity<ExpenseCategory> createCategory(@Valid @RequestBody CreateExpenseCategoryRequest request) {
         try {
+            ExpenseCategory category = request.toEntity();
             ExpenseCategory created = expenseCategoryService.createCategory(category);
             return ResponseEntity.status(HttpStatus.CREATED).body(created);
         } catch (Exception e) {
@@ -50,8 +51,9 @@ public class ExpenseCategoryController {
     @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER')")
     public ResponseEntity<ExpenseCategory> updateCategory(
             @PathVariable Long id,
-            @RequestBody ExpenseCategory updates) {
+            @Valid @RequestBody CreateExpenseCategoryRequest request) {
         try {
+            ExpenseCategory updates = request.toEntity();
             ExpenseCategory updated = expenseCategoryService.updateCategory(id, updates);
             return ResponseEntity.ok(updated);
         } catch (Exception e) {

@@ -99,13 +99,19 @@ public class FixedExpenseReportService {
         return report;
     }
     
-    private void processRecurringExpenses(Driver driver, LocalDate start, LocalDate end, 
+    private void processRecurringExpenses(Driver driver, LocalDate start, LocalDate end,
             FixedExpenseReportDTO report) {
-        
+
         List<RecurringExpense> expenses = recurringExpenseRepository
                 .findEffectiveBetween(start, end);
-        
+
         for (RecurringExpense expense : expenses) {
+            // ✅ FIXED: Add null check for entityType
+            if (expense.getEntityType() == null) {
+                log.warn("RecurringExpense id {} has null entityType - skipping", expense.getId());
+                continue;
+            }
+
             switch (expense.getEntityType()) {
                 case CAB -> processRecurringCab(expense, driver, start, end, report);
                 case SHIFT -> processRecurringShift(expense, driver, start, end, report);
@@ -321,11 +327,17 @@ public class FixedExpenseReportService {
     
     private void processOneTimeExpenses(Driver driver, LocalDate start, LocalDate end,
             FixedExpenseReportDTO report) {
-        
+
         List<OneTimeExpense> expenses = oneTimeExpenseRepository
                 .findByExpenseDateBetween(start, end);
-        
+
         for (OneTimeExpense expense : expenses) {
+            // ✅ FIXED: Add null check for entityType
+            if (expense.getEntityType() == null) {
+                log.warn("OneTimeExpense id {} has null entityType - skipping", expense.getId());
+                continue;
+            }
+
             switch (expense.getEntityType()) {
                 case CAB -> processOneTimeCab(expense, driver, report);
                 case SHIFT -> processOneTimeShift(expense, driver, report);

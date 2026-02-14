@@ -4,6 +4,7 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 import com.taxi.domain.cab.model.Cab;
 import com.taxi.domain.driver.model.Driver;
 import com.taxi.domain.shift.model.ShiftType;  // ✅ USE EXISTING ENUM
+import com.taxi.domain.shift.model.CabShift;
 import com.taxi.domain.expense.model.ApplicationType;
 import jakarta.persistence.*;
 import lombok.*;
@@ -68,6 +69,19 @@ public class RecurringExpense {
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "driver_id", insertable = false, updatable = false)
     private Driver driver;
+
+    // Shift relationship for shift-level expenses (new feature)
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "shift_id")
+    private CabShift shift;
+
+    // Attribute cost ID tracking (for attribute-based expense creation from attribute costs)
+    @Column(name = "attribute_cost_id")
+    private Long attributeCostId;
+
+    // Attribute type ID tracking (for attribute-based expense creation from categories)
+    @Column(name = "attribute_type_id")
+    private Long attributeTypeId;
 
     // New application type system - simplified criteria for recurring expenses
     @Enumerated(EnumType.STRING)

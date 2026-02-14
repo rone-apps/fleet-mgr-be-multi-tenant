@@ -30,10 +30,10 @@ public class ExpenseCategoryService {
 
     public ExpenseCategory updateCategory(Long id, ExpenseCategory updates) {
         log.info("Updating expense category ID: {}", id);
-        
+
         ExpenseCategory category = expenseCategoryRepository.findById(id)
                 .orElseThrow(() -> new RuntimeException("Category not found: " + id));
-        
+
         if (updates.getCategoryName() != null) {
             category.setCategoryName(updates.getCategoryName());
         }
@@ -46,7 +46,25 @@ public class ExpenseCategoryService {
         if (updates.getAppliesTo() != null) {
             category.setAppliesTo(updates.getAppliesTo());
         }
-        
+        if (updates.getApplicationType() != null) {
+            category.setApplicationType(updates.getApplicationType());
+        }
+        if (updates.getShiftProfileId() != null) {
+            category.setShiftProfileId(updates.getShiftProfileId());
+        }
+        if (updates.getSpecificShiftId() != null) {
+            category.setSpecificShiftId(updates.getSpecificShiftId());
+        }
+        if (updates.getSpecificOwnerId() != null) {
+            category.setSpecificOwnerId(updates.getSpecificOwnerId());
+        }
+        if (updates.getSpecificDriverId() != null) {
+            category.setSpecificDriverId(updates.getSpecificDriverId());
+        }
+        if (updates.getAttributeTypeId() != null) {
+            category.setAttributeTypeId(updates.getAttributeTypeId());
+        }
+
         return expenseCategoryRepository.save(category);
     }
 

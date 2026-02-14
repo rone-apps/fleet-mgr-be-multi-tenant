@@ -52,13 +52,27 @@ public interface AccountChargeRepository extends JpaRepository<AccountCharge, Lo
             Pageable pageable);
 
         /**
-     * Find all charges for a specific driver within a date range
+     * Find all charges for a specific driver within a date range by driver ID
+     */
+    @EntityGraph(attributePaths = {"accountCustomer", "cab", "driver"})
+    @Query("SELECT ac FROM AccountCharge ac " +
+           "WHERE ac.driver.id = :driverId " +
+           "AND ac.tripDate BETWEEN :startDate AND :endDate " +
+           "ORDER BY ac.tripDate DESC, ac.startTime DESC")
+    List<AccountCharge> findByDriverIdAndDateRange(
+            @Param("driverId") Long driverId,
+            @Param("startDate") LocalDate startDate,
+            @Param("endDate") LocalDate endDate
+    );
+
+    /**
+     * Find all charges for a specific driver within a date range (legacy method)
      */
     @EntityGraph(attributePaths = {"accountCustomer", "cab", "driver"})
     @Query("SELECT ac FROM AccountCharge ac " +
            "WHERE ac.driver.driverNumber = :driverNumber " +
            "AND ac.tripDate BETWEEN :startDate AND :endDate " +
-           "ORDER BY ac.tripDate, ac.startTime")
+           "ORDER BY ac.tripDate DESC, ac.startTime DESC")
     List<AccountCharge> findByDriverNumberAndDateRange(
             @Param("driverNumber") String driverNumber,
             @Param("startDate") LocalDate startDate,

@@ -4,6 +4,10 @@ import com.taxi.domain.revenue.entity.RevenueCategory;
 import com.taxi.domain.revenue.entity.RevenueCategory.AppliesTo;
 import com.taxi.domain.revenue.entity.RevenueCategory.CategoryType;
 import com.taxi.domain.revenue.service.RevenueCategoryService;
+import com.taxi.web.dto.revenue.RevenueCategoryDTO;
+import com.taxi.web.dto.revenue.CreateRevenueCategoryRequest;
+import com.taxi.web.dto.revenue.ApplicationPreviewDTO;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
@@ -12,6 +16,7 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
+import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/revenue-categories")
@@ -28,10 +33,10 @@ public class RevenueCategoryController {
      */
     @PostMapping
     @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER')")
-    public ResponseEntity<RevenueCategory> create(@RequestBody RevenueCategory category) {
+    public ResponseEntity<RevenueCategoryDTO> create(@Valid @RequestBody CreateRevenueCategoryRequest request) {
         try {
-            RevenueCategory created = revenueCategoryService.create(category);
-            return ResponseEntity.status(HttpStatus.CREATED).body(created);
+            RevenueCategory created = revenueCategoryService.create(request);
+            return ResponseEntity.status(HttpStatus.CREATED).body(RevenueCategoryDTO.fromEntity(created));
         } catch (IllegalArgumentException e) {
             log.error("Invalid category: {}", e.getMessage());
             return ResponseEntity.badRequest().build();
@@ -44,9 +49,10 @@ public class RevenueCategoryController {
      */
     @GetMapping("/{id}")
     @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER', 'ACCOUNTANT', 'DRIVER')")
-    public ResponseEntity<RevenueCategory> getById(@PathVariable Long id) {
+    public ResponseEntity<RevenueCategoryDTO> getById(@PathVariable Long id) {
         try {
-            return ResponseEntity.ok(revenueCategoryService.getById(id));
+            RevenueCategory category = revenueCategoryService.getById(id);
+            return ResponseEntity.ok(RevenueCategoryDTO.fromEntity(category));
         } catch (RuntimeException e) {
             return ResponseEntity.notFound().build();
         }
@@ -72,8 +78,12 @@ public class RevenueCategoryController {
      */
     @GetMapping
     @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER', 'ACCOUNTANT', 'DRIVER')")
-    public ResponseEntity<List<RevenueCategory>> getAll() {
-        return ResponseEntity.ok(revenueCategoryService.getAll());
+    public ResponseEntity<List<RevenueCategoryDTO>> getAll() {
+        List<RevenueCategoryDTO> categories = revenueCategoryService.getAll()
+                .stream()
+                .map(RevenueCategoryDTO::fromEntity)
+                .collect(Collectors.toList());
+        return ResponseEntity.ok(categories);
     }
 
     /**
@@ -82,8 +92,12 @@ public class RevenueCategoryController {
      */
     @GetMapping("/active")
     @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER', 'ACCOUNTANT', 'DRIVER')")
-    public ResponseEntity<List<RevenueCategory>> getAllActive() {
-        return ResponseEntity.ok(revenueCategoryService.getAllActive());
+    public ResponseEntity<List<RevenueCategoryDTO>> getAllActive() {
+        List<RevenueCategoryDTO> categories = revenueCategoryService.getAllActive()
+                .stream()
+                .map(RevenueCategoryDTO::fromEntity)
+                .collect(Collectors.toList());
+        return ResponseEntity.ok(categories);
     }
 
     /**
@@ -164,11 +178,28 @@ public class RevenueCategoryController {
      */
     @PutMapping("/{id}")
     @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER')")
-    public ResponseEntity<RevenueCategory> update(@PathVariable Long id, @RequestBody RevenueCategory category) {
+    public ResponseEntity<RevenueCategoryDTO> update(@PathVariable Long id, @Valid @RequestBody CreateRevenueCategoryRequest request) {
         try {
-            return ResponseEntity.ok(revenueCategoryService.update(id, category));
+            RevenueCategory updated = revenueCategoryService.update(id, request);
+            return ResponseEntity.ok(RevenueCategoryDTO.fromEntity(updated));
         } catch (IllegalArgumentException e) {
             return ResponseEntity.badRequest().build();
+        } catch (RuntimeException e) {
+            return ResponseEntity.notFound().build();
+        }
+    }
+
+    /**
+     * Preview application target for a revenue category
+     * GET /api/revenue-categories/{id}/preview-application
+     */
+    @GetMapping("/{id}/preview-application")
+    @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER')")
+    public ResponseEntity<ApplicationPreviewDTO> previewApplication(@PathVariable Long id) {
+        try {
+            RevenueCategory category = revenueCategoryService.getById(id);
+            ApplicationPreviewDTO preview = buildApplicationPreview(category);
+            return ResponseEntity.ok(preview);
         } catch (RuntimeException e) {
             return ResponseEntity.notFound().build();
         }
@@ -180,9 +211,10 @@ public class RevenueCategoryController {
      */
     @PutMapping("/{id}/activate")
     @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER')")
-    public ResponseEntity<RevenueCategory> activate(@PathVariable Long id) {
+    public ResponseEntity<RevenueCategoryDTO> activate(@PathVariable Long id) {
         try {
-            return ResponseEntity.ok(revenueCategoryService.activate(id));
+            RevenueCategory activated = revenueCategoryService.activate(id);
+            return ResponseEntity.ok(RevenueCategoryDTO.fromEntity(activated));
         } catch (RuntimeException e) {
             return ResponseEntity.notFound().build();
         }
@@ -194,9 +226,10 @@ public class RevenueCategoryController {
      */
     @PutMapping("/{id}/deactivate")
     @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER')")
-    public ResponseEntity<RevenueCategory> deactivate(@PathVariable Long id) {
+    public ResponseEntity<RevenueCategoryDTO> deactivate(@PathVariable Long id) {
         try {
-            return ResponseEntity.ok(revenueCategoryService.deactivate(id));
+            RevenueCategory deactivated = revenueCategoryService.deactivate(id);
+            return ResponseEntity.ok(RevenueCategoryDTO.fromEntity(deactivated));
         } catch (RuntimeException e) {
             return ResponseEntity.notFound().build();
         }
@@ -260,5 +293,30 @@ public class RevenueCategoryController {
     @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER', 'ACCOUNTANT')")
     public ResponseEntity<Long> countByType(@PathVariable CategoryType categoryType) {
         return ResponseEntity.ok(revenueCategoryService.countByType(categoryType));
+    }
+
+    /**
+     * Build a preview of which entities this category applies to
+     */
+    private ApplicationPreviewDTO buildApplicationPreview(RevenueCategory category) {
+        String description = switch (category.getApplicationType()) {
+            case SHIFT_PROFILE -> "This revenue category will apply to all shifts with the specified profile";
+            case SPECIFIC_SHIFT -> "This revenue category will apply to a single specific shift";
+            case SPECIFIC_OWNER_DRIVER -> {
+                if (category.getSpecificOwnerId() != null) {
+                    yield "This revenue category will apply to a specific owner";
+                } else {
+                    yield "This revenue category will apply to a specific driver";
+                }
+            }
+            case ALL_ACTIVE_SHIFTS -> "This revenue category will apply to all currently active shifts";
+            case ALL_NON_OWNER_DRIVERS -> "This revenue category will apply to all drivers who are not owners";
+            case SHIFTS_WITH_ATTRIBUTE -> "This revenue category will apply to all shifts with the specified attribute";
+        };
+
+        return ApplicationPreviewDTO.builder()
+                .applicationType(category.getApplicationType())
+                .description(description)
+                .build();
     }
 }

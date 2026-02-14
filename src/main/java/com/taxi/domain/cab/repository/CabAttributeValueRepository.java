@@ -293,4 +293,16 @@ public interface CabAttributeValueRepository extends JpaRepository<CabAttributeV
     List<CabAttributeValue> findByShiftAndActiveOn(
         @Param("shift") CabShift shift,
         @Param("date") LocalDate date);
+
+    /**
+     * Find all active shifts with a specific attribute type
+     * Returns the distinct shifts that have the attribute (not the CabAttributeValue objects)
+     * Used for bulk expense creation from attribute costs
+     */
+    @Query("SELECT DISTINCT v.shift FROM CabAttributeValue v " +
+           "WHERE v.attributeType.id = :attributeTypeId " +
+           "AND v.shift IS NOT NULL " +
+           "AND (v.endDate IS NULL OR v.endDate >= CURRENT_DATE) " +
+           "AND v.startDate <= CURRENT_DATE")
+    List<CabShift> findActiveShiftsWithAttribute(@Param("attributeTypeId") Long attributeTypeId);
 }

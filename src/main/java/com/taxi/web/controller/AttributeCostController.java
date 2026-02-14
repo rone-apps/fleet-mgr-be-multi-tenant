@@ -226,6 +226,40 @@ public class AttributeCostController {
     }
 
     /**
+     * Create recurring expenses for all shifts with this attribute
+     * Bulk operation to retroactively create expenses for existing shifts
+     */
+    @PostMapping("/{id}/create-expenses")
+    @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER')")
+    public ResponseEntity<?> createExpenses(
+            @PathVariable Long id,
+            Authentication authentication) {
+        log.info("POST /attribute-costs/{}/create-expenses - Create expenses for all shifts with attribute", id);
+
+        try {
+            String username = authentication != null ? authentication.getName() : "system";
+
+            AttributeCostService.CreateExpensesResultDTO result =
+                    attributeCostService.createExpensesForAllMatchingShifts(id, username);
+
+            Map<String, Object> response = new HashMap<>();
+            response.put("message", String.format("Created %d expenses for %d shifts with %s",
+                    result.getExpensesCreated(),
+                    result.getTotalMatchingShifts(),
+                    result.getAttributeName()));
+            response.put("result", result);
+
+            return ResponseEntity.ok(response);
+
+        } catch (RuntimeException e) {
+            log.error("Error creating expenses for attribute cost: {}", e.getMessage());
+            Map<String, String> error = new HashMap<>();
+            error.put("error", e.getMessage());
+            return ResponseEntity.badRequest().body(error);
+        }
+    }
+
+    /**
      * Calculate shift charges for a date range
      * Shows what a shift should be charged for based on attributes during the period
      */

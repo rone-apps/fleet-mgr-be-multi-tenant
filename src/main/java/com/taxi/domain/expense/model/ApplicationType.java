@@ -35,7 +35,13 @@ public enum ApplicationType {
      * ALL_NON_OWNER_DRIVERS: Apply to all drivers who are not owners
      * No additional fields required - automatically applies to all non-owner drivers
      */
-    ALL_NON_OWNER_DRIVERS("All Non-Owner Drivers", "Apply to all drivers who are not owners");
+    ALL_NON_OWNER_DRIVERS("All Non-Owner Drivers", "Apply to all drivers who are not owners"),
+
+    /**
+     * SHIFTS_WITH_ATTRIBUTE: Apply to all shifts that have a specific attribute
+     * Requires: expenseCategory.attributeTypeId
+     */
+    SHIFTS_WITH_ATTRIBUTE("Shifts with Attribute", "Apply to all shifts with a specific attribute");
 
     private final String displayName;
     private final String description;

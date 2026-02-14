@@ -61,8 +61,8 @@ public class ExpenseCategory {
     @Builder.Default
     private boolean isActive = true;
 
-    @Enumerated(EnumType.STRING)
-    @Column(name = "application_type", nullable = false, length = 30)
+    @Column(name = "application_type", nullable = false, length = 30, columnDefinition = "VARCHAR(30)")
+    @Convert(converter = ApplicationTypeConverter.class)
     private ApplicationType applicationType;
 
     @Column(name = "shift_profile_id")
@@ -77,17 +77,23 @@ public class ExpenseCategory {
     @Column(name = "specific_driver_id")
     private Long specificDriverId;  // Link to specific driver for SPECIFIC_OWNER_DRIVER application type
 
+    @Column(name = "attribute_type_id")
+    private Long attributeTypeId;  // Link to attribute type for SHIFTS_WITH_ATTRIBUTE application type
+
     // Relationships for eager loading in DTOs (read-only via JoinColumn insertable=false, updatable=false)
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "specific_shift_id", insertable = false, updatable = false)
+    @JsonIgnore
     private CabShift specificShift;
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "specific_owner_id", insertable = false, updatable = false)
+    @JsonIgnore
     private Driver specificOwner;
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "specific_driver_id", insertable = false, updatable = false)
+    @JsonIgnore
     private Driver specificDriver;
 
     // Legacy support - kept for backward compatibility but will be deprecated
@@ -142,6 +148,11 @@ public class ExpenseCategory {
                 }
                 if (hasOwner && hasDriver) {
                     throw new IllegalStateException("Cannot set both owner and driver for SPECIFIC_OWNER_DRIVER application type");
+                }
+                break;
+            case SHIFTS_WITH_ATTRIBUTE:
+                if (attributeTypeId == null) {
+                    throw new IllegalStateException("Attribute type ID required for SHIFTS_WITH_ATTRIBUTE application type");
                 }
                 break;
             case ALL_ACTIVE_SHIFTS:

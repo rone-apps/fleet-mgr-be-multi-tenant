@@ -1,7 +1,10 @@
 package com.taxi.domain.expense.service;
 
 import com.taxi.domain.expense.model.RecurringExpense;
+import com.taxi.domain.expense.model.ExpenseCategory;
 import com.taxi.domain.expense.repository.RecurringExpenseRepository;
+import com.taxi.domain.expense.repository.ExpenseCategoryRepository;
+import com.taxi.web.dto.expense.CreateRecurringExpenseRequest;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -30,6 +33,39 @@ import java.util.List;
 public class RecurringExpenseService {
 
     private final RecurringExpenseRepository recurringExpenseRepository;
+    private final ExpenseCategoryRepository expenseCategoryRepository;
+
+    /**
+     * Create a new recurring expense from a category.
+     * The category's applicationType determines which entities get charged.
+     * No manual entity selection is needed.
+     */
+    @Transactional
+    public RecurringExpense createFromCategory(CreateRecurringExpenseRequest request) {
+        ExpenseCategory category = expenseCategoryRepository.findById(request.getExpenseCategoryId())
+            .orElseThrow(() -> new RuntimeException("Expense category not found: " + request.getExpenseCategoryId()));
+
+        log.info("Creating recurring expense from category: categoryId={}, amount={}, billingMethod={}",
+            category.getId(), request.getAmount(), request.getBillingMethod());
+
+        RecurringExpense expense = RecurringExpense.builder()
+            .expenseCategory(category)
+            .amount(request.getAmount())
+            .billingMethod(request.getBillingMethod())
+            .effectiveFrom(request.getEffectiveFrom())
+            .effectiveTo(request.getEffectiveTo())
+            .notes(request.getNotes())
+            .isActive(true)
+            .applicationTypeEnum(category.getApplicationType())
+            .shiftProfileId(category.getShiftProfileId())
+            .specificShiftId(category.getSpecificShiftId())
+            .specificOwnerId(category.getSpecificOwnerId())
+            .specificDriverId(category.getSpecificDriverId())
+            .attributeTypeId(category.getAttributeTypeId())
+            .build();
+
+        return recurringExpenseRepository.save(expense);
+    }
 
     /**
      * Create a new recurring expense

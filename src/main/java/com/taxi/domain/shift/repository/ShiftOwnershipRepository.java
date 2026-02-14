@@ -83,4 +83,18 @@ public interface ShiftOwnershipRepository extends JpaRepository<ShiftOwnership, 
         @Param("startDate") LocalDate startDate,
         @Param("endDate") LocalDate endDate
     );
+
+    /**
+     * Find all shifts owned by a driver within a date range
+     */
+    @Query("SELECT so FROM ShiftOwnership so " +
+           "WHERE so.owner.id = :ownerId " +
+           "AND so.startDate <= :endDate " +
+           "AND (so.endDate IS NULL OR so.endDate >= :startDate) " +
+           "ORDER BY so.startDate DESC")
+    List<ShiftOwnership> findOwnershipsInRange(
+        @Param("ownerId") Long ownerId,
+        @Param("startDate") LocalDate startDate,
+        @Param("endDate") LocalDate endDate
+    );
 }

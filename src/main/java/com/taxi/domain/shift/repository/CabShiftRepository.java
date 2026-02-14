@@ -95,4 +95,10 @@ public interface CabShiftRepository extends JpaRepository<CabShift, Long> {
      */
     @Query("SELECT cs FROM CabShift cs WHERE cs.status = 'ACTIVE'")
     List<CabShift> findAllActiveShifts();
+
+    /**
+     * Find shifts by owner ID and status
+     */
+    @Query("SELECT cs FROM CabShift cs WHERE cs.currentOwner.id = :ownerId AND cs.status = :status")
+    List<CabShift> findByCurrentOwnerIdAndShiftActive(@Param("ownerId") Long ownerId, @Param("status") boolean active);
 }

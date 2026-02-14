@@ -32,6 +32,7 @@ public class ReportService {
     private final DriverRepository driverRepository;
     private final DriverShiftRepository driverShiftRepository;
     private final DriverFinancialCalculationService driverFinancialCalculationService;
+    private final com.taxi.domain.expense.service.FinancialStatementService financialStatementService;
 
     // ═══════════════════════════════════════════════════════════════════════
     // INDIVIDUAL REPORT METHODS - NOW DELEGATE TO SHARED SERVICE
@@ -126,16 +127,20 @@ public class ReportService {
         
         log.info("Generating driver summary report from {} to {}", startDate, endDate);
         long startTime = System.currentTimeMillis();
-        
+
         // Initialize the report
         DriverSummaryReportDTO report = DriverSummaryReportDTO.builder()
                 .startDate(startDate)
                 .endDate(endDate)
                 .build();
-        
-        // Get all drivers (including owners)
-        List<Driver> allDrivers = driverRepository.findAll();
-        log.info("Processing {} drivers", allDrivers.size());
+
+        // Get only ACTIVE drivers (including owners)
+        List<Driver> allDrivers = driverRepository.findAll(
+                org.springframework.data.jpa.domain.Specification.where(
+                        (root, query, cb) -> cb.equal(root.get("status"), Driver.DriverStatus.ACTIVE)
+                )
+        );
+        log.info("Processing {} active drivers", allDrivers.size());
         
         // Pre-fetch all data in bulk to reduce database calls
         LocalDateTime startDateTime = startDate.atStartOfDay();
@@ -186,69 +191,124 @@ public class ReportService {
     }
     
     /**
+     * ✅ SINGLE SOURCE OF TRUTH
      * Calculate financial summary for a single driver (SUMMARY REPORT)
-     * NOW USES SAME shared service as individual reports
+     * NOW DELEGATES TO FinancialStatementService.generateOwnerReport()
+     * This ensures summary reports use IDENTICAL logic to individual reports
      */
     private DriverSummaryDTO calculateDriverSummaryOptimized(
             Driver driver,
             LocalDate startDate,
             LocalDate endDate,
             java.util.Map<String, List<DriverShift>> shiftsByDriver) {
-        
-        log.debug("Calculating summary for driver: {}", driver.getDriverNumber());
-        
+
+        log.debug("Calculating summary for driver: {} using generateOwnerReport (single source of truth)", driver.getDriverNumber());
+
         DriverSummaryDTO summary = DriverSummaryDTO.builder()
+                .driverId(driver.getId())                    // ✅ Include driver ID for fetching detailed reports
                 .driverNumber(driver.getDriverNumber())
                 .driverName(driver.getFullName())
                 .isOwner(driver.getIsOwner())
                 .build();
-        
-        // ✅ ALL CALCULATIONS NOW USE SHARED SERVICE
-        
-        // Lease Revenue (for owners)
-        if (driver.getIsOwner()) {
-            LeaseRevenueReportDTO leaseRevReport = driverFinancialCalculationService
-                    .calculateLeaseRevenue(driver.getDriverNumber(), startDate, endDate);
-            summary.setLeaseRevenue(leaseRevReport.getGrandTotalLease());
-        } else {
+
+        try {
+            // ✅ DELEGATE TO COMPREHENSIVE REPORT - ENSURES SINGLE SOURCE OF TRUTH
+            // This uses the same detailed calculation logic as individual reports
+            com.taxi.web.dto.expense.OwnerReportDTO fullReport =
+                    financialStatementService.generateOwnerReport(driver.getId(), startDate, endDate);
+
+            // Calculate totals from the detailed report
+            fullReport.calculateTotals();
+
+            // Convert OwnerReportDTO revenue totals to DriverSummaryDTO format
+            // Group revenues by type using revenueSubType
+            BigDecimal leaseIncome = fullReport.getRevenues().stream()
+                    .filter(r -> "LEASE_INCOME".equals(r.getRevenueSubType()))
+                    .map(r -> safeBigDecimal(r.getAmount()))
+                    .reduce(BigDecimal.ZERO, BigDecimal::add);
+
+            BigDecimal creditCardRev = fullReport.getRevenues().stream()
+                    .filter(r -> "CARD_REVENUE".equals(r.getRevenueSubType()))
+                    .map(r -> safeBigDecimal(r.getAmount()))
+                    .reduce(BigDecimal.ZERO, BigDecimal::add);
+
+            BigDecimal chargesRev = fullReport.getRevenues().stream()
+                    .filter(r -> "ACCOUNT_REVENUE".equals(r.getRevenueSubType()))
+                    .map(r -> safeBigDecimal(r.getAmount()))
+                    .reduce(BigDecimal.ZERO, BigDecimal::add);
+
+            BigDecimal otherRev = fullReport.getRevenues().stream()
+                    .filter(r -> "OTHER_REVENUE".equals(r.getRevenueSubType()) || "SHIFT_REVENUE".equals(r.getRevenueSubType()))
+                    .map(r -> safeBigDecimal(r.getAmount()))
+                    .reduce(BigDecimal.ZERO, BigDecimal::add);
+
+            // Set revenue breakdown
+            summary.setLeaseRevenue(leaseIncome);
+            summary.setCreditCardRevenue(creditCardRev);
+            summary.setChargesRevenue(chargesRev);
+            summary.setOtherRevenue(otherRev);
+
+            // Expenses breakdown (all from fullReport)
+            summary.setFixedExpense(safeBigDecimal(fullReport.getTotalRecurringExpenses()));
+
+            // ✅ Separate lease expenses from other one-time expenses
+            BigDecimal leaseExpenseTotal = BigDecimal.ZERO;
+            BigDecimal otherExpenseTotal = BigDecimal.ZERO;
+
+            if (fullReport.getOneTimeExpenses() != null && !fullReport.getOneTimeExpenses().isEmpty()) {
+                for (com.taxi.web.dto.expense.StatementLineItem expense : fullReport.getOneTimeExpenses()) {
+                    // Check if this is a lease expense by category code or application type
+                    if ((expense.getCategoryCode() != null && expense.getCategoryCode().equals("LEASE_EXP")) ||
+                        (expense.getApplicationType() != null && expense.getApplicationType().equals("LEASE_RENT"))) {
+                        leaseExpenseTotal = leaseExpenseTotal.add(safeBigDecimal(expense.getAmount()));
+                        log.debug("Added to lease expense: {} - {}", expense.getCategoryCode(), expense.getAmount());
+                    } else {
+                        otherExpenseTotal = otherExpenseTotal.add(safeBigDecimal(expense.getAmount()));
+                        log.debug("Added to other expense: {} - {}", expense.getCategoryCode(), expense.getAmount());
+                    }
+                }
+            }
+
+            summary.setLeaseExpense(leaseExpenseTotal);
+            summary.setVariableExpense(BigDecimal.ZERO); // Not tracked separately in detailed report
+            summary.setOtherExpense(otherExpenseTotal);
+
+            // Totals from detailed report
+            summary.setTotalRevenue(safeBigDecimal(fullReport.getTotalRevenues()));
+            summary.setTotalExpense(safeBigDecimal(fullReport.getTotalExpenses()));
+
+            // Calculate net and outstanding
+            BigDecimal netOwed = safeBigDecimal(fullReport.getTotalRevenues())
+                    .subtract(safeBigDecimal(fullReport.getTotalExpenses()));
+            summary.setNetOwed(netOwed);
+            summary.setPaid(safeBigDecimal(fullReport.getPaidAmount()));
+            summary.setOutstanding(netOwed.subtract(safeBigDecimal(fullReport.getPaidAmount())));
+
+            log.debug("Completed summary for {}: Revenue=${}, Expense=${}, NetOwed=${}, Outstanding=${}",
+                    driver.getDriverNumber(),
+                    summary.getTotalRevenue(),
+                    summary.getTotalExpense(),
+                    summary.getNetOwed(),
+                    summary.getOutstanding());
+
+        } catch (Exception e) {
+            log.error("Error calculating summary for driver {}: {}", driver.getDriverNumber(), e.getMessage(), e);
+            // Return zero summary on error rather than crashing
             summary.setLeaseRevenue(BigDecimal.ZERO);
+            summary.setCreditCardRevenue(BigDecimal.ZERO);
+            summary.setChargesRevenue(BigDecimal.ZERO);
+            summary.setOtherRevenue(BigDecimal.ZERO);
+            summary.setFixedExpense(BigDecimal.ZERO);
+            summary.setLeaseExpense(BigDecimal.ZERO);
+            summary.setVariableExpense(BigDecimal.ZERO);
+            summary.setOtherExpense(BigDecimal.ZERO);
+            summary.setPaid(BigDecimal.ZERO);
+            summary.setOutstanding(BigDecimal.ZERO);
+            summary.setTotalRevenue(BigDecimal.ZERO);
+            summary.setTotalExpense(BigDecimal.ZERO);
+            summary.setNetOwed(BigDecimal.ZERO);
         }
-        
-        // Credit Card Revenue
-        CreditCardRevenueReportDTO ccReport = driverFinancialCalculationService
-                .calculateCreditCardRevenue(driver.getDriverNumber(), startDate, endDate);
-        summary.setCreditCardRevenue(ccReport.getGrandTotal());
-        
-        // Account Charges Revenue
-        ChargesRevenueReportDTO chargesReport = driverFinancialCalculationService
-                .calculateChargesRevenue(driver.getDriverNumber(), startDate, endDate);
-        summary.setChargesRevenue(chargesReport.getGrandTotal());
-        
-        // Fixed Expenses
-        FixedExpenseReportDTO fixedExpReport = driverFinancialCalculationService
-                .calculateFixedExpenses(driver.getDriverNumber(), startDate, endDate);
-        summary.setFixedExpense(fixedExpReport.getTotalAmount());
-        
-        // Lease Expense
-        LeaseExpenseReportDTO leaseExpReport = driverFinancialCalculationService
-                .calculateLeaseExpense(driver.getDriverNumber(), startDate, endDate);
-        summary.setLeaseExpense(leaseExpReport.getGrandTotalLease());
-        
-        // Variable Expenses (not yet implemented)
-        summary.setVariableExpense(BigDecimal.ZERO);
-        
-        // Payments (not yet implemented)
-        summary.setPaid(BigDecimal.ZERO);
-        
-        // Calculate derived fields (totalRevenue, totalExpense, netOwed, etc.)
-        summary.calculateAll();
-        
-        log.debug("Completed summary for {}: Revenue=${}, Expense=${}, NetOwed=${}", 
-                driver.getDriverNumber(), 
-                summary.getTotalRevenue(), 
-                summary.getTotalExpense(), 
-                summary.getNetOwed());
-        
+
         return summary;
     }
     
@@ -384,20 +444,26 @@ public class ReportService {
     
     /**
      * Calculate grand totals for ALL pages (only called on last page)
-     * Simplified version - just sums all active drivers
+     * Calculates from all active drivers to ensure accuracy
+     * Uses existing calculation service to ensure consistency with individual reports
      */
     private void calculateGrandTotalsSimple(
             DriverSummaryReportDTO report,
             LocalDate startDate,
             LocalDate endDate) {
-        
+
+        log.info("Calculating grand totals for ALL active drivers (last page reached)");
+        long startTime = System.currentTimeMillis();
+
         // Get ALL active drivers
         List<Driver> allDrivers = driverRepository.findAll(
                 org.springframework.data.jpa.domain.Specification.where(
                         (root, query, cb) -> cb.equal(root.get("status"), Driver.DriverStatus.ACTIVE)
                 )
         );
-        
+
+        log.info("Processing {} total active drivers for grand totals", allDrivers.size());
+
         BigDecimal grandLeaseRev = BigDecimal.ZERO;
         BigDecimal grandCCRev = BigDecimal.ZERO;
         BigDecimal grandChargesRev = BigDecimal.ZERO;
@@ -411,40 +477,51 @@ public class ReportService {
         BigDecimal grandNetOwed = BigDecimal.ZERO;
         BigDecimal grandPaid = BigDecimal.ZERO;
         BigDecimal grandOutstanding = BigDecimal.ZERO;
-        
-        // Simple calculation for each driver
-        int totalDriversProcessed = 0;
+
+        // ✅ IMPORTANT: Only count drivers that have financial activity
+        // This matches the filtering done in the paginated report
         int driversWithActivity = 0;
+
         for (Driver driver : allDrivers) {
-            totalDriversProcessed++;
-            DriverSummaryDTO summary = calculateDriverSummaryOptimized(
-                    driver, startDate, endDate, new java.util.HashMap<>()
-            );
-            
-            // ✅ ONLY COUNT DRIVERS WITH FINANCIAL ACTIVITY
-            if (!hasFinancialActivity(summary)) {
-                continue;
+            try {
+                DriverSummaryDTO summary = calculateDriverSummaryOptimized(
+                        driver, startDate, endDate, new java.util.HashMap<>()
+                );
+
+                // ✅ ONLY INCLUDE DRIVERS WITH FINANCIAL ACTIVITY
+                if (!hasFinancialActivity(summary)) {
+                    continue;
+                }
+
+                driversWithActivity++;
+
+                grandLeaseRev = grandLeaseRev.add(safeBigDecimal(summary.getLeaseRevenue()));
+                grandCCRev = grandCCRev.add(safeBigDecimal(summary.getCreditCardRevenue()));
+                grandChargesRev = grandChargesRev.add(safeBigDecimal(summary.getChargesRevenue()));
+                grandOtherRev = grandOtherRev.add(safeBigDecimal(summary.getOtherRevenue()));
+                grandFixedExp = grandFixedExp.add(safeBigDecimal(summary.getFixedExpense()));
+                grandLeaseExp = grandLeaseExp.add(safeBigDecimal(summary.getLeaseExpense()));
+                grandVarExp = grandVarExp.add(safeBigDecimal(summary.getVariableExpense()));
+                grandOtherExp = grandOtherExp.add(safeBigDecimal(summary.getOtherExpense()));
+                grandTotalRev = grandTotalRev.add(safeBigDecimal(summary.getTotalRevenue()));
+                grandTotalExp = grandTotalExp.add(safeBigDecimal(summary.getTotalExpense()));
+                grandNetOwed = grandNetOwed.add(safeBigDecimal(summary.getNetOwed()));
+                grandPaid = grandPaid.add(safeBigDecimal(summary.getPaid()));
+                grandOutstanding = grandOutstanding.add(safeBigDecimal(summary.getOutstanding()));
+
+                if (driversWithActivity % 10 == 0) {
+                    log.debug("Processed {} drivers with activity so far...", driversWithActivity);
+                }
+
+            } catch (Exception e) {
+                log.error("Error calculating grand totals for driver {}: {}", driver.getDriverNumber(), e.getMessage());
+                // Continue with next driver instead of stopping
             }
-            
-            driversWithActivity++;
-            grandLeaseRev = grandLeaseRev.add(safeBigDecimal(summary.getLeaseRevenue()));
-            grandCCRev = grandCCRev.add(safeBigDecimal(summary.getCreditCardRevenue()));
-            grandChargesRev = grandChargesRev.add(safeBigDecimal(summary.getChargesRevenue()));
-            grandOtherRev = grandOtherRev.add(safeBigDecimal(summary.getOtherRevenue()));
-            grandFixedExp = grandFixedExp.add(safeBigDecimal(summary.getFixedExpense()));
-            grandLeaseExp = grandLeaseExp.add(safeBigDecimal(summary.getLeaseExpense()));
-            grandVarExp = grandVarExp.add(safeBigDecimal(summary.getVariableExpense()));
-            grandOtherExp = grandOtherExp.add(safeBigDecimal(summary.getOtherExpense()));
-            grandTotalRev = grandTotalRev.add(safeBigDecimal(summary.getTotalRevenue()));
-            grandTotalExp = grandTotalExp.add(safeBigDecimal(summary.getTotalExpense()));
-            grandNetOwed = grandNetOwed.add(safeBigDecimal(summary.getNetOwed()));
-            grandPaid = grandPaid.add(safeBigDecimal(summary.getPaid()));
-            grandOutstanding = grandOutstanding.add(safeBigDecimal(summary.getOutstanding()));
         }
-        
-        log.info("Grand totals calculated from {} drivers with activity (out of {} total active drivers)", 
-                driversWithActivity, totalDriversProcessed);
-        
+
+        log.info("Grand totals calculated from {} drivers with activity (out of {} total active drivers)",
+                driversWithActivity, allDrivers.size());
+
         // Set detailed grand totals
         report.setGrandTotalLeaseRevenue(grandLeaseRev);
         report.setGrandTotalCreditCardRevenue(grandCCRev);
@@ -459,12 +536,14 @@ public class ReportService {
         report.setGrandNetOwed(grandNetOwed);
         report.setGrandTotalPaid(grandPaid);
         report.setGrandTotalOutstanding(grandOutstanding);
-        
-        log.info("Grand totals: Revenue=${}, Expense=${}, Net=${}", 
-                grandTotalRev, grandTotalExp, grandNetOwed);
-        log.info("Breakdown - Lease Rev: ${}, CC Rev: ${}, Charges Rev: ${}, Other Rev: ${}", 
+
+        long duration = System.currentTimeMillis() - startTime;
+        log.info("Grand totals completed in {} ms", duration);
+        log.info("Grand totals: Revenue=${}, Expense=${}, Net=${}, Outstanding=${}",
+                grandTotalRev, grandTotalExp, grandNetOwed, grandOutstanding);
+        log.info("Breakdown - Lease Rev: ${}, CC Rev: ${}, Charges Rev: ${}, Other Rev: ${}",
                 grandLeaseRev, grandCCRev, grandChargesRev, grandOtherRev);
-        log.info("Breakdown - Fixed Exp: ${}, Lease Exp: ${}, Var Exp: ${}, Other Exp: ${}", 
+        log.info("Breakdown - Fixed Exp: ${}, Lease Exp: ${}, Var Exp: ${}, Other Exp: ${}",
                 grandFixedExp, grandLeaseExp, grandVarExp, grandOtherExp);
     }
     

@@ -3,7 +3,10 @@ package com.taxi.domain.expense.service;
 import com.taxi.domain.driver.model.Driver;
 import com.taxi.domain.driver.repository.DriverRepository;
 import com.taxi.domain.expense.model.OneTimeExpense;
+import com.taxi.domain.expense.model.ExpenseCategory;
 import com.taxi.domain.expense.repository.OneTimeExpenseRepository;
+import com.taxi.domain.expense.repository.ExpenseCategoryRepository;
+import com.taxi.web.dto.expense.CreateOneTimeExpenseRequest;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -33,6 +36,48 @@ public class OneTimeExpenseService {
 
     private final OneTimeExpenseRepository oneTimeExpenseRepository;
     private final DriverRepository driverRepository;
+    private final ExpenseCategoryRepository expenseCategoryRepository;
+
+    /**
+     * Create a new one-time expense from a category.
+     * The category's applicationType determines which entities get charged.
+     * No manual entity selection is needed.
+     */
+    @Transactional
+    public OneTimeExpense createFromCategory(CreateOneTimeExpenseRequest request) {
+        ExpenseCategory category = expenseCategoryRepository.findById(request.getExpenseCategoryId())
+            .orElseThrow(() -> new RuntimeException("Expense category not found: " + request.getExpenseCategoryId()));
+
+        log.info("Creating one-time expense from category: categoryId={}, amount={}, date={}",
+            category.getId(), request.getAmount(), request.getExpenseDate());
+
+        OneTimeExpense expense = OneTimeExpense.builder()
+            .expenseCategory(category)
+            .name(request.getName())
+            .amount(request.getAmount())
+            .expenseDate(request.getExpenseDate())
+            .paidBy(request.getPaidBy())
+            .responsibleParty(request.getResponsibleParty())
+            .description(request.getDescription())
+            .vendor(request.getVendor())
+            .receiptUrl(request.getReceiptUrl())
+            .invoiceNumber(request.getInvoiceNumber())
+            .isReimbursable(request.isReimbursable())
+            .notes(request.getNotes())
+            .applicationType(category.getApplicationType())
+            .shiftProfileId(category.getShiftProfileId())
+            .specificShiftId(category.getSpecificShiftId())
+            .specificOwnerId(category.getSpecificOwnerId())
+            .specificDriverId(category.getSpecificDriverId())
+            .build();
+
+        OneTimeExpense saved = oneTimeExpenseRepository.save(expense);
+
+        // ✅ Eagerly fetch relationships for response
+        initializeRelationships(saved);
+
+        return saved;
+    }
 
     /**
      * Create a new one-time expense
@@ -44,12 +89,12 @@ public class OneTimeExpenseService {
             expense.getEntityId(),
             expense.getAmount(),
             expense.getExpenseDate());
-        
+
         OneTimeExpense saved = oneTimeExpenseRepository.save(expense);
-        
+
         // ✅ Eagerly fetch relationships for response
         initializeRelationships(saved);
-        
+
         return saved;
     }
 

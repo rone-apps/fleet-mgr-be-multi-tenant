@@ -27,6 +27,7 @@ import java.util.Map;
 @RequiredArgsConstructor
 @Slf4j
 @CrossOrigin(origins = "*", maxAge = 3600)
+@SuppressWarnings("removal")
 public class CabController {
 
     private final CabService cabService;

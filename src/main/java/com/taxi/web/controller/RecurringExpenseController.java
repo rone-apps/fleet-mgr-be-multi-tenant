@@ -5,9 +5,11 @@ import com.taxi.domain.expense.model.RecurringExpense;
 import com.taxi.domain.expense.repository.ExpenseCategoryRepository;
 import com.taxi.domain.expense.service.RecurringExpenseService;
 import com.taxi.web.dto.expense.ChangeRateRequest;
+import com.taxi.web.dto.expense.CreateRecurringExpenseRequest;
 import com.taxi.web.dto.expense.DeactivateRequest;
 import com.taxi.web.dto.expense.ReactivateRequest;
 import com.taxi.web.dto.expense.RecurringExpenseRequest;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.format.annotation.DateTimeFormat;
@@ -55,30 +57,9 @@ public class RecurringExpenseController {
      */
     @PostMapping
     @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER', 'ACCOUNTANT')")
-    public ResponseEntity<?> create(@RequestBody RecurringExpenseRequest request) {
+    public ResponseEntity<?> create(@Valid @RequestBody CreateRecurringExpenseRequest request) {
         try {
-            // Get the expense category - it contains all application type info
-            ExpenseCategory category = expenseCategoryRepository.findById(request.getExpenseCategoryId())
-                .orElseThrow(() -> new RuntimeException("Expense category not found: " + request.getExpenseCategoryId()));
-
-            // Build the recurring expense using category's application type settings
-            RecurringExpense expense = RecurringExpense.builder()
-                .expenseCategory(category)
-                .amount(request.getAmount())
-                .billingMethod(request.getBillingMethod())
-                .effectiveFrom(request.getEffectiveFrom())
-                .effectiveTo(request.getEffectiveTo())
-                .notes(request.getNotes())
-                .isActive(request.getIsActive() != null ? request.getIsActive() : true)
-                // Copy application type settings from category
-                .applicationTypeEnum(category.getApplicationType())
-                .shiftProfileId(category.getShiftProfileId())
-                .specificShiftId(category.getSpecificShiftId())
-                .specificOwnerId(category.getSpecificOwnerId())
-                .specificDriverId(category.getSpecificDriverId())
-                .build();
-
-            RecurringExpense created = recurringExpenseService.create(expense);
+            RecurringExpense created = recurringExpenseService.createFromCategory(request);
             return ResponseEntity.status(HttpStatus.CREATED).body(created);
 
         } catch (Exception e) {

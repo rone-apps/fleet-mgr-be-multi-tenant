@@ -34,7 +34,7 @@ public class DriverController {
      * GET /api/drivers
      */
     @GetMapping
-    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN', 'MANAGER', 'DISPATCHER')")
+    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN', 'MANAGER', 'DISPATCHER', 'DRIVER')")
     public ResponseEntity<List<DriverDTO>> getAllDrivers() {
         log.info("GET /api/drivers - Get all drivers");
         List<DriverDTO> drivers = driverService.getAllDrivers();

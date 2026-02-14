@@ -4,7 +4,9 @@ import com.taxi.domain.expense.model.ExpenseCategory;
 import com.taxi.domain.expense.model.OneTimeExpense;
 import com.taxi.domain.expense.repository.ExpenseCategoryRepository;
 import com.taxi.domain.expense.service.OneTimeExpenseService;
+import com.taxi.web.dto.expense.CreateOneTimeExpenseRequest;
 import com.taxi.web.dto.expense.OneTimeExpenseRequest;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.format.annotation.DateTimeFormat;
@@ -37,63 +39,13 @@ public class OneTimeExpenseController {
 
     /**
      * Create a new one-time expense
-     * Charges to entities via application type (shift profile, specific shift, owner/driver, etc.)
+     * Charges to entities via application type determined by expense category
      */
     @PostMapping
     @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER', 'DISPATCHER', 'ACCOUNTANT')")
-    public ResponseEntity<?> create(@RequestBody OneTimeExpenseRequest request) {
+    public ResponseEntity<?> create(@Valid @RequestBody CreateOneTimeExpenseRequest request) {
         try {
-            // Validate application type and required fields
-            if (request.getApplicationType() == null) {
-                throw new RuntimeException("Application type is required to charge the expense");
-            }
-
-            // Validate based on application type
-            switch (request.getApplicationType()) {
-                case SHIFT_PROFILE:
-                    if (request.getShiftProfileId() == null) {
-                        throw new RuntimeException("Shift profile ID is required for SHIFT_PROFILE application type");
-                    }
-                    break;
-                case SPECIFIC_SHIFT:
-                    if (request.getSpecificShiftId() == null) {
-                        throw new RuntimeException("Specific shift ID is required for SPECIFIC_SHIFT application type");
-                    }
-                    break;
-                case SPECIFIC_OWNER_DRIVER:
-                    if ((request.getSpecificOwnerId() == null && request.getSpecificDriverId() == null) ||
-                        (request.getSpecificOwnerId() != null && request.getSpecificDriverId() != null)) {
-                        throw new RuntimeException("Exactly one of owner ID or driver ID must be set for SPECIFIC_OWNER_DRIVER application type");
-                    }
-                    break;
-                case ALL_ACTIVE_SHIFTS:
-                case ALL_NON_OWNER_DRIVERS:
-                    // No additional validation needed
-                    break;
-            }
-
-            // Build the one-time expense
-            OneTimeExpense expense = OneTimeExpense.builder()
-                .name(request.getName())
-                .amount(request.getAmount())
-                .expenseDate(request.getExpenseDate())
-                .paidBy(request.getPaidBy())
-                .responsibleParty(request.getResponsibleParty())
-                .description(request.getDescription())
-                .vendor(request.getVendor())
-                .receiptUrl(request.getReceiptUrl())
-                .invoiceNumber(request.getInvoiceNumber())
-                .isReimbursable(request.getIsReimbursable() != null && request.getIsReimbursable())
-                .notes(request.getNotes())
-                // Application type fields
-                .applicationType(request.getApplicationType())
-                .shiftProfileId(request.getShiftProfileId())
-                .specificShiftId(request.getSpecificShiftId())
-                .specificOwnerId(request.getSpecificOwnerId())
-                .specificDriverId(request.getSpecificDriverId())
-                .build();
-
-            OneTimeExpense created = oneTimeExpenseService.create(expense);
+            OneTimeExpense created = oneTimeExpenseService.createFromCategory(request);
             return ResponseEntity.status(HttpStatus.CREATED).body(created);
 
         } catch (Exception e) {
