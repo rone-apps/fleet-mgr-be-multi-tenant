@@ -223,4 +223,116 @@ public class EmailService {
             throw new RuntimeException("Failed to send test email: " + e.getMessage());
         }
     }
+
+    /**
+     * ✅ NEW: Send driver financial report via email with PDF attachment
+     */
+    public void sendDriverReport(String toEmail, String driverName, String reportSummary, byte[] pdfContent) {
+        try {
+            log.info("Sending driver report to email: {}", toEmail);
+
+            MimeMessage message = mailSender.createMimeMessage();
+            MimeMessageHelper helper = new MimeMessageHelper(message, true, "UTF-8");
+
+            try {
+                helper.setFrom(emailFrom, senderName);
+            } catch (UnsupportedEncodingException e) {
+                log.warn("Could not set sender name, using email only: {}", e.getMessage());
+                helper.setFrom(emailFrom);
+            }
+
+            helper.setTo(toEmail);
+            helper.setSubject("Driver Financial Report - " + driverName);
+
+            String htmlBody = buildFinancialReportEmailBody(driverName, reportSummary);
+            helper.setText(htmlBody, true);
+
+            // Attach PDF if provided
+            if (pdfContent != null && pdfContent.length > 0) {
+                helper.addAttachment("Financial_Report_" + driverName.replaceAll("[^a-zA-Z0-9]", "_") + ".pdf",
+                        new ByteArrayResource(pdfContent));
+                log.info("PDF attachment added to driver report email");
+            }
+
+            mailSender.send(message);
+            log.info("Driver financial report sent successfully to {}", toEmail);
+        } catch (MessagingException e) {
+            log.error("Failed to send driver report to {}: {}", toEmail, e.getMessage(), e);
+            throw new RuntimeException("Failed to send email: " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Legacy method for backward compatibility
+     */
+    public void sendDriverReport(String toEmail, String driverName, String reportContent) {
+        sendDriverReport(toEmail, driverName, reportContent, null);
+    }
+
+    /**
+     * Build professional HTML email body for driver financial report
+     */
+    private String buildFinancialReportEmailBody(String driverName, String reportSummary) {
+        StringBuilder html = new StringBuilder();
+
+        html.append("<html><body style=\"font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; line-height: 1.6; color: #333; background-color: #f9f9f9;\">");
+        html.append("<div style=\"max-width: 900px; margin: 0 auto; padding: 20px;\">");
+
+        // Header with Company Branding
+        html.append("<div style=\"background: linear-gradient(135deg, #2c3e50 0%, #34495e 100%); color: white; padding: 30px; text-align: center; border-radius: 8px; margin-bottom: 30px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);\">");
+        html.append("<h1 style=\"margin: 0; font-size: 28px; font-weight: 600;\">📊 Financial Statement</h1>");
+        html.append("<p style=\"margin: 8px 0 0 0; font-size: 16px; opacity: 0.9;\">Maclures Cabs</p>");
+        html.append("</div>");
+
+        // Greeting Section
+        html.append("<div style=\"margin-bottom: 25px;\">");
+        html.append("<p style=\"font-size: 15px;\">Hello <strong>").append(driverName).append("</strong>,</p>");
+        html.append("<p style=\"font-size: 14px; color: #555;\">Your financial statement for the requested period is attached as a PDF. Below is a summary of your account:</p>");
+        html.append("</div>");
+
+        // Summary Box
+        html.append("<div style=\"background-color: #ecf0f1; padding: 20px; border-left: 5px solid #3498db; border-radius: 4px; margin: 20px 0;\">");
+        html.append("<h3 style=\"margin: 0 0 15px 0; color: #2c3e50; font-size: 16px;\">Account Summary</h3>");
+        html.append(reportSummary);
+        html.append("</div>");
+
+        // Important Notes Section
+        html.append("<div style=\"background-color: #fff3cd; padding: 15px; border-left: 5px solid #ffc107; border-radius: 4px; margin: 20px 0;\">");
+        html.append("<p style=\"margin: 0; font-size: 13px; color: #856404;\">");
+        html.append("<strong>📄 Detailed Report:</strong> A complete breakdown of all revenues and expenses is included in the attached PDF document. ");
+        html.append("</p>");
+        html.append("</div>");
+
+        // Next Steps
+        html.append("<div style=\"margin-top: 25px; padding: 15px; background-color: #e8f5e9; border-left: 5px solid #4caf50; border-radius: 4px;\">");
+        html.append("<h4 style=\"margin: 0 0 10px 0; color: #2c3e50; font-size: 14px;\">Need Help?</h4>");
+        html.append("<p style=\"margin: 0; font-size: 13px; color: #555;\">");
+        html.append("If you have any questions about your statement or need clarification on any charges, please contact our office at your earliest convenience.");
+        html.append("</p>");
+        html.append("</div>");
+
+        // Footer
+        html.append("<div style=\"margin-top: 30px; padding-top: 20px; border-top: 1px solid #ddd; text-align: center; font-size: 11px; color: #7f8c8d;\">");
+        html.append("<p style=\"margin: 5px 0;\">This is an automated message from Maclures Cabs Management System</p>");
+        html.append("<p style=\"margin: 5px 0;\">Please do not reply to this email. For inquiries, contact your manager directly.</p>");
+        html.append("<p style=\"margin: 5px 0; opacity: 0.7;\">Generated on ").append(java.time.LocalDateTime.now().format(java.time.format.DateTimeFormatter.ofPattern("MMM dd, yyyy HH:mm a"))).append("</p>");
+        html.append("</div>");
+
+        html.append("</div></body></html>");
+
+        return html.toString();
+    }
+
+    /**
+     * Escape HTML special characters to prevent XSS
+     */
+    private String escapeHtml(String text) {
+        if (text == null) return "";
+        return text
+                .replace("&", "&amp;")
+                .replace("<", "&lt;")
+                .replace(">", "&gt;")
+                .replace("\"", "&quot;")
+                .replace("'", "&#x27;");
+    }
 }

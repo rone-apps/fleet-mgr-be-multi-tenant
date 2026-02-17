@@ -1,5 +1,6 @@
 package com.taxi.web.controller;
 
+import com.taxi.domain.expense.model.ApplicationType;
 import com.taxi.domain.revenue.entity.OtherRevenue;
 import com.taxi.domain.revenue.service.OtherRevenueService;
 import com.taxi.web.dto.revenue.OtherRevenueDTO;
@@ -201,6 +202,96 @@ public class OtherRevenueController {
         return ResponseEntity.ok(response);
     }
 
+    // ✅ NEW: Application Type Endpoints
+
+    // Get revenues by application type
+    @GetMapping("/application-type/{applicationType}")
+    @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER', 'ACCOUNTANT', 'DISPATCHER')")
+    public ResponseEntity<List<OtherRevenueDTO>> getRevenuesByApplicationType(
+            @PathVariable ApplicationType applicationType) {
+        return ResponseEntity.ok(revenueService.getRevenuesByApplicationType(applicationType));
+    }
+
+    // Get revenues by application type and date range
+    @GetMapping("/application-type/{applicationType}/between")
+    @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER', 'ACCOUNTANT', 'DISPATCHER')")
+    public ResponseEntity<List<OtherRevenueDTO>> getRevenuesByApplicationTypeBetweenDates(
+            @PathVariable ApplicationType applicationType,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate startDate,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate endDate) {
+        return ResponseEntity.ok(
+            revenueService.getRevenuesByApplicationTypeBetweenDates(applicationType, startDate, endDate));
+    }
+
+    // Get revenues for a specific shift profile
+    @GetMapping("/shift-profile/{profileId}/between")
+    @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER', 'ACCOUNTANT', 'DISPATCHER')")
+    public ResponseEntity<List<OtherRevenueDTO>> getRevenuesByShiftProfileBetweenDates(
+            @PathVariable Long profileId,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate startDate,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate endDate) {
+        return ResponseEntity.ok(
+            revenueService.getRevenuesByShiftProfileBetweenDates(profileId, startDate, endDate));
+    }
+
+    // Get revenues for a specific shift
+    @GetMapping("/specific-shift/{shiftId}/between")
+    @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER', 'ACCOUNTANT', 'DISPATCHER')")
+    public ResponseEntity<List<OtherRevenueDTO>> getRevenuesBySpecificShiftBetweenDates(
+            @PathVariable Long shiftId,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate startDate,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate endDate) {
+        return ResponseEntity.ok(
+            revenueService.getRevenuesBySpecificShiftBetweenDates(shiftId, startDate, endDate));
+    }
+
+    // Get revenues for a specific person (driver/owner)
+    @GetMapping("/specific-person/{personId}/between")
+    @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER', 'ACCOUNTANT', 'DISPATCHER')")
+    public ResponseEntity<List<OtherRevenueDTO>> getRevenuesBySpecificPersonBetweenDates(
+            @PathVariable Long personId,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate startDate,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate endDate) {
+        return ResponseEntity.ok(
+            revenueService.getRevenuesBySpecificPersonBetweenDates(personId, startDate, endDate));
+    }
+
+    // Get revenues for shifts with a specific attribute
+    @GetMapping("/attribute-type/{attributeTypeId}/between")
+    @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER', 'ACCOUNTANT', 'DISPATCHER')")
+    public ResponseEntity<List<OtherRevenueDTO>> getRevenuesByAttributeTypeBetweenDates(
+            @PathVariable Long attributeTypeId,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate startDate,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate endDate) {
+        return ResponseEntity.ok(
+            revenueService.getRevenuesByAttributeTypeBetweenDates(attributeTypeId, startDate, endDate));
+    }
+
+    // Get all revenues applicable to a specific person between dates
+    // Includes: SPECIFIC_PERSON, ALL_DRIVERS, ALL_OWNERS, ALL_ACTIVE_SHIFTS
+    @GetMapping("/applicable/{personId}/between")
+    @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER', 'ACCOUNTANT', 'DISPATCHER')")
+    public ResponseEntity<List<OtherRevenueDTO>> getApplicableRevenuesBetweenDates(
+            @PathVariable Long personId,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate startDate,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate endDate) {
+        return ResponseEntity.ok(
+            revenueService.getApplicableRevenuesBetweenDates(personId, startDate, endDate));
+    }
+
+    // Get total revenue by application type and date range
+    @GetMapping("/total/application-type/{applicationType}")
+    @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER', 'ACCOUNTANT', 'DISPATCHER')")
+    public ResponseEntity<Map<String, BigDecimal>> getTotalRevenueByApplicationType(
+            @PathVariable ApplicationType applicationType,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate startDate,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate endDate) {
+        BigDecimal total = revenueService.getTotalRevenueByApplicationType(applicationType, startDate, endDate);
+        Map<String, BigDecimal> response = new HashMap<>();
+        response.put("total", total);
+        return ResponseEntity.ok(response);
+    }
+
     @GetMapping("/meta/entity-types")
     @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER', 'ACCOUNTANT', 'DISPATCHER')")
     public ResponseEntity<List<OtherRevenue.EntityType>> getEntityTypes() {
@@ -218,6 +309,12 @@ public class OtherRevenueController {
     public ResponseEntity<List<OtherRevenue.PaymentStatus>> getPaymentStatuses() {
         return ResponseEntity.ok(Arrays.asList(OtherRevenue.PaymentStatus.values()));
     }
-    
+
+    @GetMapping("/meta/application-types")
+    @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER', 'ACCOUNTANT', 'DISPATCHER')")
+    public ResponseEntity<List<ApplicationType>> getApplicationTypes() {
+        return ResponseEntity.ok(Arrays.asList(ApplicationType.values()));
+    }
+
     // Delete is intentionally not provided - revenues should not be deleted for audit trail
 }

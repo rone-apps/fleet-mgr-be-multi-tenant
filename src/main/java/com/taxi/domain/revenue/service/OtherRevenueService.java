@@ -4,6 +4,7 @@ import com.taxi.domain.cab.model.Cab;
 import com.taxi.domain.cab.repository.CabRepository;
 import com.taxi.domain.driver.model.Driver;
 import com.taxi.domain.driver.repository.DriverRepository;
+import com.taxi.domain.expense.model.ApplicationType;
 import com.taxi.domain.revenue.entity.OtherRevenue;
 import com.taxi.domain.revenue.entity.RevenueCategory;
 import com.taxi.domain.revenue.repository.OtherRevenueRepository;
@@ -185,6 +186,93 @@ public class OtherRevenueService {
         return OtherRevenueDTO.fromEntity(saved);
     }
     
+    // ✅ NEW: Application Type Query Methods
+
+    // Get revenues by application type
+    @Transactional(readOnly = true)
+    public List<OtherRevenueDTO> getRevenuesByApplicationType(ApplicationType applicationType) {
+        return revenueRepository.findByApplicationType(applicationType).stream()
+            .map(OtherRevenueDTO::fromEntity)
+            .collect(Collectors.toList());
+    }
+
+    // Get revenues by application type and date range
+    @Transactional(readOnly = true)
+    public List<OtherRevenueDTO> getRevenuesByApplicationTypeBetweenDates(
+            ApplicationType applicationType,
+            LocalDate startDate,
+            LocalDate endDate) {
+        return revenueRepository.findByApplicationTypeAndRevenueDateBetween(applicationType, startDate, endDate).stream()
+            .map(OtherRevenueDTO::fromEntity)
+            .collect(Collectors.toList());
+    }
+
+    // Get revenues for a specific shift profile
+    @Transactional(readOnly = true)
+    public List<OtherRevenueDTO> getRevenuesByShiftProfileBetweenDates(
+            Long shiftProfileId,
+            LocalDate startDate,
+            LocalDate endDate) {
+        return revenueRepository.findByShiftProfileIdAndRevenueDateBetween(shiftProfileId, startDate, endDate).stream()
+            .map(OtherRevenueDTO::fromEntity)
+            .collect(Collectors.toList());
+    }
+
+    // Get revenues for a specific shift
+    @Transactional(readOnly = true)
+    public List<OtherRevenueDTO> getRevenuesBySpecificShiftBetweenDates(
+            Long shiftId,
+            LocalDate startDate,
+            LocalDate endDate) {
+        return revenueRepository.findBySpecificShiftIdAndRevenueDateBetween(shiftId, startDate, endDate).stream()
+            .map(OtherRevenueDTO::fromEntity)
+            .collect(Collectors.toList());
+    }
+
+    // Get revenues for a specific person (driver/owner)
+    @Transactional(readOnly = true)
+    public List<OtherRevenueDTO> getRevenuesBySpecificPersonBetweenDates(
+            Long personId,
+            LocalDate startDate,
+            LocalDate endDate) {
+        return revenueRepository.findBySpecificPersonIdAndRevenueDateBetween(personId, startDate, endDate).stream()
+            .map(OtherRevenueDTO::fromEntity)
+            .collect(Collectors.toList());
+    }
+
+    // Get revenues for shifts with a specific attribute
+    @Transactional(readOnly = true)
+    public List<OtherRevenueDTO> getRevenuesByAttributeTypeBetweenDates(
+            Long attributeTypeId,
+            LocalDate startDate,
+            LocalDate endDate) {
+        return revenueRepository.findByAttributeTypeIdAndRevenueDateBetween(attributeTypeId, startDate, endDate).stream()
+            .map(OtherRevenueDTO::fromEntity)
+            .collect(Collectors.toList());
+    }
+
+    // Get all revenues applicable to a specific person between dates
+    // Includes: SPECIFIC_PERSON, ALL_DRIVERS, ALL_OWNERS, ALL_ACTIVE_SHIFTS
+    @Transactional(readOnly = true)
+    public List<OtherRevenueDTO> getApplicableRevenuesBetweenDates(
+            Long personId,
+            LocalDate startDate,
+            LocalDate endDate) {
+        return revenueRepository.findApplicableRevenuesBetween(personId, startDate, endDate).stream()
+            .map(OtherRevenueDTO::fromEntity)
+            .collect(Collectors.toList());
+    }
+
+    // Get total revenue by application type and date range
+    @Transactional(readOnly = true)
+    public BigDecimal getTotalRevenueByApplicationType(
+            ApplicationType applicationType,
+            LocalDate startDate,
+            LocalDate endDate) {
+        BigDecimal total = revenueRepository.getTotalByApplicationTypeAndDateRange(applicationType, startDate, endDate);
+        return total != null ? total : BigDecimal.ZERO;
+    }
+
     // Get total revenue for date range
     @Transactional(readOnly = true)
     public BigDecimal getTotalRevenue(LocalDate startDate, LocalDate endDate) {
@@ -219,30 +307,39 @@ public class OtherRevenueService {
         revenue.setPaymentMethod(request.getPaymentMethod());
         revenue.setPaymentDate(request.getPaymentDate());
         revenue.setNotes(request.getNotes());
-        
+
         // Set entity type
         if (request.getEntityType() != null) {
             revenue.setEntityType(OtherRevenue.EntityType.valueOf(request.getEntityType().toUpperCase()));
         }
         revenue.setEntityId(request.getEntityId());
-        
+
         // Set revenue type
         if (request.getRevenueType() != null) {
             revenue.setRevenueType(OtherRevenue.RevenueType.valueOf(request.getRevenueType().toUpperCase()));
         }
-        
+
         // Set payment status
         if (request.getPaymentStatus() != null && !request.getPaymentStatus().isEmpty()) {
             revenue.setPaymentStatus(OtherRevenue.PaymentStatus.valueOf(request.getPaymentStatus().toUpperCase()));
         } else if (revenue.getPaymentStatus() == null) {
             revenue.setPaymentStatus(OtherRevenue.PaymentStatus.PENDING);
         }
-        
+
         // Set category
         if (request.getCategoryId() != null) {
             RevenueCategory category = categoryRepository.findById(request.getCategoryId())
                 .orElseThrow(() -> new RuntimeException("Revenue category not found with id: " + request.getCategoryId()));
             revenue.setCategory(category);
+        }
+
+        // Set application type fields (new system)
+        if (request.getApplicationType() != null) {
+            revenue.setApplicationType(request.getApplicationType());
+            revenue.setShiftProfileId(request.getShiftProfileId());
+            revenue.setSpecificShiftId(request.getSpecificShiftId());
+            revenue.setSpecificPersonId(request.getSpecificPersonId());
+            revenue.setAttributeTypeId(request.getAttributeTypeId());
         }
     }
     
@@ -250,36 +347,68 @@ public class OtherRevenueService {
         if (revenue.getAmount() == null || revenue.getAmount().signum() <= 0) {
             throw new IllegalArgumentException("Revenue amount must be positive");
         }
-        
+
         if (revenue.getRevenueDate() == null) {
             throw new IllegalArgumentException("Revenue date is required");
         }
-        
-        if (revenue.getEntityType() == null) {
-            throw new IllegalArgumentException("Entity type is required");
+
+        // Entity type is required only if application type is not set
+        if (revenue.getApplicationType() == null && revenue.getEntityType() == null) {
+            throw new IllegalArgumentException("Either entity type (legacy) or application type is required");
         }
-        
-        if (revenue.getEntityId() == null) {
-            throw new IllegalArgumentException("Entity ID is required");
+
+        // Entity ID is required only if application type is not set
+        if (revenue.getApplicationType() == null && revenue.getEntityId() == null) {
+            throw new IllegalArgumentException("Entity ID is required when using legacy entity type");
         }
-        
+
         if (revenue.getRevenueType() == null) {
             throw new IllegalArgumentException("Revenue type is required");
         }
-        
-        if (revenue.getCategory() == null || revenue.getCategory().getId() == null) {
-            throw new IllegalArgumentException("Revenue category is required");
+
+        // ✅ Category is optional when using ApplicationType system
+        // But if provided, validate it exists and is active
+        if (revenue.getCategory() != null && revenue.getCategory().getId() != null) {
+            RevenueCategory category = categoryRepository.findById(revenue.getCategory().getId())
+                .orElseThrow(() -> new RuntimeException("Revenue category not found"));
+
+            if (!category.isActive()) {
+                throw new IllegalArgumentException("Cannot create revenue with inactive category");
+            }
+
+            revenue.setCategory(category);
         }
-        
-        // Validate category exists and is active
-        RevenueCategory category = categoryRepository.findById(revenue.getCategory().getId())
-            .orElseThrow(() -> new RuntimeException("Revenue category not found"));
-        
-        if (!category.isActive()) {
-            throw new IllegalArgumentException("Cannot create revenue with inactive category");
+
+        // Validate application type specific requirements (if application type is set)
+        if (revenue.getApplicationType() != null) {
+            switch (revenue.getApplicationType()) {
+                case SHIFT_PROFILE:
+                    if (revenue.getShiftProfileId() == null) {
+                        throw new IllegalArgumentException("Shift Profile ID is required for SHIFT_PROFILE application type");
+                    }
+                    break;
+                case SPECIFIC_SHIFT:
+                    if (revenue.getSpecificShiftId() == null) {
+                        throw new IllegalArgumentException("Specific Shift ID is required for SPECIFIC_SHIFT application type");
+                    }
+                    break;
+                case SPECIFIC_PERSON:
+                    if (revenue.getSpecificPersonId() == null) {
+                        throw new IllegalArgumentException("Specific Person ID is required for SPECIFIC_PERSON application type");
+                    }
+                    break;
+                case SHIFTS_WITH_ATTRIBUTE:
+                    if (revenue.getAttributeTypeId() == null) {
+                        throw new IllegalArgumentException("Attribute Type ID is required for SHIFTS_WITH_ATTRIBUTE application type");
+                    }
+                    break;
+                case ALL_OWNERS:
+                case ALL_DRIVERS:
+                case ALL_ACTIVE_SHIFTS:
+                    // No additional validation needed - these apply globally
+                    break;
+            }
         }
-        
-        revenue.setCategory(category);
     }
     
     private void setEntityReferences(OtherRevenue revenue) {
@@ -288,33 +417,39 @@ public class OtherRevenueService {
         revenue.setDriver(null);
         revenue.setOwner(null);
         revenue.setShift(null);
-        
-        // Set the appropriate reference based on entity type
+
+        // ✅ Only set entity references if using legacy entity_type system
+        // New ApplicationType system doesn't require these references
+        if (revenue.getEntityType() == null) {
+            return;
+        }
+
+        // Set the appropriate reference based on entity type (legacy system)
         switch (revenue.getEntityType()) {
             case CAB:
                 Cab cab = cabRepository.findById(revenue.getEntityId())
                     .orElseThrow(() -> new RuntimeException("Cab not found with id: " + revenue.getEntityId()));
                 revenue.setCab(cab);
                 break;
-                
+
             case DRIVER:
                 Driver driver = driverRepository.findById(revenue.getEntityId())
                     .orElseThrow(() -> new RuntimeException("Driver not found with id: " + revenue.getEntityId()));
                 revenue.setDriver(driver);
                 break;
-                
+
             case OWNER:
                 Driver owner = driverRepository.findById(revenue.getEntityId())
                     .orElseThrow(() -> new RuntimeException("Owner not found with id: " + revenue.getEntityId()));
                 revenue.setOwner(owner);
                 break;
-                
+
             case SHIFT:
                 CabShift shift = cabShiftRepository.findById(revenue.getEntityId())
                     .orElseThrow(() -> new RuntimeException("Shift not found with id: " + revenue.getEntityId()));
                 revenue.setShift(shift);
                 break;
-                
+
             case COMPANY:
                 // No specific entity reference needed for company
                 break;

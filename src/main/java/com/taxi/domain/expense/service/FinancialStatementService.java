@@ -606,21 +606,28 @@ public class FinancialStatementService {
         }
 
         // 8. Add revenues from OtherRevenue table (bonuses, credits, adjustments, etc.)
-        List<OtherRevenue> otherRevenues = otherRevenueRepository.findForDriverBetweenDates(personId, from, to);
-        log.info("Found {} other revenues for person {}", otherRevenues.size(), personId);
+        // ✅ Uses new ApplicationType system: finds revenues applicable to this person
+        // This includes: SPECIFIC_PERSON (exact match), ALL_DRIVERS, ALL_OWNERS, and ALL_ACTIVE_SHIFTS
+        List<OtherRevenue> otherRevenues = otherRevenueRepository.findApplicableRevenuesBetween(personId, from, to);
+        log.info("Found {} other revenues (legacy + ApplicationType system) for person {}", otherRevenues.size(), personId);
 
         for (OtherRevenue revenue : otherRevenues) {
             String revenueTypeStr = revenue.getRevenueType() != null ? revenue.getRevenueType().toString() : "OTHER";
             String description = revenue.getDescription() != null ? revenue.getDescription() : revenueTypeStr;
+
+            // Resolve application type display name for context
+            String applicationTypeDisplay = resolveApplicationTypeDisplay(revenue.getApplicationType());
+
             report.getRevenues().add(OwnerReportDTO.RevenueLineItem.builder()
                 .categoryName("Other Revenue")
                 .revenueDate(revenue.getRevenueDate())
                 .description(description)
                 .revenueType(revenueTypeStr)
                 .revenueSubType("OTHER_REVENUE")
+                .applicationTypeDisplay(applicationTypeDisplay)  // ✅ NEW: show how revenue applies
                 .amount(revenue.getAmount())
                 .build());
-            log.debug("Added other revenue: {}", revenue.getAmount());
+            log.debug("Added other revenue: {} (applicationType: {}, amount: {})", revenueTypeStr, applicationTypeDisplay, revenue.getAmount());
         }
 
         // 6. Fetch previous balance from last finalized statement
@@ -682,5 +689,24 @@ public class FinancialStatementService {
             log.error("Error finalizing statement", e);
             throw new RuntimeException("Failed to finalize statement: " + e.getMessage(), e);
         }
+    }
+
+    /**
+     * Resolve human-readable display name for application type
+     */
+    private String resolveApplicationTypeDisplay(ApplicationType applicationType) {
+        if (applicationType == null) {
+            return null;
+        }
+
+        return switch (applicationType) {
+            case SPECIFIC_PERSON -> "Specific Person";
+            case ALL_DRIVERS -> "All Drivers";
+            case ALL_OWNERS -> "All Owners";
+            case SPECIFIC_SHIFT -> "Specific Shift";
+            case SHIFT_PROFILE -> "Shift Profile";
+            case ALL_ACTIVE_SHIFTS -> "All Active Shifts";
+            case SHIFTS_WITH_ATTRIBUTE -> "Shifts with Attribute";
+        };
     }
 }

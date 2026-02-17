@@ -1,5 +1,6 @@
 package com.taxi.domain.revenue.repository;
 
+import com.taxi.domain.expense.model.ApplicationType;
 import com.taxi.domain.revenue.entity.OtherRevenue;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
@@ -116,6 +117,95 @@ public interface OtherRevenueRepository extends JpaRepository<OtherRevenue, Long
     BigDecimal getTotalRevenueByEntityTypeAndEntityIdAndRevenueDateBetween(
         @Param("entityType") OtherRevenue.EntityType entityType,
         @Param("entityId") Long entityId,
+        @Param("startDate") LocalDate startDate,
+        @Param("endDate") LocalDate endDate
+    );
+
+    // ✅ NEW: Application Type Query Methods
+    // Find revenues by application type
+    List<OtherRevenue> findByApplicationType(ApplicationType applicationType);
+
+    // Find revenues by application type and date range
+    @Query("SELECT r FROM OtherRevenue r " +
+           "WHERE r.applicationType = :applicationType " +
+           "AND r.revenueDate BETWEEN :startDate AND :endDate " +
+           "ORDER BY r.revenueDate DESC")
+    List<OtherRevenue> findByApplicationTypeAndRevenueDateBetween(
+        @Param("applicationType") ApplicationType applicationType,
+        @Param("startDate") LocalDate startDate,
+        @Param("endDate") LocalDate endDate
+    );
+
+    // Find revenues for a specific shift profile
+    @Query("SELECT r FROM OtherRevenue r " +
+           "WHERE r.applicationType = 'SHIFT_PROFILE' " +
+           "AND r.shiftProfileId = :profileId " +
+           "AND r.revenueDate BETWEEN :startDate AND :endDate " +
+           "ORDER BY r.revenueDate DESC")
+    List<OtherRevenue> findByShiftProfileIdAndRevenueDateBetween(
+        @Param("profileId") Long profileId,
+        @Param("startDate") LocalDate startDate,
+        @Param("endDate") LocalDate endDate
+    );
+
+    // Find revenues for a specific shift
+    @Query("SELECT r FROM OtherRevenue r " +
+           "WHERE r.applicationType = 'SPECIFIC_SHIFT' " +
+           "AND r.specificShiftId = :shiftId " +
+           "AND r.revenueDate BETWEEN :startDate AND :endDate " +
+           "ORDER BY r.revenueDate DESC")
+    List<OtherRevenue> findBySpecificShiftIdAndRevenueDateBetween(
+        @Param("shiftId") Long shiftId,
+        @Param("startDate") LocalDate startDate,
+        @Param("endDate") LocalDate endDate
+    );
+
+    // Find revenues for a specific person
+    @Query("SELECT r FROM OtherRevenue r " +
+           "WHERE r.applicationType = 'SPECIFIC_PERSON' " +
+           "AND r.specificPersonId = :personId " +
+           "AND r.revenueDate BETWEEN :startDate AND :endDate " +
+           "ORDER BY r.revenueDate DESC")
+    List<OtherRevenue> findBySpecificPersonIdAndRevenueDateBetween(
+        @Param("personId") Long personId,
+        @Param("startDate") LocalDate startDate,
+        @Param("endDate") LocalDate endDate
+    );
+
+    // Find revenues for shifts with a specific attribute
+    @Query("SELECT r FROM OtherRevenue r " +
+           "WHERE r.applicationType = 'SHIFTS_WITH_ATTRIBUTE' " +
+           "AND r.attributeTypeId = :attributeTypeId " +
+           "AND r.revenueDate BETWEEN :startDate AND :endDate " +
+           "ORDER BY r.revenueDate DESC")
+    List<OtherRevenue> findByAttributeTypeIdAndRevenueDateBetween(
+        @Param("attributeTypeId") Long attributeTypeId,
+        @Param("startDate") LocalDate startDate,
+        @Param("endDate") LocalDate endDate
+    );
+
+    // Get all revenues applicable to a specific person between dates
+    @Query("SELECT r FROM OtherRevenue r " +
+           "WHERE r.revenueDate BETWEEN :startDate AND :endDate " +
+           "AND (" +
+           "     r.applicationType = 'SPECIFIC_PERSON' AND r.specificPersonId = :personId OR " +
+           "     r.applicationType = 'ALL_DRIVERS' OR " +
+           "     r.applicationType = 'ALL_OWNERS' OR " +
+           "     r.applicationType = 'ALL_ACTIVE_SHIFTS' " +
+           ") " +
+           "ORDER BY r.revenueDate DESC")
+    List<OtherRevenue> findApplicableRevenuesBetween(
+        @Param("personId") Long personId,
+        @Param("startDate") LocalDate startDate,
+        @Param("endDate") LocalDate endDate
+    );
+
+    // Total revenue by application type and date range
+    @Query("SELECT COALESCE(SUM(r.amount), 0) FROM OtherRevenue r " +
+           "WHERE r.applicationType = :applicationType " +
+           "AND r.revenueDate BETWEEN :startDate AND :endDate")
+    BigDecimal getTotalByApplicationTypeAndDateRange(
+        @Param("applicationType") ApplicationType applicationType,
         @Param("startDate") LocalDate startDate,
         @Param("endDate") LocalDate endDate
     );

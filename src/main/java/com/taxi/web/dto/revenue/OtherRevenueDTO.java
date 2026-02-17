@@ -1,5 +1,6 @@
 package com.taxi.web.dto.revenue;
 
+import com.taxi.domain.expense.model.ApplicationType;
 import com.taxi.domain.revenue.entity.OtherRevenue;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -52,7 +53,17 @@ public class OtherRevenueDTO {
     private String ownerName;
     
     private Long shiftId;
-    
+
+    // ✅ NEW: Application Type System (matching OneTimeExpense)
+    private String applicationType;
+    private Long shiftProfileId;
+    private Long specificShiftId;
+    private Long specificPersonId;
+    private Long attributeTypeId;
+
+    // Display info for application type
+    private String applicationTypeDisplay;
+
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
     
@@ -77,6 +88,12 @@ public class OtherRevenueDTO {
                 .paymentMethod(revenue.getPaymentMethod())
                 .paymentDate(revenue.getPaymentDate())
                 .notes(revenue.getNotes())
+                // Application type fields
+                .applicationType(revenue.getApplicationType() != null ? revenue.getApplicationType().name() : null)
+                .shiftProfileId(revenue.getShiftProfileId())
+                .specificShiftId(revenue.getSpecificShiftId())
+                .specificPersonId(revenue.getSpecificPersonId())
+                .attributeTypeId(revenue.getAttributeTypeId())
                 .createdAt(revenue.getCreatedAt())
                 .updatedAt(revenue.getUpdatedAt());
         
@@ -111,10 +128,11 @@ public class OtherRevenueDTO {
             builder.shiftId(revenue.getShift().getId());
         }
         
-        // Set entity display name based on entity type
+        // Set entity display name based on entity type or application type
         OtherRevenueDTO dto = builder.build();
         dto.setEntityDisplayName(resolveEntityDisplayName(dto));
-        
+        dto.setApplicationTypeDisplay(resolveApplicationTypeDisplay(dto));
+
         return dto;
     }
     
@@ -125,7 +143,7 @@ public class OtherRevenueDTO {
         if (dto.getEntityType() == null) {
             return "Unknown";
         }
-        
+
         switch (dto.getEntityType()) {
             case "CAB":
                 return dto.getCabNumber() != null ? "Cab " + dto.getCabNumber() : "Cab #" + dto.getEntityId();
@@ -139,6 +157,34 @@ public class OtherRevenueDTO {
                 return "Company";
             default:
                 return dto.getEntityType() + " #" + dto.getEntityId();
+        }
+    }
+
+    /**
+     * Resolve a human-readable display name for the application type
+     */
+    private static String resolveApplicationTypeDisplay(OtherRevenueDTO dto) {
+        if (dto.getApplicationType() == null) {
+            return null;
+        }
+
+        switch (dto.getApplicationType()) {
+            case "SPECIFIC_PERSON":
+                return "Specific Person";
+            case "ALL_DRIVERS":
+                return "All Drivers";
+            case "ALL_OWNERS":
+                return "All Owners";
+            case "SPECIFIC_SHIFT":
+                return "Specific Shift";
+            case "SHIFT_PROFILE":
+                return "Shift Profile";
+            case "ALL_ACTIVE_SHIFTS":
+                return "All Active Shifts";
+            case "SHIFTS_WITH_ATTRIBUTE":
+                return "Shifts with Attribute";
+            default:
+                return dto.getApplicationType();
         }
     }
 }

@@ -1,10 +1,15 @@
 package com.taxi.web.controller;
 
+import com.taxi.domain.account.service.EmailService;
 import com.taxi.domain.expense.service.FinancialStatementService;
+import com.taxi.domain.report.service.ReportPdfService;
 import com.taxi.domain.statement.model.Statement;
 import com.taxi.domain.statement.repository.StatementRepository;
+import com.taxi.web.dto.email.EmailReportRequest;
 import com.taxi.web.dto.expense.DriverStatementDTO;
 import com.taxi.web.dto.expense.OwnerReportDTO;
+import java.math.BigDecimal;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.format.annotation.DateTimeFormat;
@@ -16,6 +21,7 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.YearMonth;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 @RestController
@@ -28,6 +34,8 @@ public class FinancialStatementController {
     private final FinancialStatementService financialStatementService;
     private final StatementRepository statementRepository;
     private final com.taxi.domain.driver.repository.DriverRepository driverRepository;
+    private final EmailService emailService;
+    private final ReportPdfService reportPdfService;
 
     /**
      * Generate a financial statement for a driver for a date period
@@ -229,5 +237,59 @@ public class FinancialStatementController {
             log.error("Error updating paid amount", e);
             return ResponseEntity.badRequest().body(e.getMessage());
         }
+    }
+
+    /**
+     * ✅ NEW: Send financial report via email with PDF attachment
+     * Uses configured Spring Mail settings (Gmail SMTP)
+     */
+    @PostMapping("/send-report")
+    @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER', 'ACCOUNTANT')")
+    public ResponseEntity<?> sendReportByEmail(@Valid @RequestBody EmailReportRequest request) {
+        try {
+            log.info("Sending report to email: {}", request.getToEmail());
+
+            // Generate PDF from report data
+            byte[] pdfContent = reportPdfService.generateDriverReportPdf(request.getReport());
+
+            // Build email summary (concise overview for email body)
+            String emailSummary = buildReportEmailSummary(request.getReport());
+
+            // Send email with PDF attachment
+            emailService.sendDriverReport(request.getToEmail(), request.getDriverName(), emailSummary, pdfContent);
+
+            return ResponseEntity.ok(Map.of("message", "Email sent successfully to " + request.getToEmail()));
+        } catch (Exception e) {
+            log.error("Error sending report by email to {}: {}", request.getToEmail(), e.getMessage(), e);
+            return ResponseEntity.badRequest().body(Map.of("error", "Failed to send email: " + e.getMessage()));
+        }
+    }
+
+    /**
+     * Build a concise summary for email body - plain text style for best email compatibility
+     */
+    private String buildReportEmailSummary(OwnerReportDTO report) {
+        StringBuilder summary = new StringBuilder();
+
+        java.math.BigDecimal totalRevenues = report.getTotalRevenues() != null ? report.getTotalRevenues() : java.math.BigDecimal.ZERO;
+        java.math.BigDecimal totalExpenses = report.getTotalExpenses() != null ? report.getTotalExpenses() : java.math.BigDecimal.ZERO;
+        java.math.BigDecimal prevBalance = report.getPreviousBalance() != null ? report.getPreviousBalance() : java.math.BigDecimal.ZERO;
+        java.math.BigDecimal paidAmount = report.getPaidAmount() != null ? report.getPaidAmount() : java.math.BigDecimal.ZERO;
+        java.math.BigDecimal netDue = report.getNetDue() != null ? report.getNetDue() : java.math.BigDecimal.ZERO;
+
+        // Simple text format that works perfectly across all email clients
+        summary.append("<pre style=\"font-family: Arial, sans-serif; font-size: 13px; line-height: 1.8; color: #333; background: none; padding: 0; border: none;\">");
+        summary.append("Period:                  ").append(report.getPeriodFrom()).append(" to ").append(report.getPeriodTo()).append("\n");
+        summary.append("Total Revenues:          $").append(String.format("%,.2f", totalRevenues)).append("\n");
+        summary.append("Total Expenses:          $").append(String.format("%,.2f", totalExpenses)).append("\n");
+        summary.append("Previous Balance:        $").append(String.format("%,.2f", prevBalance)).append("\n");
+        summary.append("Amount Paid:             $").append(String.format("%,.2f", paidAmount)).append("\n");
+        summary.append("─────────────────────────────────────\n");
+
+        String netDueColor = netDue.compareTo(java.math.BigDecimal.ZERO) > 0 ? "color: #d32f2f;" : "color: #388e3c;";
+        summary.append("<strong style=\"").append(netDueColor).append(" font-size: 14px;\">Net Due:                 $").append(String.format("%,.2f", netDue.abs())).append("</strong>\n");
+        summary.append("</pre>");
+
+        return summary.toString();
     }
 }

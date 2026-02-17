@@ -91,5 +91,8 @@ public class OwnerReportDTO {
         private String dropoffAddress;     // For account charges: dropoff location
         private BigDecimal tipAmount;      // For account charges: tip
         private BigDecimal fareAmount;     // For account charges: base fare (same as amount)
+
+        // ✅ NEW: Application type display for revenues
+        private String applicationTypeDisplay;  // e.g., "All Drivers", "Specific Shift", "Shift Profile"
     }
 }
