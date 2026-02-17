@@ -55,11 +55,8 @@ public class ExpenseCategoryService {
         if (updates.getSpecificShiftId() != null) {
             category.setSpecificShiftId(updates.getSpecificShiftId());
         }
-        if (updates.getSpecificOwnerId() != null) {
-            category.setSpecificOwnerId(updates.getSpecificOwnerId());
-        }
-        if (updates.getSpecificDriverId() != null) {
-            category.setSpecificDriverId(updates.getSpecificDriverId());
+        if (updates.getSpecificPersonId() != null) {
+            category.setSpecificPersonId(updates.getSpecificPersonId());
         }
         if (updates.getAttributeTypeId() != null) {
             category.setAttributeTypeId(updates.getAttributeTypeId());

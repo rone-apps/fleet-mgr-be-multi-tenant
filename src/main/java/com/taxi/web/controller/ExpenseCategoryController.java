@@ -221,11 +221,11 @@ public class ExpenseCategoryController {
                 return String.format("This expense will apply to %d shifts with the selected profile", count);
             case SPECIFIC_SHIFT:
                 return "This expense will apply to one specific shift";
-            case SPECIFIC_OWNER_DRIVER:
+            case SPECIFIC_PERSON:
                 return "This expense will apply to a specific owner or driver";
-            case ALL_ACTIVE_SHIFTS:
+            case ALL_OWNERS:
                 return String.format("This expense will apply to all %d currently active shifts", count);
-            case ALL_NON_OWNER_DRIVERS:
+            case ALL_DRIVERS:
                 return String.format("This expense will apply to all %d drivers who are not owners", count);
             default:
                 return "Unknown application type";

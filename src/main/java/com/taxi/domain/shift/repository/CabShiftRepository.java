@@ -91,7 +91,7 @@ public interface CabShiftRepository extends JpaRepository<CabShift, Long> {
     List<CabShift> findActiveByCurrentProfileId(@Param("profileId") Long profileId);
 
     /**
-     * Find all currently active shifts (for ALL_ACTIVE_SHIFTS application type)
+     * Find all currently active shifts (for ALL_OWNERS application type)
      */
     @Query("SELECT cs FROM CabShift cs WHERE cs.status = 'ACTIVE'")
     List<CabShift> findAllActiveShifts();

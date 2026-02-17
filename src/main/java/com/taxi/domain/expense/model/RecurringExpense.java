@@ -42,7 +42,7 @@ public class RecurringExpense {
     private Long id;
 
     @ManyToOne(fetch = FetchType.EAGER)
-    @JoinColumn(name = "expense_category_id", nullable = false)
+    @JoinColumn(name = "expense_category_id", nullable = true)
     private ExpenseCategory expenseCategory;
 
     // Legacy entity type system (kept for backward compatibility)
@@ -94,11 +94,8 @@ public class RecurringExpense {
     @Column(name = "specific_shift_id")
     private Long specificShiftId;
 
-    @Column(name = "specific_owner_id")
-    private Long specificOwnerId;
-
-    @Column(name = "specific_driver_id")
-    private Long specificDriverId;
+    @Column(name = "specific_person_id")
+    private Long specificPersonId;
 
     @Column(name = "amount", nullable = false, precision = 10, scale = 2)
     private BigDecimal amount;

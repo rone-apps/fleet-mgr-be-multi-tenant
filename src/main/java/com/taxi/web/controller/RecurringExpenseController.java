@@ -98,8 +98,8 @@ public class RecurringExpenseController {
             existing.setApplicationTypeEnum(category.getApplicationType());
             existing.setShiftProfileId(category.getShiftProfileId());
             existing.setSpecificShiftId(category.getSpecificShiftId());
-            existing.setSpecificOwnerId(category.getSpecificOwnerId());
-            existing.setSpecificDriverId(category.getSpecificDriverId());
+            existing.setSpecificPersonId(category.getSpecificPersonId());
+            existing.setAttributeTypeId(category.getAttributeTypeId());
 
             RecurringExpense updated = recurringExpenseService.update(existing);
             return ResponseEntity.ok(updated);

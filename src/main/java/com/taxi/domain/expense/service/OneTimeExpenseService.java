@@ -39,17 +39,34 @@ public class OneTimeExpenseService {
     private final ExpenseCategoryRepository expenseCategoryRepository;
 
     /**
-     * Create a new one-time expense from a category.
-     * The category's applicationType determines which entities get charged.
-     * No manual entity selection is needed.
+     * Create a new one-time expense from a request.
+     * Supports multiple application types:
+     * - SHIFT_PROFILE: Charges all shifts with a specific profile
+     * - SPECIFIC_SHIFT: Charges one specific shift
+     * - SPECIFIC_PERSON: Charges a specific owner or driver
+     * - SHIFTS_WITH_ATTRIBUTE: Charges all shifts with a specific attribute
+     * - ALL_OWNERS: Charges all currently active shifts
+     * - ALL_DRIVERS: Charges all non-owner drivers
      */
     @Transactional
     public OneTimeExpense createFromCategory(CreateOneTimeExpenseRequest request) {
-        ExpenseCategory category = expenseCategoryRepository.findById(request.getExpenseCategoryId())
-            .orElseThrow(() -> new RuntimeException("Expense category not found: " + request.getExpenseCategoryId()));
+        // Category is now optional
+        ExpenseCategory category = null;
+        if (request.getExpenseCategoryId() != null) {
+            category = expenseCategoryRepository.findById(request.getExpenseCategoryId())
+                .orElseThrow(() -> new RuntimeException("Expense category not found: " + request.getExpenseCategoryId()));
+        }
 
-        log.info("Creating one-time expense from category: categoryId={}, amount={}, date={}",
-            category.getId(), request.getAmount(), request.getExpenseDate());
+        // Use application type from request if provided, otherwise from category (if category exists)
+        com.taxi.domain.expense.model.ApplicationType applicationType = request.getApplicationType() != null
+            ? request.getApplicationType()
+            : (category != null ? category.getApplicationType() : null);
+
+        log.info("Creating one-time expense: categoryId={}, applicationType={}, amount={}, date={}",
+            category != null ? category.getId() : "null (standalone)", applicationType, request.getAmount(), request.getExpenseDate());
+
+        // Validate required fields based on application type
+        validateApplicationTypeFields(applicationType, request);
 
         OneTimeExpense expense = OneTimeExpense.builder()
             .expenseCategory(category)
@@ -64,11 +81,12 @@ public class OneTimeExpenseService {
             .invoiceNumber(request.getInvoiceNumber())
             .isReimbursable(request.isReimbursable())
             .notes(request.getNotes())
-            .applicationType(category.getApplicationType())
-            .shiftProfileId(category.getShiftProfileId())
-            .specificShiftId(category.getSpecificShiftId())
-            .specificOwnerId(category.getSpecificOwnerId())
-            .specificDriverId(category.getSpecificDriverId())
+            .applicationType(applicationType)
+            // Use request values if provided, otherwise fall back to category values (if category exists)
+            .shiftProfileId(request.getShiftProfileId() != null ? request.getShiftProfileId() : (category != null ? category.getShiftProfileId() : null))
+            .specificShiftId(request.getSpecificShiftId() != null ? request.getSpecificShiftId() : (category != null ? category.getSpecificShiftId() : null))
+            .specificPersonId(request.getSpecificPersonId() != null ? request.getSpecificPersonId() : null)
+            .attributeTypeId(request.getAttributeTypeId() != null ? request.getAttributeTypeId() : (category != null ? category.getAttributeTypeId() : null))
             .build();
 
         OneTimeExpense saved = oneTimeExpenseRepository.save(expense);
@@ -77,6 +95,47 @@ public class OneTimeExpenseService {
         initializeRelationships(saved);
 
         return saved;
+    }
+
+    /**
+     * Validate that required fields are provided based on application type.
+     * For standalone one-time expenses (no category), application type is optional.
+     */
+    private void validateApplicationTypeFields(com.taxi.domain.expense.model.ApplicationType applicationType, CreateOneTimeExpenseRequest request) {
+        // Application type can be null for simple standalone expenses (no targeting required)
+        if (applicationType == null) {
+            return;  // Standalone expense with no specific targeting
+        }
+
+        switch (applicationType) {
+            case SHIFT_PROFILE:
+                if (request.getShiftProfileId() == null) {
+                    throw new IllegalArgumentException("Shift profile ID is required for SHIFT_PROFILE application type");
+                }
+                break;
+            case SPECIFIC_SHIFT:
+                if (request.getSpecificShiftId() == null) {
+                    throw new IllegalArgumentException("Specific shift ID is required for SPECIFIC_SHIFT application type");
+                }
+                break;
+            case SPECIFIC_PERSON:
+                if (request.getSpecificPersonId() == null) {
+                    throw new IllegalArgumentException("Person ID (driver or owner) is required for SPECIFIC_PERSON application type");
+                }
+                break;
+            case SHIFTS_WITH_ATTRIBUTE:
+                if (request.getAttributeTypeId() == null) {
+                    throw new IllegalArgumentException("Attribute type ID is required for SHIFTS_WITH_ATTRIBUTE application type");
+                }
+                break;
+            case ALL_OWNERS:
+            case ALL_DRIVERS:
+            case ALL_ACTIVE_SHIFTS:
+                // No additional fields required
+                break;
+            default:
+                throw new IllegalArgumentException("Unknown application type: " + applicationType);
+        }
     }
 
     /**

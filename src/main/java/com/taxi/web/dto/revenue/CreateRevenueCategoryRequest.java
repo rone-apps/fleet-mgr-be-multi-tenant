@@ -42,9 +42,7 @@ public class CreateRevenueCategoryRequest {
 
     private Long specificShiftId;
 
-    private Long specificOwnerId;
-
-    private Long specificDriverId;
+    private Long specificPersonId;
 
     @Builder.Default
     private Boolean isActive = true;
@@ -63,13 +61,10 @@ public class CreateRevenueCategoryRequest {
                 return shiftProfileId != null;
             case SPECIFIC_SHIFT:
                 return specificShiftId != null;
-            case SPECIFIC_OWNER_DRIVER:
-                // XOR: Either owner or driver, but not both or neither
-                boolean hasOwner = specificOwnerId != null;
-                boolean hasDriver = specificDriverId != null;
-                return hasOwner != hasDriver;
-            case ALL_ACTIVE_SHIFTS:
-            case ALL_NON_OWNER_DRIVERS:
+            case SPECIFIC_PERSON:
+                return specificPersonId != null;
+            case ALL_OWNERS:
+            case ALL_DRIVERS:
                 return true;
             default:
                 return false;

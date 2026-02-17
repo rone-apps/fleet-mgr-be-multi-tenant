@@ -7,7 +7,6 @@ import com.taxi.domain.cab.repository.CabAttributeTypeRepository;
 import com.taxi.domain.cab.repository.CabAttributeValueRepository;
 import com.taxi.domain.expense.model.ApplicationType;
 import com.taxi.domain.expense.model.RecurringExpense;
-import com.taxi.domain.expense.model.ExpenseCategory;
 import com.taxi.domain.expense.repository.RecurringExpenseRepository;
 import com.taxi.domain.shift.model.CabShift;
 import lombok.RequiredArgsConstructor;
@@ -240,7 +239,7 @@ public class AttributeCostService {
                 continue;
             }
 
-            // Create new recurring expense
+            // Create new recurring expense (no expense category required for attribute-based expenses)
             RecurringExpense expense = RecurringExpense.builder()
                     .shift(shift)
                     .amount(cost.getPrice())

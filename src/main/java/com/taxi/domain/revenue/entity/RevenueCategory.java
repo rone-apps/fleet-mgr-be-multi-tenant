@@ -67,11 +67,8 @@ public class RevenueCategory {
     @Column(name = "specific_shift_id")
     private Long specificShiftId;  // Link to specific shift for SPECIFIC_SHIFT application type
 
-    @Column(name = "specific_owner_id")
-    private Long specificOwnerId;  // Link to specific owner for SPECIFIC_OWNER_DRIVER application type
-
-    @Column(name = "specific_driver_id")
-    private Long specificDriverId;  // Link to specific driver for SPECIFIC_OWNER_DRIVER application type
+    @Column(name = "specific_person_id")
+    private Long specificPersonId;  // Link to specific person (driver or owner) for SPECIFIC_PERSON application type
 
     // Relationships for eager loading in DTOs (read-only via JoinColumn insertable=false, updatable=false)
     @ManyToOne(fetch = FetchType.LAZY)
@@ -79,8 +76,8 @@ public class RevenueCategory {
     private CabShift specificShift;
 
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "specific_owner_id", insertable = false, updatable = false)
-    private Driver specificOwner;
+    @JoinColumn(name = "specific_person_id", insertable = false, updatable = false)
+    private Driver specificPerson;
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "specific_driver_id", insertable = false, updatable = false)
@@ -139,18 +136,13 @@ public class RevenueCategory {
                     throw new IllegalStateException("Specific shift ID required for SPECIFIC_SHIFT application type");
                 }
                 break;
-            case SPECIFIC_OWNER_DRIVER:
-                boolean hasOwner = specificOwnerId != null;
-                boolean hasDriver = specificDriverId != null;
-                if (!hasOwner && !hasDriver) {
-                    throw new IllegalStateException("Either owner ID or driver ID required for SPECIFIC_OWNER_DRIVER application type");
-                }
-                if (hasOwner && hasDriver) {
-                    throw new IllegalStateException("Cannot set both owner and driver for SPECIFIC_OWNER_DRIVER application type");
+            case SPECIFIC_PERSON:
+                if (specificPersonId == null) {
+                    throw new IllegalStateException("Person ID (driver or owner) required for SPECIFIC_PERSON application type");
                 }
                 break;
-            case ALL_ACTIVE_SHIFTS:
-            case ALL_NON_OWNER_DRIVERS:
+            case ALL_OWNERS:
+            case ALL_DRIVERS:
                 // No additional validation needed
                 break;
         }

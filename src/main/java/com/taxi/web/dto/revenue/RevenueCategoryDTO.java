@@ -39,9 +39,7 @@ public class RevenueCategoryDTO {
 
     private Long specificShiftId;
 
-    private Long specificOwnerId;
-
-    private Long specificDriverId;
+    private Long specificPersonId;
 
     private LocalDateTime createdAt;
 
@@ -66,8 +64,7 @@ public class RevenueCategoryDTO {
                 .applicationType(entity.getApplicationType())
                 .shiftProfileId(entity.getShiftProfileId())
                 .specificShiftId(entity.getSpecificShiftId())
-                .specificOwnerId(entity.getSpecificOwnerId())
-                .specificDriverId(entity.getSpecificDriverId())
+                .specificPersonId(entity.getSpecificPersonId())
                 .createdAt(entity.getCreatedAt())
                 .updatedAt(entity.getUpdatedAt())
                 .build();

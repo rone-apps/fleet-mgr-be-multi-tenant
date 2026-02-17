@@ -42,8 +42,7 @@ public class CreateExpenseCategoryRequest {
     // Application type specific fields
     private Long shiftProfileId;
     private Long specificShiftId;
-    private Long specificOwnerId;
-    private Long specificDriverId;
+    private Long specificPersonId;
     private Long attributeTypeId;
 
     @Builder.Default
@@ -65,17 +64,14 @@ public class CreateExpenseCategoryRequest {
             case SPECIFIC_SHIFT:
                 return specificShiftId != null;
 
-            case SPECIFIC_OWNER_DRIVER:
-                // Exactly one of owner or driver must be set (XOR)
-                boolean hasOwner = specificOwnerId != null;
-                boolean hasDriver = specificDriverId != null;
-                return hasOwner != hasDriver;  // XOR: true if exactly one is set
+            case SPECIFIC_PERSON:
+                return specificPersonId != null;
 
             case SHIFTS_WITH_ATTRIBUTE:
                 return attributeTypeId != null;
 
-            case ALL_ACTIVE_SHIFTS:
-            case ALL_NON_OWNER_DRIVERS:
+            case ALL_OWNERS:
+            case ALL_DRIVERS:
                 // No additional fields required
                 return true;
 
@@ -97,8 +93,7 @@ public class CreateExpenseCategoryRequest {
                 .applicationType(applicationType)
                 .shiftProfileId(shiftProfileId)
                 .specificShiftId(specificShiftId)
-                .specificOwnerId(specificOwnerId)
-                .specificDriverId(specificDriverId)
+                .specificPersonId(specificPersonId)
                 .attributeTypeId(attributeTypeId)
                 .isActive(isActive)
                 .build();

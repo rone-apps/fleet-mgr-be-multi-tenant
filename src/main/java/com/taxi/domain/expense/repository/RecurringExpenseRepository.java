@@ -153,7 +153,7 @@ List<RecurringExpense> findEffectiveBetween(
     /**
      * Find recurring expenses by application type and shift profile within date range
      */
-    @Query("SELECT re FROM RecurringExpense re WHERE re.applicationTypeEnum = :applicationType " +
+    @Query("SELECT DISTINCT re FROM RecurringExpense re WHERE re.applicationTypeEnum = :applicationType " +
            "AND re.shiftProfileId = :shiftProfileId " +
            "AND re.isActive = true " +
            "AND (DATE(re.effectiveFrom) <= :endDate) " +
@@ -181,31 +181,16 @@ List<RecurringExpense> findEffectiveBetween(
     );
 
     /**
-     * Find recurring expenses by application type and specific driver within date range
+     * Find recurring expenses by application type and specific person within date range
      */
     @Query("SELECT re FROM RecurringExpense re WHERE re.applicationTypeEnum = :applicationType " +
-           "AND re.specificDriverId = :specificDriverId " +
+           "AND re.specificPersonId = :specificPersonId " +
            "AND re.isActive = true " +
            "AND (DATE(re.effectiveFrom) <= :endDate) " +
            "AND (re.effectiveTo IS NULL OR DATE(re.effectiveTo) >= :startDate)")
-    List<RecurringExpense> findByApplicationTypeAndSpecificDriverIdBetween(
+    List<RecurringExpense> findByApplicationTypeAndSpecificPersonIdBetween(
         @Param("applicationType") ApplicationType applicationType,
-        @Param("specificDriverId") Long specificDriverId,
-        @Param("startDate") LocalDate startDate,
-        @Param("endDate") LocalDate endDate
-    );
-
-    /**
-     * Find recurring expenses by application type and specific owner within date range
-     */
-    @Query("SELECT re FROM RecurringExpense re WHERE re.applicationTypeEnum = :applicationType " +
-           "AND re.specificOwnerId = :specificOwnerId " +
-           "AND re.isActive = true " +
-           "AND (DATE(re.effectiveFrom) <= :endDate) " +
-           "AND (re.effectiveTo IS NULL OR DATE(re.effectiveTo) >= :startDate)")
-    List<RecurringExpense> findByApplicationTypeAndSpecificOwnerIdBetween(
-        @Param("applicationType") ApplicationType applicationType,
-        @Param("specificOwnerId") Long specificOwnerId,
+        @Param("specificPersonId") Long specificPersonId,
         @Param("startDate") LocalDate startDate,
         @Param("endDate") LocalDate endDate
     );

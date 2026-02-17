@@ -1,10 +1,10 @@
 package com.taxi.web.controller;
 
 import com.taxi.domain.profile.service.ShiftProfileService;
-import com.taxi.domain.shift.model.CabShift;
 import com.taxi.web.dto.profile.*;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -219,6 +219,20 @@ public class ShiftProfileController {
             return ResponseEntity.badRequest().body(new Object() {
                 public final String error = e.getMessage();
             });
+        } catch (DataIntegrityViolationException e) {
+            log.warn("Profile assignment constraint violation: {}", e.getMessage());
+            String userMessage = "A shift profile is already active for this shift on this date. " +
+                    "Please end the current profile assignment first or choose a different date range.";
+            if (e.getMessage() != null && e.getMessage().contains("uk_shift_active_profile")) {
+                // This is the specific constraint we're checking for
+                return ResponseEntity.status(HttpStatus.CONFLICT).body(new Object() {
+                    public final String error = userMessage;
+                });
+            }
+            // For other constraint violations, provide a generic message
+            return ResponseEntity.status(HttpStatus.CONFLICT).body(new Object() {
+                public final String error = "This operation violates database constraints. Please check your input and try again.";
+            });
         }
     }
 
@@ -270,7 +284,7 @@ public class ShiftProfileController {
      */
     @PostMapping("/end-assignment/{shiftId}")
     @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER')")
-    public ResponseEntity<ShiftProfileAssignmentDTO> endProfileAssignment(
+    public ResponseEntity<Object> endProfileAssignment(
             @PathVariable Long shiftId,
             @RequestParam java.time.LocalDate endDate,
             Principal principal) {
@@ -282,7 +296,15 @@ public class ShiftProfileController {
             return ResponseEntity.ok(dto);
         } catch (IllegalArgumentException e) {
             log.warn("Failed to end assignment: {}", e.getMessage());
-            return ResponseEntity.badRequest().body(null);
+            return ResponseEntity.badRequest().body(new Object() {
+                public final String error = e.getMessage();
+            });
+        } catch (DataIntegrityViolationException e) {
+            log.warn("Failed to end assignment - constraint violation: {}", e.getMessage());
+            return ResponseEntity.status(HttpStatus.CONFLICT).body(new Object() {
+                public final String error = "Unable to modify assignment due to database constraints. " +
+                        "Please ensure the end date is valid and doesn't conflict with other assignments.";
+            });
         }
     }
 

@@ -41,8 +41,7 @@ public class RevenueCategoryService {
                 .applicationType(request.getApplicationType())
                 .shiftProfileId(request.getShiftProfileId())
                 .specificShiftId(request.getSpecificShiftId())
-                .specificOwnerId(request.getSpecificOwnerId())
-                .specificDriverId(request.getSpecificDriverId())
+                .specificPersonId(request.getSpecificPersonId())
                 .isActive(request.getIsActive())
                 .build();
 
@@ -184,8 +183,7 @@ public class RevenueCategoryService {
         existing.setApplicationType(request.getApplicationType());
         existing.setShiftProfileId(request.getShiftProfileId());
         existing.setSpecificShiftId(request.getSpecificShiftId());
-        existing.setSpecificOwnerId(request.getSpecificOwnerId());
-        existing.setSpecificDriverId(request.getSpecificDriverId());
+        existing.setSpecificPersonId(request.getSpecificPersonId());
         existing.setIsActive(request.getIsActive());
 
         return revenueCategoryRepository.save(existing);
@@ -213,8 +211,7 @@ public class RevenueCategoryService {
         existing.setApplicationType(updatedCategory.getApplicationType());
         existing.setShiftProfileId(updatedCategory.getShiftProfileId());
         existing.setSpecificShiftId(updatedCategory.getSpecificShiftId());
-        existing.setSpecificOwnerId(updatedCategory.getSpecificOwnerId());
-        existing.setSpecificDriverId(updatedCategory.getSpecificDriverId());
+        existing.setSpecificPersonId(updatedCategory.getSpecificPersonId());
         existing.setIsActive(updatedCategory.getIsActive());
 
         return revenueCategoryRepository.save(existing);

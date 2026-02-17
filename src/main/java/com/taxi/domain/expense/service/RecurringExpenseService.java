@@ -59,8 +59,7 @@ public class RecurringExpenseService {
             .applicationTypeEnum(category.getApplicationType())
             .shiftProfileId(category.getShiftProfileId())
             .specificShiftId(category.getSpecificShiftId())
-            .specificOwnerId(category.getSpecificOwnerId())
-            .specificDriverId(category.getSpecificDriverId())
+            .specificPersonId(category.getSpecificPersonId())
             .attributeTypeId(category.getAttributeTypeId())
             .build();
 

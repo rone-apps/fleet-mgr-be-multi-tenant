@@ -48,7 +48,7 @@ public interface DriverRepository extends JpaRepository<Driver, Long>, JpaSpecif
     Optional<String> findDriverNumberByName(@Param("firstName") String firstName, @Param("lastName") String lastName);
 
     /**
-     * Find all drivers who are not shift owners (for ALL_NON_OWNER_DRIVERS application type)
+     * Find all drivers who are not shift owners (for ALL_DRIVERS application type)
      * Returns active drivers who don't have any shift ownership
      */
     @Query("SELECT d FROM Driver d WHERE d.status = 'ACTIVE' " +

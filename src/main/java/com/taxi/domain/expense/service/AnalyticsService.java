@@ -79,8 +79,8 @@ public class AnalyticsService {
     private DriverPerformanceDTO generateDriverMetrics(Driver driver, LocalDate from, LocalDate to) {
         // Get recurring expenses for driver
         BigDecimal recurringExpenses = recurringExpenseRepository
-            .findByApplicationTypeAndSpecificDriverIdBetween(
-                com.taxi.domain.expense.model.ApplicationType.SPECIFIC_OWNER_DRIVER,
+            .findByApplicationTypeAndSpecificPersonIdBetween(
+                com.taxi.domain.expense.model.ApplicationType.SPECIFIC_PERSON,
                 driver.getId(), from, to).stream()
             .map(e -> e.calculateAmountForDateRange(from, to))
             .reduce(BigDecimal.ZERO, BigDecimal::add);

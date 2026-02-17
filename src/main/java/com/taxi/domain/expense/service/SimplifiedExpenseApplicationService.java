@@ -27,9 +27,9 @@ import java.util.stream.Collectors;
  * Replaces complex attribute-based matching with straightforward application types:
  * - SHIFT_PROFILE: All shifts with a specific profile
  * - SPECIFIC_SHIFT: One specific shift
- * - SPECIFIC_OWNER_DRIVER: A specific owner or driver
- * - ALL_ACTIVE_SHIFTS: All currently active shifts
- * - ALL_NON_OWNER_DRIVERS: All drivers who don't own shifts
+ * - SPECIFIC_PERSON: A specific owner or driver
+ * - ALL_OWNERS: All currently active shifts
+ * - ALL_DRIVERS: All drivers who don't own shifts
  */
 @Service
 @RequiredArgsConstructor
@@ -79,7 +79,7 @@ public class SimplifiedExpenseApplicationService {
                     }
                     break;
 
-                case SPECIFIC_OWNER_DRIVER:
+                case SPECIFIC_PERSON:
                     RecurringExpense ownerDriverExpense = createExpenseForOwnerOrDriver(
                             category, amount, billingMethod, effectiveFrom, createdBy);
                     if (ownerDriverExpense != null) {
@@ -87,12 +87,12 @@ public class SimplifiedExpenseApplicationService {
                     }
                     break;
 
-                case ALL_ACTIVE_SHIFTS:
+                case ALL_OWNERS:
                     createdExpenses = createExpensesForAllActiveShifts(
                             category, amount, billingMethod, effectiveFrom, createdBy);
                     break;
 
-                case ALL_NON_OWNER_DRIVERS:
+                case ALL_DRIVERS:
                     createdExpenses = createExpensesForNonOwnerDrivers(
                             category, amount, billingMethod, effectiveFrom, createdBy);
                     break;
@@ -121,13 +121,13 @@ public class SimplifiedExpenseApplicationService {
             case SPECIFIC_SHIFT:
                 return 1;  // Always 1 for specific shift
 
-            case SPECIFIC_OWNER_DRIVER:
+            case SPECIFIC_PERSON:
                 return 1;  // Always 1 for specific owner or driver
 
-            case ALL_ACTIVE_SHIFTS:
+            case ALL_OWNERS:
                 return (int) cabShiftRepository.findAllActiveShifts().stream().count();
 
-            case ALL_NON_OWNER_DRIVERS:
+            case ALL_DRIVERS:
                 return (int) driverRepository.findNonOwnerDrivers().stream().count();
 
             default:
@@ -286,12 +286,10 @@ public class SimplifiedExpenseApplicationService {
             LocalDate effectiveFrom,
             String createdBy) {
 
-        if (category.getSpecificOwnerId() != null) {
-            return createExpenseForDriver(category, category.getSpecificOwnerId(), amount, billingMethod, effectiveFrom, createdBy);
-        } else if (category.getSpecificDriverId() != null) {
-            return createExpenseForDriver(category, category.getSpecificDriverId(), amount, billingMethod, effectiveFrom, createdBy);
+        if (category.getSpecificPersonId() != null) {
+            return createExpenseForDriver(category, category.getSpecificPersonId(), amount, billingMethod, effectiveFrom, createdBy);
         } else {
-            throw new IllegalArgumentException("Neither owner nor driver ID is set for SPECIFIC_OWNER_DRIVER type");
+            throw new IllegalArgumentException("Person ID (driver or owner) is not set for SPECIFIC_PERSON type");
         }
     }
 }

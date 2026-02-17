@@ -9,37 +9,43 @@ package com.taxi.domain.expense.model;
 public enum ApplicationType {
     /**
      * SHIFT_PROFILE: Apply to all shifts with a specific profile
-     * Requires: expenseCategory.shiftProfileId
+     * Requires: shiftProfileId
      */
     SHIFT_PROFILE("Shift Profile", "Apply to all shifts with a specific profile"),
 
     /**
      * SPECIFIC_SHIFT: Apply to one specific shift only
-     * Requires: expenseCategory.specificShiftId
+     * Requires: specificShiftId
      */
     SPECIFIC_SHIFT("Specific Shift", "Apply to one specific shift"),
 
     /**
-     * SPECIFIC_OWNER_DRIVER: Apply to a specific owner or driver
-     * Requires: exactly one of expenseCategory.specificOwnerId or expenseCategory.specificDriverId
+     * SPECIFIC_PERSON: Apply to a specific driver or owner
+     * Requires: specificPersonId
      */
-    SPECIFIC_OWNER_DRIVER("Specific Owner/Driver", "Apply to a specific owner or driver"),
+    SPECIFIC_PERSON("Specific Person", "Apply to a specific driver or owner"),
 
     /**
-     * ALL_ACTIVE_SHIFTS: Apply to all currently active shifts
-     * No additional fields required - automatically applies to all active shifts
+     * ALL_OWNERS: Apply to all owners
+     * No additional fields required
+     */
+    ALL_OWNERS("All Owners", "Apply to all owners"),
+
+    /**
+     * ALL_DRIVERS: Apply to all drivers
+     * No additional fields required
+     */
+    ALL_DRIVERS("All Drivers", "Apply to all drivers"),
+
+    /**
+     * ALL_ACTIVE_SHIFTS: Apply to all currently active shifts (owners only)
+     * No additional fields required
      */
     ALL_ACTIVE_SHIFTS("All Active Shifts", "Apply to all currently active shifts"),
 
     /**
-     * ALL_NON_OWNER_DRIVERS: Apply to all drivers who are not owners
-     * No additional fields required - automatically applies to all non-owner drivers
-     */
-    ALL_NON_OWNER_DRIVERS("All Non-Owner Drivers", "Apply to all drivers who are not owners"),
-
-    /**
      * SHIFTS_WITH_ATTRIBUTE: Apply to all shifts that have a specific attribute
-     * Requires: expenseCategory.attributeTypeId
+     * Requires: attributeTypeId
      */
     SHIFTS_WITH_ATTRIBUTE("Shifts with Attribute", "Apply to all shifts with a specific attribute");
 

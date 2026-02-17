@@ -21,11 +21,11 @@ public class OneTimeExpenseRequest {
     private OneTimeExpense.PaidBy paidBy;  // Required
 
     // Application type system - determines who to charge this expense to
-    private ApplicationType applicationType;  // Required - SHIFT_PROFILE, SPECIFIC_SHIFT, SPECIFIC_OWNER_DRIVER, ALL_ACTIVE_SHIFTS, ALL_NON_OWNER_DRIVERS
+    private ApplicationType applicationType;  // Optional - SHIFT_PROFILE, SPECIFIC_SHIFT, SPECIFIC_PERSON, SHIFTS_WITH_ATTRIBUTE, ALL_OWNERS, ALL_DRIVERS
     private Long shiftProfileId;  // For SHIFT_PROFILE type
     private Long specificShiftId;  // For SPECIFIC_SHIFT type
-    private Long specificOwnerId;  // For SPECIFIC_OWNER_DRIVER type
-    private Long specificDriverId;  // For SPECIFIC_OWNER_DRIVER type
+    private Long specificPersonId;  // For SPECIFIC_PERSON type (driver or owner)
+    private Long attributeTypeId;  // For SHIFTS_WITH_ATTRIBUTE type
 
     // Additional expense details
     private OneTimeExpense.ResponsibleParty responsibleParty;

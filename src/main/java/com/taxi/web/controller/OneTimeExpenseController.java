@@ -92,14 +92,15 @@ public class OneTimeExpenseController {
                         throw new RuntimeException("Specific shift ID is required for SPECIFIC_SHIFT application type");
                     }
                     break;
-                case SPECIFIC_OWNER_DRIVER:
-                    if ((request.getSpecificOwnerId() == null && request.getSpecificDriverId() == null) ||
-                        (request.getSpecificOwnerId() != null && request.getSpecificDriverId() != null)) {
-                        throw new RuntimeException("Exactly one of owner ID or driver ID must be set for SPECIFIC_OWNER_DRIVER application type");
+                case SPECIFIC_PERSON:
+                    if (request.getSpecificPersonId() == null) {
+                        throw new RuntimeException("Person ID (driver or owner) is required for SPECIFIC_PERSON application type");
                     }
                     break;
+                case ALL_OWNERS:
+                case ALL_DRIVERS:
                 case ALL_ACTIVE_SHIFTS:
-                case ALL_NON_OWNER_DRIVERS:
+                case SHIFTS_WITH_ATTRIBUTE:
                     // No additional validation needed
                     break;
             }
@@ -120,8 +121,8 @@ public class OneTimeExpenseController {
             existing.setApplicationType(request.getApplicationType());
             existing.setShiftProfileId(request.getShiftProfileId());
             existing.setSpecificShiftId(request.getSpecificShiftId());
-            existing.setSpecificOwnerId(request.getSpecificOwnerId());
-            existing.setSpecificDriverId(request.getSpecificDriverId());
+            existing.setSpecificPersonId(request.getSpecificPersonId());
+            existing.setAttributeTypeId(request.getAttributeTypeId());
 
             OneTimeExpense updated = oneTimeExpenseService.update(id, existing);
             return ResponseEntity.ok(updated);

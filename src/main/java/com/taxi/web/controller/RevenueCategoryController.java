@@ -302,15 +302,10 @@ public class RevenueCategoryController {
         String description = switch (category.getApplicationType()) {
             case SHIFT_PROFILE -> "This revenue category will apply to all shifts with the specified profile";
             case SPECIFIC_SHIFT -> "This revenue category will apply to a single specific shift";
-            case SPECIFIC_OWNER_DRIVER -> {
-                if (category.getSpecificOwnerId() != null) {
-                    yield "This revenue category will apply to a specific owner";
-                } else {
-                    yield "This revenue category will apply to a specific driver";
-                }
-            }
+            case SPECIFIC_PERSON -> "This revenue category will apply to a specific person (driver or owner)";
+            case ALL_OWNERS -> "This revenue category will apply to all owners";
+            case ALL_DRIVERS -> "This revenue category will apply to all drivers";
             case ALL_ACTIVE_SHIFTS -> "This revenue category will apply to all currently active shifts";
-            case ALL_NON_OWNER_DRIVERS -> "This revenue category will apply to all drivers who are not owners";
             case SHIFTS_WITH_ATTRIBUTE -> "This revenue category will apply to all shifts with the specified attribute";
         };
 

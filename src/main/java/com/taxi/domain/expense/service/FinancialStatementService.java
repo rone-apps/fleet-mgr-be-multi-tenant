@@ -14,10 +14,10 @@ import com.taxi.domain.revenue.repository.OtherRevenueRepository;
 import com.taxi.domain.account.repository.AccountChargeRepository;
 import com.taxi.domain.payment.repository.CreditCardTransactionRepository;
 import com.taxi.domain.report.service.DriverFinancialCalculationService;
+import com.taxi.domain.shift.service.ShiftValidationService;
 import com.taxi.web.dto.report.LeaseRevenueDTO;
 import com.taxi.web.dto.report.LeaseExpenseDTO;
 import com.taxi.domain.shift.model.CabShift;
-import com.taxi.domain.shift.model.DriverSegment;
 import com.taxi.domain.shift.model.ShiftLog;
 import com.taxi.domain.shift.model.ShiftOwnership;
 import com.taxi.domain.shift.repository.CabShiftRepository;
@@ -26,6 +26,7 @@ import com.taxi.domain.shift.repository.ShiftOwnershipRepository;
 import com.taxi.domain.statement.model.Statement;
 import com.taxi.domain.statement.model.StatementStatus;
 import com.taxi.domain.statement.repository.StatementRepository;
+import com.taxi.domain.cab.repository.CabAttributeValueRepository;
 import com.taxi.web.dto.expense.DriverStatementDTO;
 import com.taxi.web.dto.expense.OwnerReportDTO;
 import com.taxi.web.dto.expense.StatementLineItem;
@@ -38,7 +39,6 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.*;
-import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
@@ -47,7 +47,6 @@ import java.util.stream.Collectors;
 public class FinancialStatementService {
 
     private final RecurringExpenseRepository recurringExpenseRepository;
-    private final OneTimeExpenseRepository oneTimeExpenseRepository;
     private final CabShiftRepository cabShiftRepository;
     private final DriverRepository driverRepository;
     private final CabRepository cabRepository;
@@ -59,7 +58,12 @@ public class FinancialStatementService {
     private final DriverFinancialCalculationService driverFinancialCalculationService;
     private final StatementRepository statementRepository;
     private final ObjectMapper objectMapper;
+    private final CabAttributeValueRepository cabAttributeValueRepository;
 
+    // ═══════════════════════════════════════════════════════════════════════
+    // NEW CONSOLIDATED SERVICES - SINGLE SOURCE OF TRUTH
+    // ═══════════════════════════════════════════════════════════════════════
+    private final ExpenseCalculationService expenseCalculationService;
     /**
      * Generate a financial statement for a driver for a date period
      * Shows all applicable recurring (prorated) and one-time charges
@@ -84,59 +88,21 @@ public class FinancialStatementService {
         List<CabShift> activeShifts = cabShiftRepository.findByCurrentOwnerIdAndShiftActive(driverId, true);
         activeShifts = filterShiftsByDateRange(activeShifts, from, to);
 
-        // 1. Get recurring expenses applicable to the driver's shifts
-        List<RecurringExpense> shiftRecurringExpenses = getRecurringExpensesForShifts(activeShifts, from, to);
-        for (RecurringExpense expense : shiftRecurringExpenses) {
-            BigDecimal proratedAmount = expense.calculateAmountForDateRange(from, to);
-            String entityDesc = buildEntityDescription(expense, activeShifts);
+        // ═══════════════════════════════════════════════════════════════════════
+        // USE NEW CONSOLIDATED EXPENSE CALCULATION SERVICE
+        // ═══════════════════════════════════════════════════════════════════════
 
-            statement.getRecurringCharges().add(StatementLineItem.builder()
-                .categoryCode(expense.getExpenseCategory().getCategoryCode())
-                .categoryName(expense.getExpenseCategory().getCategoryName())
-                .applicationType(expense.getApplicationTypeEnum() != null ? expense.getApplicationTypeEnum().toString() : "")
-                .entityDescription(entityDesc)
-                .billingMethod(expense.getBillingMethod())
-                .effectiveFrom(expense.getEffectiveFrom())
-                .effectiveTo(expense.getEffectiveTo())
-                .amount(proratedAmount)
-                .isRecurring(true)
-                .build());
-        }
+        // 1. Get all applicable recurring expenses (uses ExpenseCalculationService)
+        List<RecurringExpense> allRecurringExpenses = expenseCalculationService
+                .getApplicableRecurringExpenses(driver, activeShifts, from, to);
 
-        // 2. Get driver-direct recurring expenses
-        List<RecurringExpense> driverRecurringExpenses = getRecurringExpensesForDriver(driverId, from, to);
-        for (RecurringExpense expense : driverRecurringExpenses) {
-            BigDecimal proratedAmount = expense.calculateAmountForDateRange(from, to);
+        expenseCalculationService.addRecurringExpensesToStatement(statement, allRecurringExpenses, activeShifts);
 
-            statement.getRecurringCharges().add(StatementLineItem.builder()
-                .categoryCode(expense.getExpenseCategory().getCategoryCode())
-                .categoryName(expense.getExpenseCategory().getCategoryName())
-                .applicationType(expense.getApplicationTypeEnum() != null ? expense.getApplicationTypeEnum().toString() : "")
-                .entityDescription("Driver Specific")
-                .billingMethod(expense.getBillingMethod())
-                .effectiveFrom(expense.getEffectiveFrom())
-                .effectiveTo(expense.getEffectiveTo())
-                .amount(proratedAmount)
-                .isRecurring(true)
-                .build());
-        }
+        // 2. Get all applicable one-time expenses (uses ExpenseCalculationService)
+        List<OneTimeExpense> allOneTimeExpenses = expenseCalculationService
+                .getApplicableOneTimeExpenses(driver, activeShifts, from, to);
 
-        // 3. Get one-time expenses for the driver
-        List<OneTimeExpense> oneTimeExpenses = oneTimeExpenseRepository.findForEntityBetween(
-            OneTimeExpense.EntityType.DRIVER, driverId, from, to);
-
-        for (OneTimeExpense expense : oneTimeExpenses) {
-            statement.getOneTimeCharges().add(StatementLineItem.builder()
-                .categoryCode(expense.getExpenseCategory().getCategoryCode())
-                .categoryName(expense.getExpenseCategory().getCategoryName())
-                .applicationType(expense.getApplicationType() != null ? expense.getApplicationType().toString() : "")
-                .entityDescription("One-Time Charge")
-                .date(expense.getExpenseDate())
-                .description(expense.getDescription())
-                .amount(expense.getAmount())
-                .isRecurring(false)
-                .build());
-        }
+        expenseCalculationService.addOneTimeExpensesToStatement(statement, allOneTimeExpenses, activeShifts);
 
         statement.calculateTotals();
         return statement;
@@ -177,169 +143,36 @@ public class FinancialStatementService {
         }
         ownerShifts = filterShiftsByDateRange(ownerShifts, from, to);
 
-        // 1. Get recurring expenses applicable to the owner's shifts
-        List<RecurringExpense> shiftRecurringExpenses = getRecurringExpensesForShifts(ownerShifts, from, to);
-        for (RecurringExpense expense : shiftRecurringExpenses) {
-            BigDecimal proratedAmount = expense.calculateAmountForDateRange(from, to);
-            String entityDesc = buildEntityDescription(expense, ownerShifts);
+        // ═══════════════════════════════════════════════════════════════════════
+        // USE NEW CONSOLIDATED EXPENSE CALCULATION SERVICE
+        // ═══════════════════════════════════════════════════════════════════════
 
-            statement.getRecurringCharges().add(StatementLineItem.builder()
-                .categoryCode(expense.getExpenseCategory().getCategoryCode())
-                .categoryName(expense.getExpenseCategory().getCategoryName())
-                .applicationType(expense.getApplicationTypeEnum() != null ? expense.getApplicationTypeEnum().toString() : "")
-                .entityDescription(entityDesc)
-                .billingMethod(expense.getBillingMethod())
-                .effectiveFrom(expense.getEffectiveFrom())
-                .effectiveTo(expense.getEffectiveTo())
-                .amount(proratedAmount)
-                .isRecurring(true)
-                .build());
-        }
+        // 1. Get all applicable recurring expenses (uses ExpenseCalculationService)
+        List<RecurringExpense> allRecurringExpenses = expenseCalculationService
+                .getApplicableRecurringExpenses(owner, ownerShifts, from, to);
 
-        // 2. Get owner-direct recurring expenses
-        List<RecurringExpense> ownerRecurringExpenses = getRecurringExpensesForOwner(ownerId, from, to);
-        for (RecurringExpense expense : ownerRecurringExpenses) {
-            BigDecimal proratedAmount = expense.calculateAmountForDateRange(from, to);
+        expenseCalculationService.addRecurringExpensesToStatement(statement, allRecurringExpenses, ownerShifts);
 
-            statement.getRecurringCharges().add(StatementLineItem.builder()
-                .categoryCode(expense.getExpenseCategory().getCategoryCode())
-                .categoryName(expense.getExpenseCategory().getCategoryName())
-                .applicationType(expense.getApplicationTypeEnum() != null ? expense.getApplicationTypeEnum().toString() : "")
-                .entityDescription("Owner Specific")
-                .billingMethod(expense.getBillingMethod())
-                .effectiveFrom(expense.getEffectiveFrom())
-                .effectiveTo(expense.getEffectiveTo())
-                .amount(proratedAmount)
-                .isRecurring(true)
-                .build());
-        }
+        // 2. Get all applicable one-time expenses (uses ExpenseCalculationService)
+        List<OneTimeExpense> allOneTimeExpenses = expenseCalculationService
+                .getApplicableOneTimeExpenses(owner, ownerShifts, from, to);
 
-        // 3. Get one-time expenses for the owner
-        List<OneTimeExpense> oneTimeExpenses = oneTimeExpenseRepository.findForEntityBetween(
-            OneTimeExpense.EntityType.OWNER, ownerId, from, to);
-
-        for (OneTimeExpense expense : oneTimeExpenses) {
-            statement.getOneTimeCharges().add(StatementLineItem.builder()
-                .categoryCode(expense.getExpenseCategory().getCategoryCode())
-                .categoryName(expense.getExpenseCategory().getCategoryName())
-                .applicationType(expense.getApplicationType() != null ? expense.getApplicationType().toString() : "")
-                .entityDescription("One-Time Charge")
-                .date(expense.getExpenseDate())
-                .description(expense.getDescription())
-                .amount(expense.getAmount())
-                .isRecurring(false)
-                .build());
-        }
+        expenseCalculationService.addOneTimeExpensesToStatement(statement, allOneTimeExpenses, ownerShifts);
 
         statement.calculateTotals();
         return statement;
     }
 
-    private List<RecurringExpense> getRecurringExpensesForShifts(List<CabShift> shifts, LocalDate from, LocalDate to) {
-        List<RecurringExpense> expenses = new ArrayList<>();
+    /**
+     * DEPRECATED: Old private methods have been consolidated into ExpenseCalculationService
+     * These methods are no longer needed - use ExpenseCalculationService instead
+     */
 
-        if (shifts.isEmpty()) {
-            log.info("No shifts found for expense calculation");
-            return expenses;
-        }
-
-        log.info("Calculating expenses for {} shifts between {} and {}", shifts.size(), from, to);
-
-        // ALL_ACTIVE_SHIFTS - applies to all active shifts
-        List<RecurringExpense> allActiveShiftsExpenses = recurringExpenseRepository.findEffectiveBetweenForApplicationType(
-            ApplicationType.ALL_ACTIVE_SHIFTS, from, to);
-        expenses.addAll(allActiveShiftsExpenses);
-        log.info("Found {} ALL_ACTIVE_SHIFTS expenses", allActiveShiftsExpenses.size());
-        allActiveShiftsExpenses.forEach(e -> log.info("  - ALL_ACTIVE: {} (amount: {})", e.getExpenseCategory().getCategoryName(), e.getAmount()));
-
-        // Collect shift profile IDs from shifts
-        Set<Long> shiftProfileIds = new HashSet<>();
-        for (CabShift shift : shifts) {
-            if (shift.getCurrentProfile() != null) {
-                shiftProfileIds.add(shift.getCurrentProfile().getId());
-                log.info("Shift {} has profile {}", shift.getId(), shift.getCurrentProfile().getId());
-            }
-        }
-        log.info("Found {} unique shift profiles", shiftProfileIds.size());
-
-        // SHIFT_PROFILE - expenses for specific profiles
-        for (Long profileId : shiftProfileIds) {
-            List<RecurringExpense> profileExpenses = recurringExpenseRepository.findByApplicationTypeAndShiftProfileIdBetween(
-                ApplicationType.SHIFT_PROFILE, profileId, from, to);
-            expenses.addAll(profileExpenses);
-            log.info("Found {} SHIFT_PROFILE expenses for profile {}", profileExpenses.size(), profileId);
-            profileExpenses.forEach(e -> log.info("  - PROFILE {}: {} (amount: {})", profileId, e.getExpenseCategory().getCategoryName(), e.getAmount()));
-        }
-
-        // SPECIFIC_SHIFT - expenses for specific shifts
-        for (CabShift shift : shifts) {
-            List<RecurringExpense> shiftExpenses = recurringExpenseRepository.findByApplicationTypeAndSpecificShiftIdBetween(
-                ApplicationType.SPECIFIC_SHIFT, shift.getId(), from, to);
-            expenses.addAll(shiftExpenses);
-            log.info("Found {} SPECIFIC_SHIFT expenses for shift {}", shiftExpenses.size(), shift.getId());
-        }
-
-        log.info("Total expenses before deduplication: {}", expenses.size());
-        List<RecurringExpense> result = expenses.stream().distinct().toList();
-        log.info("Total expenses after deduplication: {}", result.size());
-
-        return result;
-    }
-
-    private List<RecurringExpense> getRecurringExpensesForDriver(Long driverId, LocalDate from, LocalDate to) {
-        List<RecurringExpense> expenses = new ArrayList<>();
-
-        // SPECIFIC_OWNER_DRIVER where specificDriverId = driverId
-        expenses.addAll(recurringExpenseRepository.findByApplicationTypeAndSpecificDriverIdBetween(
-            ApplicationType.SPECIFIC_OWNER_DRIVER, driverId, from, to));
-
-        // ALL_NON_OWNER_DRIVERS if driver is not an owner
-        Driver driver = driverRepository.findById(driverId).orElse(null);
-        if (driver != null && !Boolean.TRUE.equals(driver.getIsOwner())) {
-            expenses.addAll(recurringExpenseRepository.findEffectiveBetweenForApplicationType(
-                ApplicationType.ALL_NON_OWNER_DRIVERS, from, to));
-        }
-
-        return expenses;
-    }
-
-    private List<RecurringExpense> getRecurringExpensesForOwner(Long ownerId, LocalDate from, LocalDate to) {
-        List<RecurringExpense> expenses = new ArrayList<>();
-
-        // SPECIFIC_OWNER_DRIVER where specificOwnerId = ownerId
-        expenses.addAll(recurringExpenseRepository.findByApplicationTypeAndSpecificOwnerIdBetween(
-            ApplicationType.SPECIFIC_OWNER_DRIVER, ownerId, from, to));
-
-        return expenses;
-    }
-
+    // Helper method for filtering shifts by date range (still used internally)
     private List<CabShift> filterShiftsByDateRange(List<CabShift> shifts, LocalDate from, LocalDate to) {
         return shifts.stream()
             .filter(shift -> shift.isActiveOn(from) || shift.isActiveOn(to))
             .toList();
-    }
-
-    private String buildEntityDescription(RecurringExpense expense, List<CabShift> shifts) {
-        ApplicationType appType = expense.getApplicationTypeEnum();
-
-        if (appType == null) {
-            return "Unknown";
-        }
-
-        return switch (appType) {
-            case ALL_ACTIVE_SHIFTS -> "All Active Shifts";
-            case SHIFT_PROFILE -> "Profile: " + (expense.getShiftProfileId() != null ? expense.getShiftProfileId() : "N/A");
-            case SPECIFIC_SHIFT -> {
-                CabShift shift = shifts.stream()
-                    .filter(s -> s.getId().equals(expense.getSpecificShiftId()))
-                    .findFirst()
-                    .orElse(null);
-                yield shift != null ? "Cab " + shift.getCab().getCabNumber() + " - " + shift.getShiftType() : "Specific Shift";
-            }
-            case SPECIFIC_OWNER_DRIVER -> expense.getSpecificOwnerId() != null ? "Owner Specific" : "Driver Specific";
-            case ALL_NON_OWNER_DRIVERS -> "All Non-Owner Drivers";
-            case SHIFTS_WITH_ATTRIBUTE -> "Shifts with Attribute";
-        };
     }
 
     /**
@@ -366,6 +199,8 @@ public class FinancialStatementService {
 
         List<CabShift> relevantShifts = new ArrayList<>();
 
+        // ✅ KEY BUSINESS RULE: Shift-based charges (ALL_OWNERS, SHIFT_PROFILE, SPECIFIC_SHIFT, SHIFTS_WITH_ATTRIBUTE)
+        // are ALWAYS charged to the OWNER of the shift, NEVER to drivers driving those shifts
         if (Boolean.TRUE.equals(person.getIsOwner())) {
             // For owners: get all shifts they own from shift_ownership table within the date range
             List<ShiftOwnership> ownerships = shiftOwnershipRepository.findOwnershipsInRange(personId, from, to);
@@ -380,38 +215,41 @@ public class FinancialStatementService {
 
             log.info("Owner {} has {} unique shifts in period", personId, relevantShifts.size());
         } else {
-            // For drivers: get all ACTIVE shifts where they are the current owner
-            relevantShifts = cabShiftRepository.findActiveByOwnerId(personId);
-            relevantShifts = filterShiftsByDateRange(relevantShifts, from, to);
-            log.info("Driver {} has {} active shifts in period", personId, relevantShifts.size());
+            // For drivers: DO NOT fetch shifts
+            // ✅ Drivers should NOT receive shift-based charges (those go to the owner)
+            // Drivers only get charges specifically assigned to them as a driver
+            log.info("Driver {} - will only receive driver-specific charges and lease expenses", personId);
         }
 
-        // 1. Add ALL_ACTIVE_SHIFTS expenses (once, applies to all shifts)
-        List<RecurringExpense> allActiveExpenses = recurringExpenseRepository.findEffectiveBetweenForApplicationType(
-            ApplicationType.ALL_ACTIVE_SHIFTS, from, to);
+        // 1. Add ALL_OWNERS expenses (only for owners - shift-based charges)
+        if (Boolean.TRUE.equals(person.getIsOwner())) {
+            List<RecurringExpense> allActiveExpenses = recurringExpenseRepository.findEffectiveBetweenForApplicationType(
+                ApplicationType.ALL_OWNERS, from, to);
 
-        for (RecurringExpense expense : allActiveExpenses) {
-            BigDecimal proratedAmount = expense.calculateAmountForDateRange(from, to);
-            log.info("Adding ALL_ACTIVE_SHIFTS expense {} (prorated: {})",
-                expense.getExpenseCategory().getCategoryName(), proratedAmount);
+            for (RecurringExpense expense : allActiveExpenses) {
+                BigDecimal proratedAmount = expense.calculateAmountForDateRange(from, to);
+                log.info("Adding ALL_OWNERS expense {} (prorated: {})",
+                    expense.getExpenseCategory().getCategoryName(), proratedAmount);
 
-            report.getRecurringExpenses().add(StatementLineItem.builder()
-                .categoryCode(expense.getExpenseCategory().getCategoryCode())
-                .categoryName(expense.getExpenseCategory().getCategoryName())
-                .applicationType(expense.getApplicationTypeEnum() != null ? expense.getApplicationTypeEnum().toString() : "")
-                .entityDescription("All Active Shifts")
-                .billingMethod(expense.getBillingMethod())
-                .effectiveFrom(expense.getEffectiveFrom())
-                .effectiveTo(expense.getEffectiveTo())
-                .amount(proratedAmount)
-                .isRecurring(true)
-                .build());
+                report.getRecurringExpenses().add(StatementLineItem.builder()
+                    .categoryCode(expense.getExpenseCategory().getCategoryCode())
+                    .categoryName(expense.getExpenseCategory().getCategoryName())
+                    .applicationType(expense.getApplicationTypeEnum() != null ? expense.getApplicationTypeEnum().toString() : "")
+                    .entityDescription("All Active Shifts")
+                    .billingMethod(expense.getBillingMethod())
+                    .effectiveFrom(expense.getEffectiveFrom())
+                    .effectiveTo(expense.getEffectiveTo())
+                    .amount(proratedAmount)
+                    .isRecurring(true)
+                    .build());
+            }
         }
 
-        // 2. Add SHIFT_PROFILE and SPECIFIC_SHIFT expenses (per shift)
-        log.info("Processing per-shift recurring expenses for {} individual shifts", relevantShifts.size());
+        // 2. Add SHIFT_PROFILE and SPECIFIC_SHIFT expenses (per shift, only for owners)
+        if (Boolean.TRUE.equals(person.getIsOwner())) {
+            log.info("Processing per-shift recurring expenses for {} individual shifts", relevantShifts.size());
 
-        for (CabShift shift : relevantShifts) {
+            for (CabShift shift : relevantShifts) {
             // SHIFT_PROFILE expenses for this shift's profile
             if (shift.getCurrentProfile() != null) {
                 Long profileId = shift.getCurrentProfile().getId();
@@ -473,15 +311,22 @@ public class FinancialStatementService {
                     .isRecurring(true)
                     .build());
             }
-        }
+        }  // End: for each shift
+        }  // End: SHIFT_PROFILE and SPECIFIC_SHIFT expenses (owners only)
 
-        // 2. Add person-specific recurring expenses
-        List<RecurringExpense> personRecurringExpenses;
-        if (Boolean.TRUE.equals(person.getIsOwner())) {
-            personRecurringExpenses = getRecurringExpensesForOwner(personId, from, to);
-        } else {
-            personRecurringExpenses = getRecurringExpensesForDriver(personId, from, to);
-        }
+        // ═══════════════════════════════════════════════════════════════════════
+        // USE NEW CONSOLIDATED EXPENSE CALCULATION SERVICE
+        // ═══════════════════════════════════════════════════════════════════════
+
+        // 2. Get all applicable person-specific recurring expenses
+        List<RecurringExpense> personRecurringExpenses = expenseCalculationService
+                .getApplicableRecurringExpenses(person, relevantShifts, from, to)
+                .stream()
+                .filter(e -> e.getApplicationTypeEnum() == null ||
+                        (e.getApplicationTypeEnum().name().equals("SPECIFIC_PERSON") ||
+                         e.getApplicationTypeEnum().name().equals("ALL_OWNERS") ||
+                         e.getApplicationTypeEnum().name().equals("ALL_DRIVERS")))
+                .toList();
 
         for (RecurringExpense expense : personRecurringExpenses) {
             BigDecimal proratedAmount = expense.calculateAmountForDateRange(from, to);
@@ -499,24 +344,86 @@ public class FinancialStatementService {
                 .build());
         }
 
-        // 3. Add one-time expenses
-        OneTimeExpense.EntityType entityType = Boolean.TRUE.equals(person.getIsOwner())
-            ? OneTimeExpense.EntityType.OWNER
-            : OneTimeExpense.EntityType.DRIVER;
-        List<OneTimeExpense> oneTimeExpenses = oneTimeExpenseRepository.findForEntityBetween(
-            entityType, personId, from, to);
+        // 3. ✅ Add all one-time expenses (uses consolidated service with ALL_ACTIVE_SHIFTS expansion)
+        List<OneTimeExpense> oneTimeExpenses = expenseCalculationService
+                .getApplicableOneTimeExpenses(person, relevantShifts, from, to);
 
         for (OneTimeExpense expense : oneTimeExpenses) {
-            report.getOneTimeExpenses().add(StatementLineItem.builder()
-                .categoryCode(expense.getExpenseCategory().getCategoryCode())
-                .categoryName(expense.getExpenseCategory().getCategoryName())
-                .applicationType(expense.getApplicationType() != null ? expense.getApplicationType().toString() : "")
-                .entityDescription("One-Time Charge")
-                .date(expense.getExpenseDate())
-                .description(expense.getDescription())
-                .amount(expense.getAmount())
-                .isRecurring(false)
-                .build());
+            String categoryCode = expense.getExpenseCategory() != null
+                    ? expense.getExpenseCategory().getCategoryCode()
+                    : "AD_HOC";
+            String categoryName = expense.getExpenseCategory() != null
+                    ? expense.getExpenseCategory().getCategoryName()
+                    : (expense.getName() != null ? expense.getName() : "Other Charge");
+
+            // ✅ SPECIAL HANDLING FOR ALL_ACTIVE_SHIFTS: Expand per shift
+            if (expense.getApplicationType() == ApplicationType.ALL_ACTIVE_SHIFTS && !relevantShifts.isEmpty()) {
+                log.info("EXPANDING ALL_ACTIVE_SHIFTS one-time expense ID {} to {} shifts",
+                        expense.getId(), relevantShifts.size());
+                for (CabShift shift : relevantShifts) {
+                    report.getOneTimeExpenses().add(StatementLineItem.builder()
+                            .categoryCode(categoryCode)
+                            .categoryName(categoryName)
+                            .applicationType("ALL_ACTIVE_SHIFTS")
+                            .entityDescription("Shift: Cab " + shift.getCab().getCabNumber() + " - " + shift.getShiftType())
+                            .cabNumber(shift.getCab().getCabNumber())
+                            .shiftType(shift.getShiftType() != null ? shift.getShiftType().toString() : "-")
+                            .chargeTarget("All Active Shifts")
+                            .date(expense.getExpenseDate())
+                            .description(expense.getDescription() != null ? expense.getDescription() : expense.getName())
+                            .amount(expense.getAmount())
+                            .isRecurring(false)
+                            .build());
+                    log.debug("  - Added charge to shift: Cab {} - {}", shift.getCab().getCabNumber(), shift.getShiftType());
+                }
+            }
+            // ✅ SPECIAL HANDLING FOR SHIFTS_WITH_ATTRIBUTE: Expand to shifts with that attribute
+            else if (expense.getApplicationType() == ApplicationType.SHIFTS_WITH_ATTRIBUTE &&
+                    expense.getAttributeTypeId() != null && !relevantShifts.isEmpty()) {
+
+                log.info("EXPANDING SHIFTS_WITH_ATTRIBUTE one-time expense ID {} (attribute type {}) to applicable shifts",
+                        expense.getId(), expense.getAttributeTypeId());
+
+                // Find which shifts have this attribute
+                int expandedCount = 0;
+                for (CabShift shift : relevantShifts) {
+                    var shiftAttributes = cabAttributeValueRepository.findCurrentAttributesByShiftId(shift.getId());
+                    boolean hasAttribute = shiftAttributes.stream()
+                            .anyMatch(attr -> attr.getAttributeType().getId().equals(expense.getAttributeTypeId()));
+
+                    if (hasAttribute) {
+                        report.getOneTimeExpenses().add(StatementLineItem.builder()
+                                .categoryCode(categoryCode)
+                                .categoryName(categoryName)
+                                .applicationType("SHIFTS_WITH_ATTRIBUTE")
+                                .entityDescription("Shift: Cab " + shift.getCab().getCabNumber() +
+                                        " - " + shift.getShiftType() + " (with attribute)")
+                                .cabNumber(shift.getCab().getCabNumber())
+                                .shiftType(shift.getShiftType() != null ? shift.getShiftType().toString() : "-")
+                                .chargeTarget("With Attribute")
+                                .date(expense.getExpenseDate())
+                                .description(expense.getDescription() != null ? expense.getDescription() : expense.getName())
+                                .amount(expense.getAmount())
+                                .isRecurring(false)
+                                .build());
+                        expandedCount++;
+                        log.debug("  - Added charge to shift with attribute: Cab {} - {}", shift.getCab().getCabNumber(), shift.getShiftType());
+                    }
+                }
+                log.debug("  - Expanded SHIFTS_WITH_ATTRIBUTE to {} shifts with the attribute", expandedCount);
+            } else {
+                // Standard handling for non-ALL_ACTIVE_SHIFTS and non-SHIFTS_WITH_ATTRIBUTE expenses
+                report.getOneTimeExpenses().add(StatementLineItem.builder()
+                        .categoryCode(categoryCode)
+                        .categoryName(categoryName)
+                        .applicationType(expense.getApplicationType() != null ? expense.getApplicationType().toString() : "")
+                        .entityDescription("One-Time Charge")
+                        .date(expense.getExpenseDate())
+                        .description(expense.getDescription() != null ? expense.getDescription() : expense.getName())
+                        .amount(expense.getAmount())
+                        .isRecurring(false)
+                        .build());
+            }
         }
 
         // 3.5. Add lease expenses (for drivers only - rental cost for shifts)

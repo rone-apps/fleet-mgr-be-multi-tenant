@@ -335,7 +335,7 @@ public class CabAttributeValueService {
                     .specificShiftId(shift.getId())
                     .build();
 
-            recurringExpenseService.create(recurringExpense);
+          //  recurringExpenseService.create(recurringExpense);
             log.info("Successfully auto-created recurring expense for shift {} attribute {}",
                 shift.getId(), attributeType.getId());
 

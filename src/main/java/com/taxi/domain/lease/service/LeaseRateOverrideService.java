@@ -29,12 +29,15 @@ public class LeaseRateOverrideService {
 
     /**
      * Get the applicable lease rate for a specific shift
-     * 
+     *
      * Logic:
      * 1. Find all matching overrides for the owner/cab/shift/day combination
+     * 2. First check if the override is active in the date range, then check owner (its always there), then check if cab number,
+     *  if null, then all cabs for this owner, and then shift, if shift defined then for that shfit, if shift null then both shifts.
+     * the check day of week, if null then all days.
      * 2. Return the highest priority override's rate
      * 3. If no override found, return null (caller should use default rate)
-     * 
+     *
      * @param ownerDriverNumber The cab owner
      * @param cabNumber The cab number
      * @param shiftType "DAY" or "NIGHT"
@@ -47,33 +50,141 @@ public class LeaseRateOverrideService {
             String cabNumber,
             String shiftType,
             LocalDate date) {
-        
+
+        if (ownerDriverNumber == null || ownerDriverNumber.isEmpty() ||
+            cabNumber == null || cabNumber.isEmpty() ||
+            shiftType == null || shiftType.isEmpty() ||
+            date == null) {
+            log.warn("Invalid parameters for lease rate lookup: owner={}, cab={}, shift={}, date={}",
+                ownerDriverNumber, cabNumber, shiftType, date);
+            return null;
+        }
+
         // Get day of week
         DayOfWeek dayOfWeek = date.getDayOfWeek();
         String dayOfWeekStr = dayOfWeek.toString(); // "MONDAY", "TUESDAY", etc.
-        
-        log.debug("Looking for lease rate override: owner={}, cab={}, shift={}, day={}, date={}", 
-            ownerDriverNumber, cabNumber, shiftType, dayOfWeekStr, date);
-        
-        // Find matching overrides (ordered by priority)
-        List<LeaseRateOverride> overrides = leaseRateOverrideRepository.findMatchingOverrides(
-            ownerDriverNumber, cabNumber, shiftType, dayOfWeekStr, date
-        );
-        
-        if (overrides.isEmpty()) {
-            log.debug("No override found, will use default rate");
+
+        log.info("=== LEASE RATE LOOKUP START ===");
+        log.info("Searching for: owner='{}', cab='{}', shift='{}', date='{}' ({})",
+            ownerDriverNumber, cabNumber, shiftType, date, dayOfWeekStr);
+
+        // Strategy: Get all overrides for the owner and filter manually
+        // This ensures we can properly handle null/wildcard fields
+        List<LeaseRateOverride> allOwnerOverrides = leaseRateOverrideRepository
+            .findByOwnerDriverNumberOrderByPriorityDescCreatedAtDesc(ownerDriverNumber);
+
+        if (allOwnerOverrides.isEmpty()) {
+            log.warn("No overrides found for owner: '{}'", ownerDriverNumber);
             return null;
         }
-        
-        // Return the highest priority override (first in list)
-        LeaseRateOverride bestMatch = overrides.get(0);
-        log.info("Found lease rate override: id={}, rate={}, priority={}, cab={}, shift={}, day={}", 
-            bestMatch.getId(), bestMatch.getLeaseRate(), bestMatch.getPriority(),
-            bestMatch.getCabNumber() != null ? bestMatch.getCabNumber() : "ALL",
-            bestMatch.getShiftType() != null ? bestMatch.getShiftType() : "ALL",
-            bestMatch.getDayOfWeek() != null ? bestMatch.getDayOfWeek() : "ALL");
-        
-        return bestMatch.getLeaseRate();
+
+        log.info("Found {} total overrides for owner '{}'. Starting filter checks...", allOwnerOverrides.size(), ownerDriverNumber);
+        for (LeaseRateOverride ov : allOwnerOverrides) {
+            log.info("  Override {}: cab='{}', shift='{}', day='{}', rate={}, startDate='{}', endDate='{}', isActive={}",
+                ov.getId(),
+                ov.getCabNumber() != null ? ov.getCabNumber() : "NULL",
+                ov.getShiftType() != null ? ov.getShiftType() : "NULL",
+                ov.getDayOfWeek() != null ? ov.getDayOfWeek() : "NULL",
+                ov.getLeaseRate(),
+                ov.getStartDate(),
+                ov.getEndDate() != null ? ov.getEndDate() : "NULL",
+                ov.getIsActive());
+        }
+
+        // Filter overrides according to the business rules:
+        // 1. Must be active (isActive = true)
+        // 2. Must be active on the given date (startDate <= date AND (endDate IS NULL OR endDate >= date))
+        // 3. Cab must match: either override.cabNumber is null (all cabs) OR override.cabNumber == cabNumber
+        // 4. Shift must match: either override.shiftType is null (all shifts) OR override.shiftType == shiftType
+        // 5. Day of week must match: either override.dayOfWeek is null (all days) OR override.dayOfWeek == dayOfWeek
+        // Return the first one (already ordered by priority DESC)
+
+        for (LeaseRateOverride override : allOwnerOverrides) {
+            log.info("  Checking Override {}...", override.getId());
+
+            // Check 1: Is active flag
+            if (!override.getIsActive()) {
+                log.info("    ✗ Check 1 (Active): isActive={} - SKIP", override.getIsActive());
+                continue;
+            }
+            log.info("    ✓ Check 1 (Active): isActive=true");
+
+            // Check 2: Date range validation
+            if (date.isBefore(override.getStartDate())) {
+                log.info("    ✗ Check 2 (Date Range): requested date {} is BEFORE startDate {} - SKIP",
+                    date, override.getStartDate());
+                continue;
+            }
+            log.info("    ✓ Check 2a (Date Range): requested date {} is >= startDate {}", date, override.getStartDate());
+
+            if (override.getEndDate() != null && date.isAfter(override.getEndDate())) {
+                log.info("    ✗ Check 2 (Date Range): requested date {} is AFTER endDate {} - SKIP",
+                    date, override.getEndDate());
+                continue;
+            }
+            if (override.getEndDate() != null) {
+                log.info("    ✓ Check 2b (Date Range): requested date {} is <= endDate {}", date, override.getEndDate());
+            } else {
+                log.info("    ✓ Check 2b (Date Range): endDate is NULL (no expiry)");
+            }
+
+            // Check 3: Cab number match
+            // Override matches if: cabNumber is null (all cabs) OR cabNumber matches exactly
+            if (override.getCabNumber() != null && !override.getCabNumber().isEmpty()) {
+                if (!override.getCabNumber().equalsIgnoreCase(cabNumber)) {
+                    log.info("    ✗ Check 3 (Cab): override cab='{}' does NOT match requested cab='{}' - SKIP",
+                        override.getCabNumber(), cabNumber);
+                    continue;
+                }
+                log.info("    ✓ Check 3 (Cab): override cab='{}' matches requested cab='{}'",
+                    override.getCabNumber(), cabNumber);
+            } else {
+                log.info("    ✓ Check 3 (Cab): override cabNumber is NULL (matches all cabs)");
+            }
+
+            // Check 4: Shift type match
+            // Override matches if: shiftType is null (all shifts) OR shiftType matches exactly
+            if (override.getShiftType() != null && !override.getShiftType().isEmpty()) {
+                if (!override.getShiftType().equalsIgnoreCase(shiftType)) {
+                    log.info("    ✗ Check 4 (Shift): override shift='{}' does NOT match requested shift='{}' - SKIP",
+                        override.getShiftType(), shiftType);
+                    continue;
+                }
+                log.info("    ✓ Check 4 (Shift): override shift='{}' matches requested shift='{}'",
+                    override.getShiftType(), shiftType);
+            } else {
+                log.info("    ✓ Check 4 (Shift): override shiftType is NULL (matches all shifts)");
+            }
+
+            // Check 5: Day of week match
+            // Override matches if: dayOfWeek is null (all days) OR dayOfWeek matches exactly
+            if (override.getDayOfWeek() != null && !override.getDayOfWeek().isEmpty()) {
+                if (!override.getDayOfWeek().equalsIgnoreCase(dayOfWeekStr)) {
+                    log.info("    ✗ Check 5 (Day): override day='{}' does NOT match requested day='{}' - SKIP",
+                        override.getDayOfWeek(), dayOfWeekStr);
+                    continue;
+                }
+                log.info("    ✓ Check 5 (Day): override day='{}' matches requested day='{}'",
+                    override.getDayOfWeek(), dayOfWeekStr);
+            } else {
+                log.info("    ✓ Check 5 (Day): override dayOfWeek is NULL (matches all days)");
+            }
+
+            // All checks passed! This is the highest priority match (already sorted by priority DESC)
+            log.info("✓✓✓ MATCH FOUND! Override id={}, rate={}, priority={}, cab={}, shift={}, day={}",
+                override.getId(), override.getLeaseRate(), override.getPriority(),
+                override.getCabNumber() != null ? override.getCabNumber() : "ALL",
+                override.getShiftType() != null ? override.getShiftType() : "ALL",
+                override.getDayOfWeek() != null ? override.getDayOfWeek() : "ALL");
+            log.info("=== LEASE RATE LOOKUP END (FOUND) ===");
+
+            return override.getLeaseRate();
+        }
+
+        log.warn("✗✗✗ NO MATCHING OVERRIDE FOUND after filtering all {} overrides for owner='{}', cab='{}', shift='{}', day='{}'",
+            allOwnerOverrides.size(), ownerDriverNumber, cabNumber, shiftType, dayOfWeekStr);
+        log.info("=== LEASE RATE LOOKUP END (NOT FOUND) ===");
+        return null;
     }
 
     /**

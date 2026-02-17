@@ -49,11 +49,8 @@ public class ExpenseCategoryDTO {
     private Long specificShiftId;
     private SimpleShiftDTO specificShift;
 
-    private Long specificOwnerId;
-    private SimpleOwnerDTO specificOwner;
-
-    private Long specificDriverId;
-    private SimpleDriverDTO specificDriver;
+    private Long specificPersonId;
+    private SimpleDriverDTO specificPerson;  // Can be either owner or driver
 
     private LocalDateTime createdAt;
 
@@ -81,8 +78,7 @@ public class ExpenseCategoryDTO {
                         : null)
                 .shiftProfileId(entity.getShiftProfileId())
                 .specificShiftId(entity.getSpecificShiftId())
-                .specificOwnerId(entity.getSpecificOwnerId())
-                .specificDriverId(entity.getSpecificDriverId())
+                .specificPersonId(entity.getSpecificPersonId())
                 .createdAt(entity.getCreatedAt())
                 .updatedAt(entity.getUpdatedAt())
                 .build();

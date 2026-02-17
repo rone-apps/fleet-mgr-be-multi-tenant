@@ -48,7 +48,7 @@ public class OneTimeExpense {
 
     @ManyToOne(fetch = FetchType.EAGER)
     @JoinColumn(name = "expense_category_id", nullable = true)
-    private ExpenseCategory expenseCategory;
+    private ExpenseCategory expenseCategory;  // ✅ Optional: One-time expenses can exist without a category
 
     // Polymorphic relationship (legacy - kept for backward compatibility)
     @Enumerated(EnumType.STRING)
@@ -69,11 +69,11 @@ public class OneTimeExpense {
     @Column(name = "specific_shift_id")
     private Long specificShiftId;
 
-    @Column(name = "specific_owner_id")
-    private Long specificOwnerId;
+    @Column(name = "specific_person_id")
+    private Long specificPersonId;
 
-    @Column(name = "specific_driver_id")
-    private Long specificDriverId;
+    @Column(name = "attribute_type_id")
+    private Long attributeTypeId;
 
     // Optional relationships for convenience
     @ManyToOne(fetch = FetchType.LAZY)

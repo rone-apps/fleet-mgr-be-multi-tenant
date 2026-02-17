@@ -20,6 +20,11 @@ public class StatementLineItem {
     private String applicationType;
     private String entityDescription;  // e.g., "Cab 101 - DAY shift" or "All Active Shifts"
 
+    // ✅ NEW: Explicit fields for shift-specific charges (easier parsing on frontend)
+    private String cabNumber;      // e.g., "17"
+    private String shiftType;      // e.g., "Day Shift", "Night Shift"
+    private String chargeTarget;   // e.g., "With Attribute", "All Active Shifts"
+
     // For recurring expenses
     private BillingMethod billingMethod;
     private LocalDate effectiveFrom;
