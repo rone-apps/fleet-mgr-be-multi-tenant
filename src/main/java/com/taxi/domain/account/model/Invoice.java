@@ -79,6 +79,39 @@ public class Invoice {
     @Builder.Default
     private InvoiceStatus status = InvoiceStatus.DRAFT;
 
+    // Statement lifecycle fields (for payment settlement)
+    @Column(name = "statement_version")
+    @Builder.Default
+    private Integer statementVersion = 1;
+
+    @Column(name = "parent_statement_id")
+    private Long parentStatementId;
+
+    @Column(name = "pdf_path", length = 500)
+    private String pdfPath;
+
+    @Column(name = "pdf_generated_at")
+    private LocalDateTime pdfGeneratedAt;
+
+    @Column(name = "line_items_json", columnDefinition = "JSON")
+    private String lineItemsJson;
+
+    @Column(name = "posted_at")
+    private LocalDateTime postedAt;
+
+    @Column(name = "posted_by")
+    private Long postedBy;
+
+    @Column(name = "locked_at")
+    private LocalDateTime lockedAt;
+
+    @Column(name = "locked_by")
+    private Long lockedBy;
+
+    @Column(name = "previous_balance", precision = 10, scale = 2)
+    @Builder.Default
+    private BigDecimal previousBalance = BigDecimal.ZERO;
+
     // Notes
     @Column(name = "notes", length = 1000)
     private String notes;
@@ -168,7 +201,7 @@ public class Invoice {
 
     public void addPayment(Payment payment) {
         payments.add(payment);
-        payment.setInvoice(this);
+        payment.setStatement(this);
         
         // Recalculate amount paid
         this.amountPaid = payments.stream()
@@ -236,12 +269,19 @@ public class Invoice {
                 .divide(totalAmount, 2, BigDecimal.ROUND_HALF_UP);
     }
 
+    public BigDecimal getNetDue() {
+        return previousBalance.add(balanceDue);
+    }
+
     public enum InvoiceStatus {
-        DRAFT,      // Invoice created but not sent
+        DRAFT,      // Invoice created but not sent / statement in draft form
         SENT,       // Invoice sent to customer
+        POSTED,     // Statement posted (immutable, PDF generated)
+        LOCKED,     // Statement locked for payment processing
         PAID,       // Fully paid
         PARTIAL,    // Partially paid
         OVERDUE,    // Past due date and not paid
+        ARCHIVED,   // Statement archived (recalled or replaced)
         CANCELLED   // Invoice cancelled
     }
 }

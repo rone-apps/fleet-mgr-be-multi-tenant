@@ -65,7 +65,7 @@ public class InvoiceDetailsDTO {
         private String paymentNumber;
         private LocalDate paymentDate;
         private BigDecimal amount;
-        private Payment.PaymentMethod paymentMethod;
+        private String paymentMethodCode;
         private String referenceNumber;
         private String notes;
     }

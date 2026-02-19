@@ -236,10 +236,9 @@ public class InvoiceService {
                         .build()).collect(Collectors.toList()))
                 .payments(payments.stream().map(p -> InvoiceDetailsDTO.PaymentDTO.builder()
                         .id(p.getId())
-                        .paymentNumber(p.getPaymentNumber())
                         .paymentDate(p.getPaymentDate())
                         .amount(p.getAmount())
-                        .paymentMethod(p.getPaymentMethod())
+                        .paymentMethodCode(p.getPaymentMethod() != null ? p.getPaymentMethod().getMethodCode() : null)
                         .referenceNumber(p.getReferenceNumber())
                         .notes(p.getNotes())
                         .build()).collect(Collectors.toList()))
@@ -333,21 +332,21 @@ public class InvoiceService {
     }
 
     /**
-     * Record payment for invoice
+     * Record payment for invoice (legacy - use PaymentService for bulk payment batches)
      */
     public Payment recordPayment(Long invoiceId, BigDecimal amount, LocalDate paymentDate,
-                                 Payment.PaymentMethod paymentMethod, String referenceNumber, 
+                                 Long paymentMethodId, String referenceNumber,
                                  String notes, Long userId) {
         Invoice invoice = getInvoiceById(invoiceId);
-        
+
         if (invoice.getStatus() == Invoice.InvoiceStatus.CANCELLED) {
             throw new IllegalStateException("Cannot record payment for cancelled invoice");
         }
-        
+
         if (amount.compareTo(BigDecimal.ZERO) <= 0) {
             throw new IllegalArgumentException("Payment amount must be greater than zero");
         }
-        
+
         if (amount.compareTo(invoice.getBalanceDue()) > 0) {
             throw new IllegalArgumentException(
                     "Payment amount exceeds balance due. Balance: " + invoice.getBalanceDue());
@@ -355,24 +354,20 @@ public class InvoiceService {
 
         // Create payment
         Payment payment = Payment.builder()
-                .paymentNumber(generatePaymentNumber())
-                .invoice(invoice)
-                .customer(invoice.getCustomer())
-                .accountId(invoice.getAccountId())
+                .statement(invoice)
                 .paymentDate(paymentDate != null ? paymentDate : LocalDate.now())
                 .amount(amount)
-                .paymentMethod(paymentMethod)
                 .referenceNumber(referenceNumber)
                 .notes(notes)
                 .createdBy(userId)
                 .build();
 
         Payment savedPayment = paymentRepository.save(payment);
-        
+
         // Update invoice
         invoice.addPayment(savedPayment);
         invoiceRepository.save(invoice);
-        
+
         // If invoice is now paid, mark all associated charges as paid
         if (invoice.getStatus() == Invoice.InvoiceStatus.PAID) {
             markChargesAsPaid(invoice);
