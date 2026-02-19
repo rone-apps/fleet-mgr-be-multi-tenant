@@ -36,16 +36,17 @@ public class InvoiceController {
      */
     @PostMapping("/generate")
     @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER', 'ACCOUNTANT')")
-    public ResponseEntity<Invoice> generateInvoice(
+    public ResponseEntity<InvoiceDetailsDTO> generateInvoice(
             @RequestParam Long customerId,
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate periodStart,
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate periodEnd,
             @RequestParam(required = false) BigDecimal taxRate,
             @RequestParam(required = false) String terms) {
-        
+
         Invoice invoice = invoiceService.generateInvoice(
                 customerId, periodStart, periodEnd, taxRate, terms);
-        return ResponseEntity.ok(invoice);
+        InvoiceDetailsDTO details = invoiceService.getInvoiceDetailsById(invoice.getId());
+        return ResponseEntity.ok(details);
     }
 
     /**

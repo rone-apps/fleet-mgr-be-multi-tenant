@@ -537,6 +537,7 @@ public class InvoiceService {
     /**
      * Send invoice via email to customer
      */
+    @Transactional
     public void sendInvoiceViaEmail(Long invoiceId, String recipientEmail) {
         Invoice invoice = getInvoiceById(invoiceId);
 

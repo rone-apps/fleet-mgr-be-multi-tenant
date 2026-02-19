@@ -114,7 +114,7 @@ public class Invoice {
     private Integer emailSendCount = 0;
 
     // Relationships
-    @OneToMany(mappedBy = "invoice", cascade = CascadeType.ALL, orphanRemoval = true)
+    @OneToMany(mappedBy = "invoice", cascade = CascadeType.PERSIST)
     @Builder.Default
     @JsonManagedReference
     private List<InvoiceLineItem> lineItems = new ArrayList<>();
