@@ -15,6 +15,9 @@ public interface PaymentBatchRepository extends JpaRepository<PaymentBatch, Long
 
     Optional<PaymentBatch> findByBatchNumber(String batchNumber);
 
+    @Query("SELECT p FROM PaymentBatch p ORDER BY p.createdAt DESC")
+    List<PaymentBatch> findAll();
+
     @Query("SELECT p FROM PaymentBatch p WHERE p.status = :status ORDER BY p.createdAt DESC")
     List<PaymentBatch> findByStatus(@Param("status") String status);
 

@@ -110,7 +110,26 @@ public class FinancialStatementController {
                 to = now.atEndOfMonth();
             }
 
-            log.info("Generating owner report (draft) for owner {} from {} to {}", ownerId, from, to);
+            // Validate date range: start date cannot be later than end date
+            if (from.isAfter(to)) {
+                return ResponseEntity.badRequest().body("Start date cannot be later than end date. From: " + from + ", To: " + to);
+            }
+
+            log.info("Fetching owner report for owner {} from {} to {} (period may span multiple months)", ownerId, from, to);
+
+            // First, check if a finalized or paid statement already exists for this period
+            Optional<Statement> existingStatement = statementRepository.findByPersonIdAndPeriodFromAndPeriodTo(ownerId, from, to);
+
+            if (existingStatement.isPresent()) {
+                Statement stmt = existingStatement.get();
+                // Return existing finalized/paid statement converted to OwnerReportDTO
+                log.info("Found existing statement ID {} for owner {} with status {}", stmt.getId(), ownerId, stmt.getStatus());
+                OwnerReportDTO report = financialStatementService.convertStatementToReport(stmt);
+                return ResponseEntity.ok(report);
+            }
+
+            // If no existing statement, generate a new draft report
+            log.info("No existing statement found, generating new draft report for owner {} from {} to {}", ownerId, from, to);
             OwnerReportDTO report = financialStatementService.generateOwnerReport(ownerId, from, to);
             return ResponseEntity.ok(report);
 
@@ -224,9 +243,9 @@ public class FinancialStatementController {
             if (statementOpt.isPresent()) {
                 Statement statement = statementOpt.get();
                 statement.setPaidAmount(paidAmount);
-                // Recalculate netDue
+                // Recalculate netDue: previousBalance + revenues - expenses - paidAmount
                 BigDecimal prevBalance = statement.getPreviousBalance() != null ? statement.getPreviousBalance() : BigDecimal.ZERO;
-                statement.setNetDue(prevBalance.add(statement.getTotalExpenses()).subtract(statement.getTotalRevenues()).subtract(paidAmount));
+                statement.setNetDue(prevBalance.add(statement.getTotalRevenues()).subtract(statement.getTotalExpenses()).subtract(paidAmount));
                 statementRepository.save(statement);
                 return ResponseEntity.ok(statement);
             } else {
@@ -291,5 +310,37 @@ public class FinancialStatementController {
         summary.append("</pre>");
 
         return summary.toString();
+    }
+
+    /**
+     * Get finalized statements for a date period (for driver payment batch processing)
+     */
+    @GetMapping("/statements/period")
+    @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER', 'ACCOUNTANT')")
+    public ResponseEntity<List<Statement>> getStatementsByPeriod(
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to,
+            @RequestParam(required = false) String status) {
+
+        try {
+            List<Statement> statements;
+            if (status != null && !status.isEmpty()) {
+                // Query with status filter
+                com.taxi.domain.statement.model.StatementStatus statementStatus =
+                    com.taxi.domain.statement.model.StatementStatus.valueOf(status);
+                statements = statementRepository.findByPeriodAndStatus(from, to, statementStatus);
+            } else {
+                // Query all statements in period (default to FINALIZED)
+                statements = statementRepository.findByPeriod(from, to);
+                // Filter to only finalized statements
+                statements = statements.stream()
+                    .filter(s -> s.getStatus() == com.taxi.domain.statement.model.StatementStatus.FINALIZED)
+                    .toList();
+            }
+            return ResponseEntity.ok(statements);
+        } catch (Exception e) {
+            log.error("Error fetching statements for period", e);
+            return ResponseEntity.badRequest().body(List.of());
+        }
     }
 }

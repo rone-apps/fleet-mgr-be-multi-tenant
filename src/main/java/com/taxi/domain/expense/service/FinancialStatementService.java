@@ -59,6 +59,7 @@ public class FinancialStatementService {
     private final StatementRepository statementRepository;
     private final ObjectMapper objectMapper;
     private final CabAttributeValueRepository cabAttributeValueRepository;
+    private final com.taxi.domain.account.repository.StatementPaymentRepository statementPaymentRepository;
 
     // ═══════════════════════════════════════════════════════════════════════
     // NEW CONSOLIDATED SERVICES - SINGLE SOURCE OF TRUTH
@@ -630,19 +631,46 @@ public class FinancialStatementService {
             log.debug("Added other revenue: {} (applicationType: {}, amount: {})", revenueTypeStr, applicationTypeDisplay, revenue.getAmount());
         }
 
-        // 6. Fetch previous balance from last finalized statement
-        Optional<Statement> lastStatement = statementRepository.findTopByPersonIdAndStatusOrderByPeriodToDesc(personId, StatementStatus.FINALIZED);
+        // 6. Fetch previous balance from last PAID statement only
+        // (carryforward only happens when a batch is processed and completed)
+        Optional<Statement> lastStatement = statementRepository.findTopByPersonIdAndStatusOrderByPeriodToDesc(personId, StatementStatus.PAID);
         if (lastStatement.isPresent()) {
-            report.setPreviousBalance(lastStatement.get().getNetDue());
-            log.info("Found previous statement for {}: previous balance = {}", personId, report.getPreviousBalance());
+            // Calculate what's actually owed AFTER the payment was applied
+            // previousBalance = netDue - paidAmount (what remains unpaid)
+            BigDecimal netDueAfterPayment = lastStatement.get().getNetDue()
+                    .subtract(lastStatement.get().getPaidAmount() != null ? lastStatement.get().getPaidAmount() : BigDecimal.ZERO);
+
+            // If fully paid or overpaid, don't carry forward a balance
+            if (netDueAfterPayment.compareTo(BigDecimal.ZERO) <= 0) {
+                report.setPreviousBalance(BigDecimal.ZERO);
+                log.info("Previous statement for {} was fully paid (netDue={}, paid={}). No carryforward.",
+                    personId, lastStatement.get().getNetDue(), lastStatement.get().getPaidAmount());
+            } else {
+                report.setPreviousBalance(netDueAfterPayment);
+                log.info("Found previous PAID statement for {} with outstanding balance: {}",
+                    personId, report.getPreviousBalance());
+            }
         } else {
             report.setPreviousBalance(BigDecimal.ZERO);
-            log.info("No previous finalized statement found for {}", personId);
+            log.info("No previous PAID statement found for {} (carryforward only occurs after batch completion)", personId);
         }
 
         report.setPersonType(Boolean.TRUE.equals(person.getIsOwner()) ? "OWNER" : "DRIVER");
         report.setStatus(StatementStatus.DRAFT);
         report.setStatementId(null);  // Not yet finalized
+
+        // Calculate total payments made during this period for this person
+        List<com.taxi.domain.account.model.StatementPayment> paymentsInPeriod =
+            statementPaymentRepository.findByPersonIdAndPaymentDateRange(personId, from, to);
+
+        BigDecimal totalPaidInPeriod = BigDecimal.ZERO;
+        for (com.taxi.domain.account.model.StatementPayment payment : paymentsInPeriod) {
+            totalPaidInPeriod = totalPaidInPeriod.add(payment.getAmount());
+        }
+
+        report.setPaidAmount(totalPaidInPeriod);
+        log.info("Found {} payments for person {} in period {} to {} totaling ${}",
+            paymentsInPeriod.size(), personId, from, to, totalPaidInPeriod);
 
         report.calculateTotals();
         return report;
@@ -708,5 +736,81 @@ public class FinancialStatementService {
             case ALL_ACTIVE_SHIFTS -> "All Active Shifts";
             case SHIFTS_WITH_ATTRIBUTE -> "Shifts with Attribute";
         };
+    }
+
+    /**
+     * Convert a saved Statement entity back to OwnerReportDTO
+     * Used when loading an existing finalized or paid statement
+     */
+    public OwnerReportDTO convertStatementToReport(Statement statement) {
+        try {
+            // Deserialize line items from JSON
+            com.fasterxml.jackson.databind.JsonNode lineItemsNode = objectMapper.readTree(statement.getLineItemsJson() != null ? statement.getLineItemsJson() : "{}");
+
+            List<OwnerReportDTO.RevenueLineItem> revenues = new ArrayList<>();
+            List<StatementLineItem> recurringExpenses = new ArrayList<>();
+            List<StatementLineItem> oneTimeExpenses = new ArrayList<>();
+
+            // Extract revenues
+            if (lineItemsNode.has("revenues") && lineItemsNode.get("revenues").isArray()) {
+                revenues = objectMapper.readValue(
+                    lineItemsNode.get("revenues").toString(),
+                    objectMapper.getTypeFactory().constructCollectionType(List.class, OwnerReportDTO.RevenueLineItem.class)
+                );
+            }
+
+            // Extract recurring expenses
+            if (lineItemsNode.has("recurringExpenses") && lineItemsNode.get("recurringExpenses").isArray()) {
+                recurringExpenses = objectMapper.readValue(
+                    lineItemsNode.get("recurringExpenses").toString(),
+                    objectMapper.getTypeFactory().constructCollectionType(List.class, StatementLineItem.class)
+                );
+            }
+
+            // Extract one-time expenses
+            if (lineItemsNode.has("oneTimeExpenses") && lineItemsNode.get("oneTimeExpenses").isArray()) {
+                oneTimeExpenses = objectMapper.readValue(
+                    lineItemsNode.get("oneTimeExpenses").toString(),
+                    objectMapper.getTypeFactory().constructCollectionType(List.class, StatementLineItem.class)
+                );
+            }
+
+            // Get driver info
+            Driver person = driverRepository.findById(statement.getPersonId())
+                .orElseThrow(() -> new RuntimeException("Driver/Owner not found: " + statement.getPersonId()));
+
+            // Build report DTO
+            OwnerReportDTO report = OwnerReportDTO.builder()
+                .ownerId(statement.getPersonId())
+                .ownerName(statement.getPersonName())
+                .ownerNumber(person.getDriverNumber())
+                .periodFrom(statement.getPeriodFrom())
+                .periodTo(statement.getPeriodTo())
+                .statementId(statement.getId())
+                .personType(statement.getPersonType())
+                .status(statement.getStatus())
+                .previousBalance(statement.getPreviousBalance())
+                .paidAmount(statement.getPaidAmount())
+                .totalRevenues(statement.getTotalRevenues())
+                .totalRecurringExpenses(statement.getTotalRecurringExpenses())
+                .totalOneTimeExpenses(statement.getTotalOneTimeExpenses())
+                .totalExpenses(statement.getTotalExpenses())
+                .revenues(revenues)
+                .recurringExpenses(recurringExpenses)
+                .oneTimeExpenses(oneTimeExpenses)
+                .build();
+
+            // Calculate totals to set netDue
+            report.calculateTotals();
+
+            log.info("Converted statement ID {} to report for {} (status: {})",
+                statement.getId(), statement.getPersonName(), statement.getStatus());
+
+            return report;
+
+        } catch (Exception e) {
+            log.error("Error converting statement to report", e);
+            throw new RuntimeException("Failed to convert statement to report: " + e.getMessage(), e);
+        }
     }
 }

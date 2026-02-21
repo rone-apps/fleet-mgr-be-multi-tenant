@@ -37,7 +37,14 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(IllegalArgumentException.class)
     public ResponseEntity<Map<String, Object>> handleIllegalArgumentException(IllegalArgumentException ex) {
         log.warn("IllegalArgumentException: {}", ex.getMessage());
-        return buildErrorResponse(HttpStatus.BAD_REQUEST, ex.getMessage());
+
+        // Provide user-friendly error message for date parsing errors
+        String message = ex.getMessage();
+        if (message != null && message.contains("Parse attempt failed")) {
+            message = "Invalid date format. Please ensure all date parameters are provided in YYYY-MM-DD format.";
+        }
+
+        return buildErrorResponse(HttpStatus.BAD_REQUEST, message);
     }
 
     private ResponseEntity<Map<String, Object>> buildErrorResponse(HttpStatus status, String message) {

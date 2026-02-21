@@ -34,6 +34,9 @@ dependencies {
     // Database - Updated for MySQL 9.x compatibility
     runtimeOnly 'com.mysql:mysql-connector-j:9.1.0'
 
+    // H2 Database (for testing/development)
+    runtimeOnly 'com.h2database:h2'
+
     // JSON parsing
     implementation 'org.json:json:20240303'
 
@@ -61,6 +64,7 @@ dependencies {
 
 tasks.withType(JavaCompile) {
     options.encoding = 'UTF-8'
+    options.compilerArgs = ['-parameters']
 }
 
 test {

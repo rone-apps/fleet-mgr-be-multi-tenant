@@ -57,7 +57,8 @@ public interface AccountChargeRepository extends JpaRepository<AccountCharge, Lo
     @EntityGraph(attributePaths = {"accountCustomer", "cab", "driver"})
     @Query("SELECT ac FROM AccountCharge ac " +
            "WHERE ac.driver.id = :driverId " +
-           "AND ac.tripDate BETWEEN :startDate AND :endDate " +
+           "AND ac.tripDate >= :startDate " +
+           "AND ac.tripDate <= :endDate " +
            "ORDER BY ac.tripDate DESC, ac.startTime DESC")
     List<AccountCharge> findByDriverIdAndDateRange(
             @Param("driverId") Long driverId,
@@ -71,7 +72,8 @@ public interface AccountChargeRepository extends JpaRepository<AccountCharge, Lo
     @EntityGraph(attributePaths = {"accountCustomer", "cab", "driver"})
     @Query("SELECT ac FROM AccountCharge ac " +
            "WHERE ac.driver.driverNumber = :driverNumber " +
-           "AND ac.tripDate BETWEEN :startDate AND :endDate " +
+           "AND ac.tripDate >= :startDate " +
+           "AND ac.tripDate <= :endDate " +
            "ORDER BY ac.tripDate DESC, ac.startTime DESC")
     List<AccountCharge> findByDriverNumberAndDateRange(
             @Param("driverNumber") String driverNumber,
@@ -204,6 +206,10 @@ public interface AccountChargeRepository extends JpaRepository<AccountCharge, Lo
     // Find by invoice number
     @EntityGraph(attributePaths = {"accountCustomer", "cab", "driver"})
     List<AccountCharge> findByInvoiceNumber(String invoiceNumber);
+
+    // Find by invoice ID
+    @EntityGraph(attributePaths = {"accountCustomer", "cab", "driver"})
+    List<AccountCharge> findByInvoiceId(Long invoiceId);
 
     // Find charges for billing (unpaid in date range)
     @EntityGraph(attributePaths = {"accountCustomer", "cab", "driver"})

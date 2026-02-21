@@ -152,7 +152,7 @@ public class Invoice {
     @JsonManagedReference
     private List<InvoiceLineItem> lineItems = new ArrayList<>();
 
-    @OneToMany(mappedBy = "invoice", cascade = CascadeType.ALL)
+    @OneToMany(mappedBy = "statement", cascade = CascadeType.ALL)
     @Builder.Default
     @JsonManagedReference
     private List<Payment> payments = new ArrayList<>();
@@ -216,6 +216,17 @@ public class Invoice {
     }
 
     public void updateStatus() {
+        // PAID status is permanent - never downgrade it
+        if (this.status == InvoiceStatus.PAID) {
+            return; // Keep PAID status
+        }
+
+        // CANCELLED status is permanent - never change it
+        if (this.status == InvoiceStatus.CANCELLED) {
+            return; // Keep CANCELLED status
+        }
+
+        // Determine new status based on payment
         if (balanceDue.compareTo(BigDecimal.ZERO) == 0) {
             this.status = InvoiceStatus.PAID;
             this.paidAt = LocalDateTime.now();
@@ -229,7 +240,10 @@ public class Invoice {
     }
 
     public void markAsSent() {
-        this.status = InvoiceStatus.SENT;
+        // Never change status if already PAID or CANCELLED
+        if (this.status != InvoiceStatus.PAID && this.status != InvoiceStatus.CANCELLED) {
+            this.status = InvoiceStatus.SENT;
+        }
         this.sentAt = LocalDateTime.now();
     }
 

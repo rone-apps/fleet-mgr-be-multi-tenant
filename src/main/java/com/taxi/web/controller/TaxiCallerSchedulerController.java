@@ -4,6 +4,7 @@ import com.taxi.domain.shift.dto.DriverShiftImportResult;
 import com.taxi.domain.account.dto.TaxiCallerImportResult;
 import com.taxi.domain.taxicaller.scheduler.TaxiCallerScheduledImportService;
 import lombok.RequiredArgsConstructor;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -21,6 +22,7 @@ import java.util.Map;
 @RequestMapping("/api/taxicaller/scheduler")
 @CrossOrigin(origins = "*")
 @RequiredArgsConstructor
+@ConditionalOnProperty(name = "taxicaller.scheduler.enabled", havingValue = "true")
 public class TaxiCallerSchedulerController {
 
     private final TaxiCallerScheduledImportService scheduledImportService;

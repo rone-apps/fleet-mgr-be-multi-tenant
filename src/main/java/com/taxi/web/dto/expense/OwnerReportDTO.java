@@ -67,10 +67,11 @@ public class OwnerReportDTO {
         totalExpenses = totalRecurringExpenses.add(totalOneTimeExpenses);
         netAmount = totalRevenues.subtract(totalExpenses);
 
-        // Calculate netDue: previousBalance + expenses - revenues - paidAmount
+        // Calculate netDue: previousBalance + revenues - expenses - paidAmount
+        // (what driver is owed from previous period + this period's earnings - deductions - what was paid)
         BigDecimal prevBalance = previousBalance != null ? previousBalance : BigDecimal.ZERO;
         BigDecimal paid = paidAmount != null ? paidAmount : BigDecimal.ZERO;
-        netDue = prevBalance.add(totalExpenses).subtract(totalRevenues).subtract(paid);
+        netDue = prevBalance.add(totalRevenues).subtract(totalExpenses).subtract(paid);
     }
 
     @Data

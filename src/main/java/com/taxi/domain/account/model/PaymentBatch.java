@@ -2,6 +2,7 @@ package com.taxi.domain.account.model;
 
 import jakarta.persistence.*;
 import lombok.*;
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -64,8 +65,12 @@ public class PaymentBatch {
     private String reconciliationNotes;
 
     @OneToMany(mappedBy = "paymentBatch", cascade = CascadeType.ALL, orphanRemoval = false)
+    @JsonIgnore
     @Builder.Default
     private List<Payment> payments = new ArrayList<>();
+
+    @Column(name = "statement_ids", columnDefinition = "TEXT")
+    private String statementIds; // Comma-separated statement IDs for this batch
 
     @Column(name = "created_at", nullable = false)
     private LocalDateTime createdAt;

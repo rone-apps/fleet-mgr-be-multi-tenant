@@ -2,8 +2,6 @@ package com.taxi.domain.account.model;
 
 import jakarta.persistence.*;
 import lombok.*;
-import org.hibernate.annotations.CreationTimestamp;
-import org.hibernate.annotations.UpdateTimestamp;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -11,13 +9,13 @@ import java.time.LocalDateTime;
 import java.util.UUID;
 
 @Entity
-@Table(name = "payment")
+@Table(name = "statement_payment")
 @Getter
 @Setter
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
-public class Payment {
+public class StatementPayment {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -26,23 +24,21 @@ public class Payment {
     @Column(name = "payment_number", nullable = false, unique = true, length = 50)
     private String paymentNumber;
 
-    @JsonIgnore
-    @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "statement_id", nullable = false)
-    private Invoice statement;
+    @Column(name = "statement_id", nullable = false)
+    private Long statementId;
 
-    @Column(name = "invoice_id", nullable = false)
-    private Long invoiceId;
+    @Column(name = "person_id", nullable = false)
+    private Long personId;
 
-    @Column(name = "customer_id", nullable = false)
-    private Long customerId;
+    @Column(name = "person_type", nullable = false, length = 20)
+    private String personType; // DRIVER or OWNER
 
-    @Column(name = "account_id", nullable = false, length = 50)
-    private String accountId;
+    @Column(name = "person_name", length = 255)
+    private String personName;
 
-    @JsonIgnore
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "payment_batch_id")
+    @JsonIgnore
     private PaymentBatch paymentBatch;
 
     @Column(name = "amount", nullable = false, precision = 10, scale = 2)
@@ -51,13 +47,9 @@ public class Payment {
     @Column(name = "payment_date", nullable = false)
     private LocalDate paymentDate;
 
-    @JsonIgnore
     @ManyToOne(fetch = FetchType.EAGER)
     @JoinColumn(name = "payment_method_id", nullable = false)
     private PaymentMethod paymentMethod;
-
-    @Column(name = "payment_method", length = 50)
-    private String paymentMethodName;
 
     @Column(name = "reference_number", length = 100)
     private String referenceNumber;
@@ -75,14 +67,12 @@ public class Payment {
     @Column(name = "posted_by")
     private Long postedBy;
 
-    @CreationTimestamp
     @Column(name = "created_at", nullable = false)
     private LocalDateTime createdAt;
 
-    @Column(name = "created_by", nullable = false)
+    @Column(name = "created_by")
     private Long createdBy;
 
-    @UpdateTimestamp
     @Column(name = "updated_at")
     private LocalDateTime updatedAt;
 
@@ -95,7 +85,7 @@ public class Payment {
         updatedAt = LocalDateTime.now();
         // Generate payment number if not set
         if (paymentNumber == null) {
-            paymentNumber = "PAY-" + LocalDate.now() + "-" + UUID.randomUUID().toString().substring(0, 8);
+            paymentNumber = "STPAY-" + LocalDate.now() + "-" + UUID.randomUUID().toString().substring(0, 8);
         }
     }
 

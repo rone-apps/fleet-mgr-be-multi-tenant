@@ -2,14 +2,17 @@ package com.taxi.domain.account.service;
 
 import com.taxi.domain.account.model.AccountCharge;
 import com.taxi.domain.account.model.AccountCustomer;
+import com.taxi.domain.account.model.Invoice;
 import com.taxi.domain.account.dto.BulkUpdateTipRequest;
 import com.taxi.domain.account.repository.AccountChargeRepository;
 import com.taxi.domain.account.repository.AccountCustomerRepository;
+import com.taxi.domain.account.repository.InvoiceRepository;
 import com.taxi.domain.cab.model.Cab;
 import com.taxi.domain.cab.repository.CabRepository;
 import com.taxi.domain.driver.model.Driver;
 import com.taxi.domain.driver.repository.DriverRepository;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 
 import org.springframework.data.domain.Page;
 import org.springframework.stereotype.Service;
@@ -24,6 +27,7 @@ import java.util.stream.Collectors;
 
 import org.springframework.data.domain.Pageable;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 @Transactional
@@ -31,6 +35,7 @@ public class AccountChargeService {
 
     private final AccountChargeRepository accountChargeRepository;
     private final AccountCustomerRepository accountCustomerRepository;
+    private final InvoiceRepository invoiceRepository;
     private final CabRepository cabRepository;
     private final DriverRepository driverRepository;
 
@@ -249,28 +254,94 @@ public AccountCharge updateCharge(Long id, AccountCharge updatedCharge) {
         return accountChargeRepository.findByCabId(cabId);
     }
 
+    // Helper: Recalculate invoice totals based on paid charges
+    private void updateInvoiceTotalsFromCharges(Long invoiceId) {
+        if (invoiceId == null) return;
+
+        try {
+            Invoice invoice = invoiceRepository.findById(invoiceId).orElse(null);
+            if (invoice == null) {
+                log.warn("Invoice not found: {}", invoiceId);
+                return;
+            }
+
+            // Get all charges for this invoice
+            List<AccountCharge> allCharges = accountChargeRepository.findByInvoiceId(invoiceId);
+
+            // Calculate total paid from all paid charges
+            BigDecimal totalPaid = allCharges.stream()
+                    .filter(AccountCharge::isPaid)
+                    .map(AccountCharge::getTotalAmount)
+                    .reduce(BigDecimal.ZERO, BigDecimal::add);
+
+            // Update invoice with new amounts
+            invoice.setAmountPaid(totalPaid);
+            invoice.setBalanceDue(invoice.getTotalAmount().subtract(totalPaid));
+
+            // Update status based on balance due
+            invoice.updateStatus();
+
+            invoiceRepository.save(invoice);
+
+            log.info("Updated invoice {} totals: amountPaid={}, balanceDue={}, status={}",
+                    invoiceId, totalPaid, invoice.getBalanceDue(), invoice.getStatus());
+
+        } catch (Exception e) {
+            log.error("Error updating invoice totals for invoice: {}", invoiceId, e);
+        }
+    }
+
     // Mark charge as paid
+    @Transactional
     public AccountCharge markChargeAsPaid(Long id, String invoiceNumber) {
         AccountCharge charge = getChargeById(id);
+        Long invoiceId = charge.getInvoiceId();
         charge.markAsPaid(invoiceNumber);
-        return accountChargeRepository.save(charge);
+        AccountCharge saved = accountChargeRepository.save(charge);
+        log.info("Marked account charge {} as paid with invoice number: {}", id, invoiceNumber);
+
+        // Recalculate invoice totals
+        updateInvoiceTotalsFromCharges(invoiceId);
+
+        return saved;
     }
 
     // Mark charge as unpaid
+    @Transactional
     public AccountCharge markChargeAsUnpaid(Long id) {
         AccountCharge charge = getChargeById(id);
+        Long invoiceId = charge.getInvoiceId();
         charge.markAsUnpaid();
-        return accountChargeRepository.save(charge);
+        AccountCharge saved = accountChargeRepository.save(charge);
+        log.info("Marked account charge {} as unpaid", id);
+
+        // Recalculate invoice totals
+        updateInvoiceTotalsFromCharges(invoiceId);
+
+        return saved;
     }
 
     // Mark multiple charges as paid
+    @Transactional
     public List<AccountCharge> markChargesAsPaid(List<Long> chargeIds, String invoiceNumber) {
         List<AccountCharge> charges = chargeIds.stream()
                 .map(this::getChargeById)
                 .collect(Collectors.toList());
-        
+
+        // Get invoice IDs to update later
+        java.util.Set<Long> invoiceIds = charges.stream()
+                .map(AccountCharge::getInvoiceId)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+
         charges.forEach(charge -> charge.markAsPaid(invoiceNumber));
-        return accountChargeRepository.saveAll(charges);
+        List<AccountCharge> saved = accountChargeRepository.saveAll(charges);
+        log.info("Marked {} account charges as paid with invoice number: {}", chargeIds.size(), invoiceNumber);
+
+        // Recalculate invoice totals for all affected invoices
+        invoiceIds.forEach(this::updateInvoiceTotalsFromCharges);
+
+        return saved;
     }
 
     // Calculate unpaid total for customer

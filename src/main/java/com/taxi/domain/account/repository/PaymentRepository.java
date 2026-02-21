@@ -34,6 +34,6 @@ public interface PaymentRepository extends JpaRepository<Payment, Long> {
     List<Payment> findByStatus(@Param("status") String status);
 
     // For backwards compatibility with legacy method
-    @Query("SELECT COALESCE(MAX(CAST(SUBSTRING(p.referenceNumber, LENGTH(:prefix) + 1) AS INT)), 0) FROM Payment p WHERE p.referenceNumber LIKE CONCAT(:prefix, '%')")
+    @Query("SELECT COALESCE(MAX(CAST(SUBSTRING(p.referenceNumber, LENGTH(:prefix) + 1) AS INTEGER)), 0) FROM Payment p WHERE p.referenceNumber LIKE CONCAT(:prefix, '%')")
     String findMaxPaymentNumberWithPrefix(@Param("prefix") String prefix);
 }
