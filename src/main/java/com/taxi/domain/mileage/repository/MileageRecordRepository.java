@@ -111,4 +111,25 @@ public interface MileageRecordRepository extends JpaRepository<MileageRecord, Lo
     List<MileageRecord> findShiftsForCabOnDate(
         @Param("cabNumber") String cabNumber,
         @Param("date") LocalDate date);
+
+    /**
+     * Find mileage records that fall within the shift's time window.
+     * Captures all mileage records where the mileage activity window overlaps with the shift time window.
+     * Allows 15-minute tolerance on both ends to handle timing discrepancies.
+     *
+     * A mileage record is captured if:
+     * - Driver number matches
+     * - Mileage record's logon time is before shift's logoff time (+ 15 min tolerance)
+     * - Mileage record's logoff time is after shift's logon time (- 15 min tolerance)
+     */
+    @Query(value = "SELECT m.* FROM mileage_records m " +
+           "WHERE m.driver_number = :driverNumber " +
+           "AND m.logon_time <= DATE_ADD(:logoffTime, INTERVAL 15 MINUTE) " +
+           "AND (m.logoff_time IS NULL OR m.logoff_time >= DATE_SUB(:logonTime, INTERVAL 15 MINUTE)) " +
+           "ORDER BY m.logon_time ASC",
+           nativeQuery = true)
+    List<MileageRecord> findByDriverNumberAndShiftTimes(
+        @Param("driverNumber") String driverNumber,
+        @Param("logonTime") LocalDateTime logonTime,
+        @Param("logoffTime") LocalDateTime logoffTime);
 }

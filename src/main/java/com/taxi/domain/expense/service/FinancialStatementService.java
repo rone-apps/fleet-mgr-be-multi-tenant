@@ -1,12 +1,21 @@
 package com.taxi.domain.expense.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.taxi.domain.cab.model.Cab;
 import com.taxi.domain.cab.repository.CabRepository;
 import com.taxi.domain.driver.model.Driver;
 import com.taxi.domain.driver.repository.DriverRepository;
 import com.taxi.domain.expense.model.ApplicationType;
 import com.taxi.domain.expense.model.OneTimeExpense;
 import com.taxi.domain.expense.model.RecurringExpense;
+import com.taxi.domain.expense.model.ItemRate;
+import com.taxi.domain.expense.model.ItemRateOverride;
+import com.taxi.domain.expense.repository.ItemRateRepository;
+import com.taxi.domain.expense.repository.ItemRateOverrideRepository;
+import com.taxi.domain.mileage.model.MileageRecord;
+import com.taxi.domain.mileage.repository.MileageRecordRepository;
+import com.taxi.domain.profile.model.ItemRateChargedTo;
+import com.taxi.domain.profile.model.ItemRateUnitType;
 import com.taxi.domain.expense.repository.OneTimeExpenseRepository;
 import com.taxi.domain.expense.repository.RecurringExpenseRepository;
 import com.taxi.domain.revenue.entity.OtherRevenue;
@@ -27,7 +36,6 @@ import com.taxi.domain.statement.model.Statement;
 import com.taxi.domain.statement.model.StatementStatus;
 import com.taxi.domain.statement.repository.StatementRepository;
 import com.taxi.domain.cab.repository.CabAttributeValueRepository;
-import com.taxi.web.dto.expense.DriverStatementDTO;
 import com.taxi.web.dto.expense.OwnerReportDTO;
 import com.taxi.web.dto.expense.StatementLineItem;
 import lombok.RequiredArgsConstructor;
@@ -38,6 +46,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.temporal.ChronoUnit;
 import java.util.*;
 
 @Service
@@ -60,6 +69,9 @@ public class FinancialStatementService {
     private final ObjectMapper objectMapper;
     private final CabAttributeValueRepository cabAttributeValueRepository;
     private final com.taxi.domain.account.repository.StatementPaymentRepository statementPaymentRepository;
+    private final ItemRateRepository itemRateRepository;
+    private final ItemRateOverrideRepository itemRateOverrideRepository;
+    private final MileageRecordRepository mileageRecordRepository;
 
     // ═══════════════════════════════════════════════════════════════════════
     // NEW CONSOLIDATED SERVICES - SINGLE SOURCE OF TRUTH
@@ -69,104 +81,10 @@ public class FinancialStatementService {
      * Generate a financial statement for a driver for a date period
      * Shows all applicable recurring (prorated) and one-time charges
      */
-    public DriverStatementDTO generateDriverStatement(Long driverId, LocalDate from, LocalDate to) {
-        Driver driver = driverRepository.findById(driverId)
-            .orElseThrow(() -> new RuntimeException("Driver not found: " + driverId));
-
-        log.info("Generating driver statement for driver {} from {} to {}", driverId, from, to);
-
-        DriverStatementDTO statement = DriverStatementDTO.builder()
-            .driverId(driver.getId())
-            .driverName(driver.getFullName())
-            .driverNumber(driver.getDriverNumber())
-            .periodFrom(from)
-            .periodTo(to)
-            .recurringCharges(new ArrayList<>())
-            .oneTimeCharges(new ArrayList<>())
-            .build();
-
-        // Get all shifts where this driver is active during the period
-        List<CabShift> activeShifts = cabShiftRepository.findByCurrentOwnerIdAndShiftActive(driverId, true);
-        activeShifts = filterShiftsByDateRange(activeShifts, from, to);
-
-        // ═══════════════════════════════════════════════════════════════════════
-        // USE NEW CONSOLIDATED EXPENSE CALCULATION SERVICE
-        // ═══════════════════════════════════════════════════════════════════════
-
-        // 1. Get all applicable recurring expenses (uses ExpenseCalculationService)
-        List<RecurringExpense> allRecurringExpenses = expenseCalculationService
-                .getApplicableRecurringExpenses(driver, activeShifts, from, to);
-
-        expenseCalculationService.addRecurringExpensesToStatement(statement, allRecurringExpenses, activeShifts);
-
-        // 2. Get all applicable one-time expenses (uses ExpenseCalculationService)
-        List<OneTimeExpense> allOneTimeExpenses = expenseCalculationService
-                .getApplicableOneTimeExpenses(driver, activeShifts, from, to);
-
-        expenseCalculationService.addOneTimeExpensesToStatement(statement, allOneTimeExpenses, activeShifts);
-
-        statement.calculateTotals();
-        return statement;
-    }
-
     /**
-     * Generate a financial statement for an owner for a date period
-     */
-    public DriverStatementDTO generateOwnerStatement(Long ownerId, LocalDate from, LocalDate to) {
-        Driver owner = driverRepository.findById(ownerId)
-            .orElseThrow(() -> new RuntimeException("Owner not found: " + ownerId));
-
-        if (!Boolean.TRUE.equals(owner.getIsOwner())) {
-            throw new RuntimeException("Driver " + ownerId + " is not an owner");
-        }
-
-        log.info("Generating owner statement for owner {} from {} to {}", ownerId, from, to);
-
-        DriverStatementDTO statement = DriverStatementDTO.builder()
-            .driverId(owner.getId())
-            .driverName(owner.getFullName())
-            .driverNumber(owner.getDriverNumber())
-            .periodFrom(from)
-            .periodTo(to)
-            .recurringCharges(new ArrayList<>())
-            .oneTimeCharges(new ArrayList<>())
-            .build();
-
-        // Get all cabs owned by this owner
-        List<Long> cabIds = cabRepository.findByOwnerDriver(owner).stream()
-            .map(cab -> cab.getId())
-            .toList();
-
-        // Get all shifts for these cabs
-        List<CabShift> ownerShifts = new ArrayList<>();
-        for (Long cabId : cabIds) {
-            ownerShifts.addAll(cabShiftRepository.findByCabId(cabId));
-        }
-        ownerShifts = filterShiftsByDateRange(ownerShifts, from, to);
-
-        // ═══════════════════════════════════════════════════════════════════════
-        // USE NEW CONSOLIDATED EXPENSE CALCULATION SERVICE
-        // ═══════════════════════════════════════════════════════════════════════
-
-        // 1. Get all applicable recurring expenses (uses ExpenseCalculationService)
-        List<RecurringExpense> allRecurringExpenses = expenseCalculationService
-                .getApplicableRecurringExpenses(owner, ownerShifts, from, to);
-
-        expenseCalculationService.addRecurringExpensesToStatement(statement, allRecurringExpenses, ownerShifts);
-
-        // 2. Get all applicable one-time expenses (uses ExpenseCalculationService)
-        List<OneTimeExpense> allOneTimeExpenses = expenseCalculationService
-                .getApplicableOneTimeExpenses(owner, ownerShifts, from, to);
-
-        expenseCalculationService.addOneTimeExpensesToStatement(statement, allOneTimeExpenses, ownerShifts);
-
-        statement.calculateTotals();
-        return statement;
-    }
-
-    /**
-     * DEPRECATED: Old private methods have been consolidated into ExpenseCalculationService
-     * These methods are no longer needed - use ExpenseCalculationService instead
+     * DEPRECATED: Old methods generateDriverStatement() and generateOwnerStatement() have been removed.
+     * Use generateOwnerReport() instead for all financial report generation.
+     * generateOwnerReport() works for both drivers and owners and returns complete financial data.
      */
 
     // Helper method for filtering shifts by date range (still used internally)
@@ -174,6 +92,94 @@ public class FinancialStatementService {
         return shifts.stream()
             .filter(shift -> shift.isActiveOn(from) || shift.isActiveOn(to))
             .toList();
+    }
+
+    /**
+     * Calculate per-unit expenses (mileage, airport trips, etc.) for a given period
+     * Returns a map of ItemRateChargedTo -> List of PerUnitExpenseLineItem
+     *
+     * Logic:
+     * 1. Fetch all active item rates for the period
+     * 2. For each rate, get overrides for this person (if owner)
+     * 3. Use override rate if exists, otherwise use base rate
+     * 4. Sum units (miles, trips) from shift logs
+     * 5. Calculate amount = totalUnits × effectiveRate
+     */
+    private Map<ItemRateChargedTo, List<OwnerReportDTO.PerUnitExpenseLineItem>> calculatePerUnitExpenses(
+            List<ShiftLog> shiftLogs, LocalDate from, LocalDate to, Driver person) {
+
+        Map<ItemRateChargedTo, List<OwnerReportDTO.PerUnitExpenseLineItem>> result = new HashMap<>();
+        result.put(ItemRateChargedTo.DRIVER, new ArrayList<>());
+        result.put(ItemRateChargedTo.OWNER, new ArrayList<>());
+
+        if (shiftLogs.isEmpty()) {
+            log.info("No shift logs provided for per-unit expense calculation");
+            return result;
+        }
+
+        // Fetch all active item rates during the period
+        // Use mid-period date for determining active rates
+        LocalDate checkDate = from.plusDays((ChronoUnit.DAYS.between(from, to) / 2));
+        List<ItemRate> rates = itemRateRepository.findActiveOnDate(checkDate);
+
+        log.info("Found {} item rates active on {} in period {} to {}",
+                rates.size(), checkDate, from, to);
+
+        // For each rate, accumulate units and calculate amount
+        for (ItemRate rate : rates) {
+            BigDecimal totalUnits = BigDecimal.ZERO;
+
+            // Sum units from shift logs based on rate type
+            if (rate.getUnitType() == ItemRateUnitType.MILEAGE) {
+                totalUnits = shiftLogs.stream()
+                        .map(ShiftLog::getTotalMiles)
+                        .filter(java.util.Objects::nonNull)
+                        .reduce(BigDecimal.ZERO, BigDecimal::add);
+            } else if (rate.getUnitType() == ItemRateUnitType.AIRPORT_TRIP) {
+                totalUnits = shiftLogs.stream()
+                        .map(log -> BigDecimal.valueOf(log.getAirportTripCount() != null ? log.getAirportTripCount() : 0))
+                        .reduce(BigDecimal.ZERO, BigDecimal::add);
+            }
+
+            // Only add line item if there are units
+            if (totalUnits.compareTo(BigDecimal.ZERO) > 0) {
+                // Determine effective rate: use override if available, otherwise use base rate
+                BigDecimal effectiveRate = rate.getRate();
+
+                // Check for owner overrides if this is an owner
+                if (Boolean.TRUE.equals(person.getIsOwner()) && person.getDriverNumber() != null) {
+                    List<ItemRateOverride> overrides = itemRateOverrideRepository.findActiveOverridesForRate(
+                            rate.getId(), person.getDriverNumber(), from);
+
+                    if (!overrides.isEmpty()) {
+                        // Use the highest priority override
+                        effectiveRate = overrides.get(0).getOverrideRate();
+                        log.debug("Using override rate {} for item rate {} for owner {}",
+                                effectiveRate, rate.getName(), person.getDriverNumber());
+                    }
+                }
+
+                BigDecimal amount = totalUnits.multiply(effectiveRate);
+
+                OwnerReportDTO.PerUnitExpenseLineItem lineItem = OwnerReportDTO.PerUnitExpenseLineItem.builder()
+                        .name(rate.getName())
+                        .unitType(rate.getUnitType().toString())
+                        .unitTypeDisplay(rate.getUnitType().getDisplayName())
+                        .totalUnits(totalUnits)
+                        .rate(effectiveRate)
+                        .amount(amount)
+                        .chargedTo(rate.getChargedTo().toString())
+                        .build();
+
+                result.get(rate.getChargedTo()).add(lineItem);
+
+                log.debug("Added per-unit expense: {} - {} {} @ ${} = ${}",
+                        rate.getName(), totalUnits, rate.getUnitType().getSymbol(),
+                        effectiveRate, amount);
+            }
+        }
+
+        return result;
     }
 
     /**
@@ -442,30 +448,76 @@ public class FinancialStatementService {
                         String categoryCode = "LEASE_EXP";
                         String categoryName = "Lease Expense";
                         String description = "Lease - Cab " + leaseItem.getCabNumber() +
-                            " (" + leaseItem.getShiftType() + ") - Owner: " + leaseItem.getOwnerDriverName();
+                            " (" + leaseItem.getShiftType() + ") - Owner: " + leaseItem.getOwnerDriverName() +
+                            " (" + leaseItem.getOwnerDriverNumber() + ")";
 
-                        // Show breakdown: Base rate + Mileage
-                        String entityDesc = "Base: $" + leaseItem.getBaseRate() +
-                            " + Mileage: $" + leaseItem.getMileageLease() +
-                            " (" + leaseItem.getMiles() + "mi @ $" + leaseItem.getMileageRate() + "/mi)";
+                        // Get fixed lease amount (base rate)
+                        BigDecimal fixedLeaseAmount = leaseItem.getBaseRate();
+
+                        // Calculate BOTH mileage lease and insurance for this specific shift from mileage records
+                        // Use the shift owner from shift ownership (already set in ownerDriverNumber from CabShift.getCurrentOwner())
+                        MileageCalculationResult result = calculateMileageAndInsuranceForDay(person, leaseItem.getLogonTime(), leaseItem.getLogoffTime(),
+                                leaseItem.getOwnerDriverNumber(), leaseItem.getCabNumber(), leaseItem.getShiftType());
+
+                        BigDecimal mileageLeaseAmount = result.mileageLease;
+                        BigDecimal insuranceExpenseAmount = result.insuranceExpense;
+
+                        // Total lease = fixed + mileage
+                        BigDecimal totalLease = fixedLeaseAmount.add(mileageLeaseAmount);
+
+                        // Create lease breakdown with both fixed and mileage components
+                        StatementLineItem.LeaseBreakdown breakdown = StatementLineItem.LeaseBreakdown.builder()
+                            .fixedLeaseAmount(fixedLeaseAmount)
+                            .mileageLeaseAmount(mileageLeaseAmount)
+                            .build();
 
                         report.getOneTimeExpenses().add(StatementLineItem.builder()
                             .categoryCode(categoryCode)
                             .categoryName(categoryName)
                             .applicationType("LEASE_RENT")
-                            .entityDescription(entityDesc)
                             .date(leaseItem.getShiftDate())
                             .description(description)
-                            .amount(leaseItem.getTotalLease())
+                            .amount(totalLease)
+                            .leaseBreakdown(breakdown)
                             .isRecurring(false)
                             .build());
 
-                        log.debug("Added lease expense: Cab {} Owner {} = ${}",
-                            leaseItem.getCabNumber(), leaseItem.getOwnerDriverNumber(), leaseItem.getTotalLease());
+                        log.debug("Added lease expense: Cab {} Owner {} on {} = ${} (Fixed: ${}, Mileage: ${})",
+                            leaseItem.getCabNumber(), leaseItem.getOwnerDriverNumber(), leaseItem.getShiftDate(),
+                            totalLease, fixedLeaseAmount, mileageLeaseAmount);
+
+                        // Add insurance expense (calculated alongside lease using same mileage)
+                        if (insuranceExpenseAmount.compareTo(BigDecimal.ZERO) > 0) {
+                            // Get insurance rate for display in description
+                            BigDecimal insuranceRate = itemRateRepository.findByName("INSURANCE_RATE")
+                                    .map(r -> r.getRate())
+                                    .orElse(BigDecimal.ZERO);
+
+                            String insuranceDescription = "Insurance - Cab " + leaseItem.getCabNumber() +
+                                " (" + leaseItem.getShiftType() + ") - Mileage: " + result.dayMileage +
+                                " miles @ $" + String.format("%.2f", insuranceRate);
+
+                            report.getInsuranceMileageExpenses().add(StatementLineItem.builder()
+                                .categoryCode("INSURANCE_MILEAGE")
+                                .categoryName("Insurance Mileage")
+                                .applicationType("INSURANCE")
+                                .date(leaseItem.getShiftDate())
+                                .cabNumber(leaseItem.getCabNumber())
+                                .shiftType(leaseItem.getShiftType())
+                                .description(insuranceDescription)
+                                .miles(result.dayMileage)
+                                .amount(insuranceExpenseAmount)
+                                .isRecurring(false)
+                                .build());
+
+                            log.debug("Added insurance expense: Cab {} on {} = ${} (Mileage: {} × ${}/mi)",
+                                leaseItem.getCabNumber(), leaseItem.getShiftDate(), insuranceExpenseAmount,
+                                result.dayMileage, insuranceRate);
+                        }
                     }
                 }
             } catch (Exception e) {
-                log.warn("Error calculating lease expense for driver {}: {}", personId, e.getMessage());
+                log.warn("Error calculating lease/insurance expense for driver {}: {}", personId, e.getMessage());
                 // Don't fail the whole report if lease calculation fails
             }
         }
@@ -580,24 +632,71 @@ public class FinancialStatementService {
                 if (leaseReport.getLeaseItems() != null && !leaseReport.getLeaseItems().isEmpty()) {
                     for (LeaseRevenueDTO leaseItem : leaseReport.getLeaseItems()) {
                         String description = "Lease - Cab " + leaseItem.getCabNumber() +
-                            " (" + leaseItem.getShiftType() + ") - Driver: " + leaseItem.getDriverName();
+                            " (" + leaseItem.getShiftType() + ") - Driver: " + leaseItem.getDriverName() +
+                            " (" + leaseItem.getDriverNumber() + ")";
 
-                        // Show breakdown: Base rate + Mileage
-                        String details = "Base: $" + leaseItem.getBaseRate() +
-                            " + Mileage: $" + leaseItem.getMileageLease() +
-                            " (" + leaseItem.getMiles() + "mi @ $" + leaseItem.getMileageRate() + "/mi)";
+                        // Get fixed lease amount (base rate)
+                        BigDecimal fixedLeaseAmount = leaseItem.getBaseRate();
+
+                        // Get driver and calculate BOTH mileage lease and insurance for this specific shift from actual mileage records
+                        // The owner is the shift owner (the person this report is for)
+                        Driver driver = driverRepository.findByDriverNumber(leaseItem.getDriverNumber())
+                                .orElse(null);
+                        BigDecimal mileageLeaseAmount = BigDecimal.ZERO;
+                        BigDecimal insuranceRevenueAmount = BigDecimal.ZERO;
+                        BigDecimal dayMileageForRevenue = BigDecimal.ZERO;
+                        if (driver != null) {
+                            // Owner is the person we're generating the report for (from the shift ownership)
+                            String ownerDriverNumber = person.getDriverNumber();
+
+                            MileageCalculationResult result = calculateMileageAndInsuranceForDay(driver, leaseItem.getLogonTime(), leaseItem.getLogoffTime(),
+                                    ownerDriverNumber, leaseItem.getCabNumber(), leaseItem.getShiftType());
+                            mileageLeaseAmount = result.mileageLease;
+                            insuranceRevenueAmount = result.insuranceExpense;
+                            dayMileageForRevenue = result.dayMileage;
+                        }
+
+                        // Total lease = fixed + mileage
+                        BigDecimal totalLease = fixedLeaseAmount.add(mileageLeaseAmount);
+
+                        // Create lease breakdown with both fixed and mileage components
+                        StatementLineItem.LeaseBreakdown breakdown = StatementLineItem.LeaseBreakdown.builder()
+                            .fixedLeaseAmount(fixedLeaseAmount)
+                            .mileageLeaseAmount(mileageLeaseAmount)
+                            .build();
 
                         report.getRevenues().add(OwnerReportDTO.RevenueLineItem.builder()
                             .categoryName("Lease Income")
                             .revenueDate(leaseItem.getShiftDate())
                             .description(description)
-                            .revenueType(details)
                             .revenueSubType("LEASE_INCOME")
-                            .amount(leaseItem.getTotalLease())
+                            .amount(totalLease)
+                            .leaseBreakdown(breakdown)
                             .build());
 
-                        log.debug("Added lease revenue: Cab {} Driver {} = ${}",
-                            leaseItem.getCabNumber(), leaseItem.getDriverNumber(), leaseItem.getTotalLease());
+                        log.debug("Added lease revenue: Cab {} Driver {} on {} = ${} (Fixed: ${}, Mileage: ${})",
+                            leaseItem.getCabNumber(), leaseItem.getDriverNumber(), leaseItem.getShiftDate(),
+                            totalLease, fixedLeaseAmount, mileageLeaseAmount);
+
+                        // Add insurance revenue (calculated alongside lease using same mileage)
+                        if (insuranceRevenueAmount.compareTo(BigDecimal.ZERO) > 0) {
+                            String insuranceDescription = "Insurance Mileage Income - Cab " + leaseItem.getCabNumber() +
+                                " (" + leaseItem.getShiftType() + ") - Driver: " + leaseItem.getDriverName() +
+                                " - Mileage: " + dayMileageForRevenue + " miles";
+
+                            report.getInsuranceMileageRevenues().add(OwnerReportDTO.RevenueLineItem.builder()
+                                .categoryName("Insurance Mileage Income")
+                                .revenueDate(leaseItem.getShiftDate())
+                                .description(insuranceDescription)
+                                .revenueSubType("INSURANCE_MILEAGE_INCOME")
+                                .miles(dayMileageForRevenue)
+                                .amount(insuranceRevenueAmount)
+                                .build());
+
+                            log.debug("Added insurance revenue: Cab {} Driver {} on {} = ${}",
+                                leaseItem.getCabNumber(), leaseItem.getDriverNumber(), leaseItem.getShiftDate(),
+                                insuranceRevenueAmount);
+                        }
                     }
                 }
             } catch (Exception e) {
@@ -672,6 +771,31 @@ public class FinancialStatementService {
         log.info("Found {} payments for person {} in period {} to {} totaling ${}",
             paymentsInPeriod.size(), personId, from, to, totalPaidInPeriod);
 
+        // Calculate per-unit expenses (mileage, airport trips, etc.)
+        Map<ItemRateChargedTo, List<OwnerReportDTO.PerUnitExpenseLineItem>> perUnitMap =
+            calculatePerUnitExpenses(shiftLogs, from, to, person);
+
+        // Add per-unit expenses relevant to this person (owner or driver)
+        ItemRateChargedTo relevantKey = Boolean.TRUE.equals(person.getIsOwner())
+            ? ItemRateChargedTo.OWNER
+            : ItemRateChargedTo.DRIVER;
+
+        List<OwnerReportDTO.PerUnitExpenseLineItem> relevantPerUnitExpenses =
+            perUnitMap.getOrDefault(relevantKey, new ArrayList<>());
+
+        report.setPerUnitExpenses(relevantPerUnitExpenses);
+
+        if (!relevantPerUnitExpenses.isEmpty()) {
+            BigDecimal totalPerUnit = relevantPerUnitExpenses.stream()
+                .map(OwnerReportDTO.PerUnitExpenseLineItem::getAmount)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+            report.setTotalPerUnitExpenses(totalPerUnit);
+            log.info("Added {} per-unit expenses for {} totaling ${}",
+                relevantPerUnitExpenses.size(), relevantKey, totalPerUnit);
+        } else {
+            report.setTotalPerUnitExpenses(BigDecimal.ZERO);
+        }
+
         report.calculateTotals();
         return report;
     }
@@ -688,6 +812,7 @@ public class FinancialStatementService {
             lineItems.put("revenues", report.getRevenues());
             lineItems.put("recurringExpenses", report.getRecurringExpenses());
             lineItems.put("oneTimeExpenses", report.getOneTimeExpenses());
+            lineItems.put("perUnitExpenses", report.getPerUnitExpenses());
 
             String lineItemsJson = objectMapper.writeValueAsString(lineItems);
 
@@ -750,6 +875,7 @@ public class FinancialStatementService {
             List<OwnerReportDTO.RevenueLineItem> revenues = new ArrayList<>();
             List<StatementLineItem> recurringExpenses = new ArrayList<>();
             List<StatementLineItem> oneTimeExpenses = new ArrayList<>();
+            List<OwnerReportDTO.PerUnitExpenseLineItem> perUnitExpenses = new ArrayList<>();
 
             // Extract revenues
             if (lineItemsNode.has("revenues") && lineItemsNode.get("revenues").isArray()) {
@@ -772,6 +898,14 @@ public class FinancialStatementService {
                 oneTimeExpenses = objectMapper.readValue(
                     lineItemsNode.get("oneTimeExpenses").toString(),
                     objectMapper.getTypeFactory().constructCollectionType(List.class, StatementLineItem.class)
+                );
+            }
+
+            // Extract per-unit expenses
+            if (lineItemsNode.has("perUnitExpenses") && lineItemsNode.get("perUnitExpenses").isArray()) {
+                perUnitExpenses = objectMapper.readValue(
+                    lineItemsNode.get("perUnitExpenses").toString(),
+                    objectMapper.getTypeFactory().constructCollectionType(List.class, OwnerReportDTO.PerUnitExpenseLineItem.class)
                 );
             }
 
@@ -798,6 +932,7 @@ public class FinancialStatementService {
                 .revenues(revenues)
                 .recurringExpenses(recurringExpenses)
                 .oneTimeExpenses(oneTimeExpenses)
+                .perUnitExpenses(perUnitExpenses)
                 .build();
 
             // Calculate totals to set netDue
@@ -813,4 +948,145 @@ public class FinancialStatementService {
             throw new RuntimeException("Failed to convert statement to report: " + e.getMessage(), e);
         }
     }
+
+    /**
+     * Calculate both mileage lease and insurance expense for a driver for a specific shift
+     * Gets mileage record once and calculates both amounts using the same mileage
+     * - Mileage Lease: dayMileage × mileageRate (from MILEAGE ItemRate)
+     * - Insurance Expense: dayMileage × insuranceRate (from INSURANCE ItemRate)
+     *
+     * @param driver Driver to calculate mileage for
+     * @param logonTime Shift logon time
+     * @param logoffTime Shift logoff time
+     * @param ownerDriverNumber Shift owner for override checking
+     * @param cabNumber Cab number for override matching
+     * @param shiftType Shift type (DAY/NIGHT) for override matching
+     * @return MileageCalculationResult with both mileage lease and insurance amounts
+     */
+    private MileageCalculationResult calculateMileageAndInsuranceForDay(
+            Driver driver, LocalDateTime logonTime, LocalDateTime logoffTime,
+            String ownerDriverNumber, String cabNumber, String shiftType) {
+        try {
+            // Get all mileage records within the shift's time window (including 15-minute tolerance)
+            List<MileageRecord> mileageRecords = mileageRecordRepository.findByDriverNumberAndShiftTimes(
+                    driver.getDriverNumber(), logonTime, logoffTime);
+
+            if (mileageRecords.isEmpty()) {
+                log.debug("No mileage record found for driver {} within shift window {} to {} (±15min tolerance)",
+                    driver.getDriverNumber(), logonTime, logoffTime);
+                return new MileageCalculationResult(BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO);
+            }
+
+            // Sum all mileage A (Flag fall / Tariff 1) from all captured mileage records
+            BigDecimal dayMileage = mileageRecords.stream()
+                    .map(MileageRecord::getMileageA)
+                    .filter(Objects::nonNull)
+                    .reduce(BigDecimal.ZERO, BigDecimal::add);
+
+            if (dayMileage.compareTo(BigDecimal.ZERO) <= 0) {
+                log.debug("No mileage A recorded for driver {} during shift {} to {}",
+                    driver.getDriverNumber(), logonTime, logoffTime);
+                return new MileageCalculationResult(BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO);
+            }
+
+            BigDecimal mileageLease = BigDecimal.ZERO;
+            BigDecimal insuranceExpense = BigDecimal.ZERO;
+            LocalDate shiftDate = logonTime.toLocalDate();
+            String dayOfWeek = shiftDate.getDayOfWeek().toString();
+
+            // ═══════════════════════════════════════════════════════════════════════
+            // GET MILEAGE LEASE RATE
+            // ═══════════════════════════════════════════════════════════════════════
+            java.util.Optional<ItemRate> mileageRateOpt = itemRateRepository.findByName("MILEAGE_RATE");
+
+            if (mileageRateOpt.isPresent()) {
+                ItemRate baseMileageRate = mileageRateOpt.get();
+                BigDecimal mileageRate = baseMileageRate.getRate();
+
+                // Check for overrides
+                if (ownerDriverNumber != null) {
+                    List<ItemRateOverride> applicableOverrides = itemRateOverrideRepository
+                        .findActiveOverridesForRate(baseMileageRate.getId(), ownerDriverNumber, shiftDate);
+
+                    if (!applicableOverrides.isEmpty()) {
+                        for (ItemRateOverride override : applicableOverrides) {
+                            if (override.matches(cabNumber, shiftType, dayOfWeek)) {
+                                mileageRate = override.getOverrideRate();
+                                log.debug("Using mileage override rate ${}/mile for owner {} cab {} {} shift",
+                                        mileageRate, ownerDriverNumber, cabNumber, shiftType);
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                mileageLease = dayMileage.multiply(mileageRate)
+                        .setScale(2, java.math.RoundingMode.HALF_UP);
+
+                log.debug("Calculated mileage lease for driver {}: {} miles × ${}/mile = ${}",
+                        driver.getDriverNumber(), dayMileage, mileageRate, mileageLease);
+            } else {
+                log.debug("MILEAGE_RATE not found in item_rate table");
+            }
+
+            // ═══════════════════════════════════════════════════════════════════════
+            // GET INSURANCE EXPENSE RATE
+            // ═══════════════════════════════════════════════════════════════════════
+            java.util.Optional<ItemRate> insuranceRateOpt = itemRateRepository.findByName("INSURANCE_RATE");
+
+            if (insuranceRateOpt.isPresent()) {
+                ItemRate baseInsuranceRate = insuranceRateOpt.get();
+                BigDecimal insuranceRate = baseInsuranceRate.getRate();
+
+                // Check for overrides
+                if (ownerDriverNumber != null) {
+                    List<ItemRateOverride> applicableOverrides = itemRateOverrideRepository
+                        .findActiveOverridesForRate(baseInsuranceRate.getId(), ownerDriverNumber, shiftDate);
+
+                    if (!applicableOverrides.isEmpty()) {
+                        for (ItemRateOverride override : applicableOverrides) {
+                            if (override.matches(cabNumber, shiftType, dayOfWeek)) {
+                                insuranceRate = override.getOverrideRate();
+                                log.debug("Using insurance override rate ${}/mile for owner {} cab {} {} shift",
+                                        insuranceRate, ownerDriverNumber, cabNumber, shiftType);
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                insuranceExpense = dayMileage.multiply(insuranceRate)
+                        .setScale(2, java.math.RoundingMode.HALF_UP);
+
+                log.debug("Calculated insurance expense for driver {}: {} miles × ${}/mile = ${}",
+                        driver.getDriverNumber(), dayMileage, insuranceRate, insuranceExpense);
+            } else {
+                log.debug("INSURANCE_RATE not found in item_rate table");
+            }
+
+            return new MileageCalculationResult(dayMileage, mileageLease, insuranceExpense);
+
+        } catch (Exception e) {
+            log.error("Error calculating mileage/insurance for driver {} (shift {} to {})",
+                driver.getDriverNumber(), logonTime, logoffTime, e);
+            return new MileageCalculationResult(BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO);
+        }
+    }
+
+    /**
+     * Simple result object holding both mileage lease and insurance expense amounts
+     * Both calculated from the same mileage using different rates
+     */
+    private static class MileageCalculationResult {
+        public final BigDecimal dayMileage;         // Actual miles driven
+        public final BigDecimal mileageLease;       // Mileage lease amount
+        public final BigDecimal insuranceExpense;   // Insurance expense amount
+
+        public MileageCalculationResult(BigDecimal dayMileage, BigDecimal mileageLease, BigDecimal insuranceExpense) {
+            this.dayMileage = dayMileage;
+            this.mileageLease = mileageLease;
+            this.insuranceExpense = insuranceExpense;
+        }
+    }
+
 }

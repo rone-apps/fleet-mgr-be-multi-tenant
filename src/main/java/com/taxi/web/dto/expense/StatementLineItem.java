@@ -36,4 +36,20 @@ public class StatementLineItem {
 
     private BigDecimal amount;
     private boolean isRecurring;
+
+    // For insurance mileage and mileage-based charges
+    private BigDecimal miles;  // Miles driven (for insurance calculations, etc.)
+
+    // For lease expenses breakdown: Fixed Lease | Mileage Lease | Total Lease
+    private LeaseBreakdown leaseBreakdown;
+
+    @Data
+    @NoArgsConstructor
+    @AllArgsConstructor
+    @Builder
+    public static class LeaseBreakdown {
+        private BigDecimal fixedLeaseAmount;    // Base lease amount (e.g., $50/day)
+        private BigDecimal mileageLeaseAmount;  // Mileage portion (miles × rate)
+        // Total is in the parent amount field
+    }
 }

@@ -6,7 +6,6 @@ import com.taxi.domain.report.service.ReportPdfService;
 import com.taxi.domain.statement.model.Statement;
 import com.taxi.domain.statement.repository.StatementRepository;
 import com.taxi.web.dto.email.EmailReportRequest;
-import com.taxi.web.dto.expense.DriverStatementDTO;
 import com.taxi.web.dto.expense.OwnerReportDTO;
 import java.math.BigDecimal;
 import jakarta.validation.Valid;
@@ -17,7 +16,6 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
-import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.YearMonth;
 import java.util.List;
@@ -38,61 +36,7 @@ public class FinancialStatementController {
     private final ReportPdfService reportPdfService;
 
     /**
-     * Generate a financial statement for a driver for a date period
-     */
-    @GetMapping("/driver/{driverId}")
-    @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER', 'ACCOUNTANT')")
-    public ResponseEntity<?> getDriverStatement(
-            @PathVariable Long driverId,
-            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
-            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to) {
-        try {
-            // Default to current month if not provided
-            if (from == null || to == null) {
-                YearMonth now = YearMonth.now();
-                from = now.atDay(1);
-                to = now.atEndOfMonth();
-            }
-
-            log.info("Generating driver statement for driver {} from {} to {}", driverId, from, to);
-            DriverStatementDTO statement = financialStatementService.generateDriverStatement(driverId, from, to);
-            return ResponseEntity.ok(statement);
-
-        } catch (Exception e) {
-            log.error("Error generating driver statement", e);
-            return ResponseEntity.badRequest().body(e.getMessage());
-        }
-    }
-
-    /**
-     * Generate a financial statement for an owner for a date period
-     */
-    @GetMapping("/owner/{ownerId}")
-    @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER', 'ACCOUNTANT')")
-    public ResponseEntity<?> getOwnerStatement(
-            @PathVariable Long ownerId,
-            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
-            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to) {
-        try {
-            // Default to current month if not provided
-            if (from == null || to == null) {
-                YearMonth now = YearMonth.now();
-                from = now.atDay(1);
-                to = now.atEndOfMonth();
-            }
-
-            log.info("Generating owner statement for owner {} from {} to {}", ownerId, from, to);
-            DriverStatementDTO statement = financialStatementService.generateOwnerStatement(ownerId, from, to);
-            return ResponseEntity.ok(statement);
-
-        } catch (Exception e) {
-            log.error("Error generating owner statement", e);
-            return ResponseEntity.badRequest().body(e.getMessage());
-        }
-    }
-
-    /**
-     * Generate a comprehensive financial report for an owner (draft mode)
+     * Generate a comprehensive financial report for a driver or owner (draft mode)
      * Always recalculates the statement for the given period
      * Automatically populates previousBalance from last finalized statement
      */

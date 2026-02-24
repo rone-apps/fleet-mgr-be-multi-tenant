@@ -47,6 +47,20 @@ public class OwnerReportDTO {
     private List<StatementLineItem> oneTimeExpenses = new ArrayList<>();
     private BigDecimal totalOneTimeExpenses;
 
+    // Per-Unit Expenses (mileage, airport trips, etc.)
+    @Builder.Default
+    private List<PerUnitExpenseLineItem> perUnitExpenses = new ArrayList<>();
+    private BigDecimal totalPerUnitExpenses;
+
+    // Insurance Mileage (separate tab like Lease)
+    @Builder.Default
+    private List<StatementLineItem> insuranceMileageExpenses = new ArrayList<>();  // For drivers
+    private BigDecimal totalInsuranceMileageExpenses;
+
+    @Builder.Default
+    private List<RevenueLineItem> insuranceMileageRevenues = new ArrayList<>();   // For owners
+    private BigDecimal totalInsuranceMileageRevenues;
+
     // Totals
     private BigDecimal totalExpenses;
     private BigDecimal netAmount;  // Revenues - Expenses
@@ -56,6 +70,13 @@ public class OwnerReportDTO {
                 .map(RevenueLineItem::getAmount)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
 
+        // Add insurance mileage revenues to total revenues
+        BigDecimal insuranceMileageRev = insuranceMileageRevenues.stream()
+                .map(RevenueLineItem::getAmount)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        totalInsuranceMileageRevenues = insuranceMileageRev;
+        totalRevenues = totalRevenues.add(insuranceMileageRev);
+
         totalRecurringExpenses = recurringExpenses.stream()
                 .map(StatementLineItem::getAmount)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
@@ -64,7 +85,17 @@ public class OwnerReportDTO {
                 .map(StatementLineItem::getAmount)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
 
-        totalExpenses = totalRecurringExpenses.add(totalOneTimeExpenses);
+        totalPerUnitExpenses = perUnitExpenses.stream()
+                .map(PerUnitExpenseLineItem::getAmount)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+
+        // Add insurance mileage expenses to total expenses
+        BigDecimal insuranceMileageExp = insuranceMileageExpenses.stream()
+                .map(StatementLineItem::getAmount)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        totalInsuranceMileageExpenses = insuranceMileageExp;
+
+        totalExpenses = totalRecurringExpenses.add(totalOneTimeExpenses).add(totalPerUnitExpenses).add(insuranceMileageExp);
         netAmount = totalRevenues.subtract(totalExpenses);
 
         // Calculate netDue: previousBalance + revenues - expenses - paidAmount
@@ -95,5 +126,25 @@ public class OwnerReportDTO {
 
         // ✅ NEW: Application type display for revenues
         private String applicationTypeDisplay;  // e.g., "All Drivers", "Specific Shift", "Shift Profile"
+
+        // For insurance mileage and mileage-based revenues
+        private BigDecimal miles;  // Miles driven (for insurance calculations, etc.)
+
+        // For lease revenue breakdown: Fixed Lease | Mileage Lease | Total Lease
+        private StatementLineItem.LeaseBreakdown leaseBreakdown;
+    }
+
+    @Data
+    @NoArgsConstructor
+    @AllArgsConstructor
+    @Builder
+    public static class PerUnitExpenseLineItem {
+        private String name;                    // e.g., "Per Mile Insurance"
+        private String unitType;                // e.g., "MILEAGE", "AIRPORT_TRIP"
+        private String unitTypeDisplay;         // e.g., "Miles driven", "Airport trips"
+        private BigDecimal totalUnits;          // Total miles or trips in the period
+        private BigDecimal rate;                // Rate per unit
+        private BigDecimal amount;              // totalUnits × rate
+        private String chargedTo;               // "DRIVER" or "OWNER"
     }
 }

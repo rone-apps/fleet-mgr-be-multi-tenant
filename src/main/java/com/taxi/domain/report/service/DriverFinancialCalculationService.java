@@ -5,12 +5,18 @@ import com.taxi.domain.account.repository.AccountChargeRepository;
 import com.taxi.domain.cab.model.Cab;
 import com.taxi.domain.driver.model.Driver;
 import com.taxi.domain.driver.repository.DriverRepository;
+import com.taxi.domain.expense.model.ItemRate;
+import com.taxi.domain.expense.model.ItemRateOverride;
+import com.taxi.domain.expense.repository.ItemRateRepository;
+import com.taxi.domain.expense.repository.ItemRateOverrideRepository;
 import com.taxi.domain.lease.model.LeaseRate;
 import com.taxi.domain.lease.repository.LeaseRateRepository;
 import com.taxi.domain.lease.service.LeaseCalculationService;
 import com.taxi.domain.lease.service.LeaseRateOverrideService;
 import com.taxi.domain.payment.model.CreditCardTransaction;
 import com.taxi.domain.payment.repository.CreditCardTransactionRepository;
+import com.taxi.domain.profile.model.ItemRateChargedTo;
+import com.taxi.domain.profile.model.ItemRateUnitType;
 import com.taxi.domain.shift.model.CabShift;
 import com.taxi.domain.shift.model.DriverShift;
 import com.taxi.domain.shift.model.ShiftOwnership;
@@ -67,9 +73,13 @@ public class DriverFinancialCalculationService {
     private final CabShiftRepository cabShiftRepository;
     private final FixedExpenseReportService fixedExpenseReportService;
     private final LeaseRateRepository leaseRateRepository;
-    
+
     // ✅ NEW: Lease rate override service for custom owner rates
     private final LeaseRateOverrideService leaseRateOverrideService;
+
+    // ✅ NEW: Item rate repositories for insurance & per-unit expenses
+    private final ItemRateRepository itemRateRepository;
+    private final ItemRateOverrideRepository itemRateOverrideRepository;
 
     /**
      * ═══════════════════════════════════════════════════════════════════════
@@ -229,13 +239,25 @@ public class DriverFinancialCalculationService {
                 
                 LeaseRevenueDTO leaseItem = calculateLeaseForShift(
                     driverShift, cab, owner, cabShift.getShiftType().name());
-                
+
                 if (leaseItem != null) {
                     totalProcessed++;
                     report.addLeaseItem(leaseItem);
-                    log.debug("   ✓ Added: {} {} on {} = ${}",
+                    log.debug("   ✓ Added Lease: {} {} on {} = ${}",
                             cab.getCabNumber(), cabShift.getShiftType(),
                             leaseItem.getShiftDate(), leaseItem.getTotalLease());
+
+                    // Calculate insurance revenue using the same miles from lease calculation
+                    InsuranceMileageDTO insuranceItem = calculateInsuranceExpenseForShift(
+                        driverShift, cab, owner, cabShift.getShiftType().name(),
+                        leaseItem.getMiles());
+
+                    if (insuranceItem != null) {
+                        report.addInsuranceMileage(insuranceItem);
+                        log.debug("   ✓ Added Insurance: {} {} on {} = ${}",
+                                cab.getCabNumber(), cabShift.getShiftType(),
+                                insuranceItem.getShiftDate(), insuranceItem.getTotalInsuranceMileage());
+                    }
                 }
             }
         }
@@ -286,7 +308,10 @@ public class DriverFinancialCalculationService {
                     .orElse(shift.getDriverNumber()); // fallback to driver number if not found
             
             return LeaseRevenueDTO.builder()
+                    .shiftId(shift.getId())
                     .shiftDate(shift.getLogonTime().toLocalDate())
+                    .logonTime(shift.getLogonTime())
+                    .logoffTime(shift.getLogoffTime())
                     .cabNumber(cab.getCabNumber())
                     .driverNumber(shift.getDriverNumber())
                     .driverName(workingDriverName)
@@ -537,13 +562,25 @@ public class DriverFinancialCalculationService {
             
             LeaseExpenseDTO leaseItem = calculateLeaseExpenseForShift(
                     driverShift, cabShift.getCab(), shiftOwner, cabShift.getShiftType().name());
-            
+
             if (leaseItem != null) {
                 totalProcessed++;
                 report.addLeaseExpense(leaseItem);
-                log.debug("   ✓ Added: {} {} on {} = ${}",
+                log.debug("   ✓ Added Lease: {} {} on {} = ${}",
                         cabShift.getCab().getCabNumber(), cabShift.getShiftType(),
                         leaseItem.getShiftDate(), leaseItem.getTotalLease());
+
+                // Calculate insurance expense using the same miles from the lease calculation
+                InsuranceMileageDTO insuranceItem = calculateInsuranceExpenseForShift(
+                        driverShift, cabShift.getCab(), shiftOwner, cabShift.getShiftType().name(),
+                        leaseItem.getMiles());
+
+                if (insuranceItem != null) {
+                    report.addInsuranceMileage(insuranceItem);
+                    log.debug("   ✓ Added Insurance: {} {} on {} = ${}",
+                            cabShift.getCab().getCabNumber(), cabShift.getShiftType(),
+                            insuranceItem.getShiftDate(), insuranceItem.getTotalInsuranceMileage());
+                }
             }
         }
         
@@ -588,7 +625,10 @@ public class DriverFinancialCalculationService {
             BigDecimal totalLease = baseRate.add(mileageLease);
             
             return LeaseExpenseDTO.builder()
+                    .shiftId(shift.getId())
                     .shiftDate(shift.getLogonTime().toLocalDate())
+                    .logonTime(shift.getLogonTime())
+                    .logoffTime(shift.getLogoffTime())
                     .cabNumber(cab.getCabNumber())
                     .ownerDriverNumber(owner.getDriverNumber())
                     .ownerDriverName(owner.getFullName())
@@ -602,6 +642,88 @@ public class DriverFinancialCalculationService {
                     
         } catch (Exception e) {
             log.error("Error calculating lease expense for shift {}: {}", shift.getId(), e.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * Calculate insurance mileage expense for a specific shift
+     * Uses the same miles already calculated for lease expense
+     * Insurance is charged based on mileage driven only (no fixed amount)
+     * Insurance is an expense for the driver, income for the owner
+     *
+     * @param shift The driver shift
+     * @param cab The cab used for the shift
+     * @param owner The cab owner (who receives the insurance revenue)
+     * @param shiftType The shift type (NIGHT, DAY, etc)
+     * @param miles The miles already calculated for lease (reuse for insurance)
+     * @return InsuranceMileageDTO with insurance expense details
+     */
+    private InsuranceMileageDTO calculateInsuranceExpenseForShift(
+            DriverShift shift, Cab cab, Driver owner, String shiftType, BigDecimal miles) {
+        try {
+            // Validate miles
+            if (miles == null || miles.compareTo(BigDecimal.ZERO) <= 0) {
+                log.debug("No mileage to calculate insurance for shift {}", shift.getId());
+                return null;
+            }
+
+            // Get insurance mileage rate from ItemRate system (INSURANCE type, charged to DRIVER)
+            List<ItemRate> insuranceRates = itemRateRepository.findByUnitTypeAndChargedToAndIsActiveTrueOrderByName(
+                    ItemRateUnitType.INSURANCE, ItemRateChargedTo.DRIVER);
+
+            if (insuranceRates.isEmpty()) {
+                log.debug("No insurance rates configured for driver, skipping insurance calculation");
+                return null;
+            }
+
+            // Use first insurance rate as base
+            ItemRate baseInsuranceRate = insuranceRates.get(0);
+            BigDecimal insuranceRate = baseInsuranceRate.getRate();
+
+            // Check for item rate overrides (per-owner, per-cab, per-shift, per-day)
+            if (owner.getDriverNumber() != null) {
+                LocalDate shiftDate = shift.getLogonTime().toLocalDate();
+                List<ItemRateOverride> applicableOverrides = itemRateOverrideRepository
+                    .findActiveOverridesForRate(baseInsuranceRate.getId(), owner.getDriverNumber(), shiftDate);
+
+                if (!applicableOverrides.isEmpty()) {
+                    String dayOfWeek = shiftDate.getDayOfWeek().toString();
+
+                    for (ItemRateOverride override : applicableOverrides) {
+                        if (override.matches(cab.getCabNumber(), shiftType, dayOfWeek)) {
+                            insuranceRate = override.getOverrideRate();
+                            log.debug("Using insurance override rate ${}/mile for owner {} cab {} {} shift",
+                                    insuranceRate, owner.getDriverNumber(), cab.getCabNumber(), shiftType);
+                            break;
+                        }
+                    }
+                }
+            }
+
+            // Calculate insurance expense: miles × insurance rate
+            BigDecimal totalInsurance = insuranceRate.multiply(miles)
+                    .setScale(2, java.math.RoundingMode.HALF_UP);
+
+            log.debug("Calculated insurance expense for driver {}: {} miles × ${}/mile = ${}",
+                    owner.getDriverNumber(), miles, insuranceRate, totalInsurance);
+
+            return InsuranceMileageDTO.builder()
+                    .shiftId(shift.getId())
+                    .shiftDate(shift.getLogonTime().toLocalDate())
+                    .logonTime(shift.getLogonTime())
+                    .logoffTime(shift.getLogoffTime())
+                    .cabNumber(cab.getCabNumber())
+                    .ownerDriverNumber(owner.getDriverNumber())
+                    .ownerDriverName(owner.getFullName())
+                    .shiftType(shiftType)
+                    .miles(miles)
+                    .mileageRate(insuranceRate)
+                    .totalInsuranceMileage(totalInsurance)
+                    .build();
+
+        } catch (Exception e) {
+            log.error("Error calculating insurance expense for shift {}: {}", shift.getId(), e.getMessage());
             return null;
         }
     }

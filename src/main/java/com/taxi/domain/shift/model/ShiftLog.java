@@ -66,6 +66,11 @@ public class ShiftLog {
     @Column(name = "total_miles", precision = 10, scale = 2)
     private BigDecimal totalMiles;
 
+    // Per-unit expense tracking
+    @Column(name = "airport_trip_count", nullable = false, columnDefinition = "integer default 0")
+    @Builder.Default
+    private Integer airportTripCount = 0;
+
     // Lease calculation (snapshot for historical accuracy)
     @Embedded
     private LeaseCalculation leaseCalculation;
