@@ -52,14 +52,10 @@ public class OwnerReportDTO {
     private List<PerUnitExpenseLineItem> perUnitExpenses = new ArrayList<>();
     private BigDecimal totalPerUnitExpenses;
 
-    // Insurance Mileage (separate tab like Lease)
+    // Insurance Mileage (always an expense, deducted from driver earnings)
     @Builder.Default
     private List<StatementLineItem> insuranceMileageExpenses = new ArrayList<>();  // For drivers
     private BigDecimal totalInsuranceMileageExpenses;
-
-    @Builder.Default
-    private List<RevenueLineItem> insuranceMileageRevenues = new ArrayList<>();   // For owners
-    private BigDecimal totalInsuranceMileageRevenues;
 
     // Totals
     private BigDecimal totalExpenses;
@@ -69,13 +65,6 @@ public class OwnerReportDTO {
         totalRevenues = revenues.stream()
                 .map(RevenueLineItem::getAmount)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
-
-        // Add insurance mileage revenues to total revenues
-        BigDecimal insuranceMileageRev = insuranceMileageRevenues.stream()
-                .map(RevenueLineItem::getAmount)
-                .reduce(BigDecimal.ZERO, BigDecimal::add);
-        totalInsuranceMileageRevenues = insuranceMileageRev;
-        totalRevenues = totalRevenues.add(insuranceMileageRev);
 
         totalRecurringExpenses = recurringExpenses.stream()
                 .map(StatementLineItem::getAmount)

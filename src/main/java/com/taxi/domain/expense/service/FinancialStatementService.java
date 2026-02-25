@@ -1,7 +1,7 @@
 package com.taxi.domain.expense.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.taxi.domain.cab.model.Cab;
+
 import com.taxi.domain.cab.repository.CabRepository;
 import com.taxi.domain.driver.model.Driver;
 import com.taxi.domain.driver.repository.DriverRepository;
@@ -16,14 +16,12 @@ import com.taxi.domain.mileage.model.MileageRecord;
 import com.taxi.domain.mileage.repository.MileageRecordRepository;
 import com.taxi.domain.profile.model.ItemRateChargedTo;
 import com.taxi.domain.profile.model.ItemRateUnitType;
-import com.taxi.domain.expense.repository.OneTimeExpenseRepository;
 import com.taxi.domain.expense.repository.RecurringExpenseRepository;
 import com.taxi.domain.revenue.entity.OtherRevenue;
 import com.taxi.domain.revenue.repository.OtherRevenueRepository;
 import com.taxi.domain.account.repository.AccountChargeRepository;
 import com.taxi.domain.payment.repository.CreditCardTransactionRepository;
 import com.taxi.domain.report.service.DriverFinancialCalculationService;
-import com.taxi.domain.shift.service.ShiftValidationService;
 import com.taxi.web.dto.report.LeaseRevenueDTO;
 import com.taxi.web.dto.report.LeaseExpenseDTO;
 import com.taxi.domain.shift.model.CabShift;
@@ -454,13 +452,12 @@ public class FinancialStatementService {
                         // Get fixed lease amount (base rate)
                         BigDecimal fixedLeaseAmount = leaseItem.getBaseRate();
 
-                        // Calculate BOTH mileage lease and insurance for this specific shift from mileage records
+                        // Calculate mileage lease for this specific shift from mileage records
                         // Use the shift owner from shift ownership (already set in ownerDriverNumber from CabShift.getCurrentOwner())
-                        MileageCalculationResult result = calculateMileageAndInsuranceForDay(person, leaseItem.getLogonTime(), leaseItem.getLogoffTime(),
+                        MileageCalculationResult result = calculateMileageLeaseForDay(person, leaseItem.getLogonTime(), leaseItem.getLogoffTime(),
                                 leaseItem.getOwnerDriverNumber(), leaseItem.getCabNumber(), leaseItem.getShiftType());
 
                         BigDecimal mileageLeaseAmount = result.mileageLease;
-                        BigDecimal insuranceExpenseAmount = result.insuranceExpense;
 
                         // Total lease = fixed + mileage
                         BigDecimal totalLease = fixedLeaseAmount.add(mileageLeaseAmount);
@@ -485,41 +482,62 @@ public class FinancialStatementService {
                         log.debug("Added lease expense: Cab {} Owner {} on {} = ${} (Fixed: ${}, Mileage: ${})",
                             leaseItem.getCabNumber(), leaseItem.getOwnerDriverNumber(), leaseItem.getShiftDate(),
                             totalLease, fixedLeaseAmount, mileageLeaseAmount);
-
-                        // Add insurance expense (calculated alongside lease using same mileage)
-                        if (insuranceExpenseAmount.compareTo(BigDecimal.ZERO) > 0) {
-                            // Get insurance rate for display in description
-                            BigDecimal insuranceRate = itemRateRepository.findByName("INSURANCE_RATE")
-                                    .map(r -> r.getRate())
-                                    .orElse(BigDecimal.ZERO);
-
-                            String insuranceDescription = "Insurance - Cab " + leaseItem.getCabNumber() +
-                                " (" + leaseItem.getShiftType() + ") - Mileage: " + result.dayMileage +
-                                " miles @ $" + String.format("%.2f", insuranceRate);
-
-                            report.getInsuranceMileageExpenses().add(StatementLineItem.builder()
-                                .categoryCode("INSURANCE_MILEAGE")
-                                .categoryName("Insurance Mileage")
-                                .applicationType("INSURANCE")
-                                .date(leaseItem.getShiftDate())
-                                .cabNumber(leaseItem.getCabNumber())
-                                .shiftType(leaseItem.getShiftType())
-                                .description(insuranceDescription)
-                                .miles(result.dayMileage)
-                                .amount(insuranceExpenseAmount)
-                                .isRecurring(false)
-                                .build());
-
-                            log.debug("Added insurance expense: Cab {} on {} = ${} (Mileage: {} × ${}/mi)",
-                                leaseItem.getCabNumber(), leaseItem.getShiftDate(), insuranceExpenseAmount,
-                                result.dayMileage, insuranceRate);
-                        }
                     }
                 }
             } catch (Exception e) {
                 log.warn("Error calculating lease/insurance expense for driver {}: {}", personId, e.getMessage());
                 // Don't fail the whole report if lease calculation fails
             }
+        }
+
+        // 3.6. Add insurance expense (based on mileage records - applies to everyone)
+        try {
+            // Get insurance rate first
+            java.util.Optional<ItemRate> insuranceRateOpt = itemRateRepository.findByName("INSURANCE_RATE");
+            if (!insuranceRateOpt.isPresent()) {
+                log.debug("INSURANCE_RATE not found in item_rate table, skipping insurance expense");
+            } else {
+                ItemRate insuranceRateObj = insuranceRateOpt.get();
+                BigDecimal insuranceRate = insuranceRateObj.getRate();
+
+                // Get all mileage records for this person (driver or owner) in the date range
+                List<MileageRecord> mileageRecords = mileageRecordRepository.findByDriverNumberAndDateRange(
+                        person.getDriverNumber(), from, to);
+
+                log.info("Found {} mileage records for person {} between {} and {}",
+                        mileageRecords.size(), personId, from, to);
+
+                // Calculate insurance for each mileage record
+                for (MileageRecord mileageRecord : mileageRecords) {
+                    BigDecimal miles = mileageRecord.getMileageA();
+                    if (miles != null && miles.compareTo(BigDecimal.ZERO) > 0) {
+                        // Calculate insurance for this record
+                        BigDecimal insuranceExpense = miles.multiply(insuranceRate)
+                                .setScale(2, java.math.RoundingMode.HALF_UP);
+
+                        String insuranceDescription = "Insurance - Mileage: " + miles.setScale(2, java.math.RoundingMode.HALF_UP) +
+                                " miles @ $" + String.format("%.2f", insuranceRate) + "/mile";
+
+                        report.getInsuranceMileageExpenses().add(StatementLineItem.builder()
+                                .categoryCode("INSURANCE_MILEAGE")
+                                .categoryName("Insurance Mileage")
+                                .applicationType("INSURANCE")
+                                .date(mileageRecord.getLogonTime() != null ? mileageRecord.getLogonTime().toLocalDate() : from)
+                                .cabNumber(mileageRecord.getCabNumber())
+                                .description(insuranceDescription)
+                                .miles(miles)
+                                .amount(insuranceExpense)
+                                .isRecurring(false)
+                                .build());
+
+                        log.debug("Added insurance expense for person {}: {} miles × ${}/mile = ${}",
+                                personId, miles, insuranceRate, insuranceExpense);
+                    }
+                }
+            }
+        } catch (Exception e) {
+            log.warn("Error calculating insurance expense for person {}: {}", personId, e.getMessage());
+            // Don't fail the whole report if insurance calculation fails
         }
 
         // 4. Add shift-based revenues (trip fares, tips, etc.)
@@ -638,22 +656,19 @@ public class FinancialStatementService {
                         // Get fixed lease amount (base rate)
                         BigDecimal fixedLeaseAmount = leaseItem.getBaseRate();
 
-                        // Get driver and calculate BOTH mileage lease and insurance for this specific shift from actual mileage records
+                        // Get driver and calculate mileage lease for this specific shift from actual mileage records
                         // The owner is the shift owner (the person this report is for)
                         Driver driver = driverRepository.findByDriverNumber(leaseItem.getDriverNumber())
                                 .orElse(null);
                         BigDecimal mileageLeaseAmount = BigDecimal.ZERO;
-                        BigDecimal insuranceRevenueAmount = BigDecimal.ZERO;
-                        BigDecimal dayMileageForRevenue = BigDecimal.ZERO;
                         if (driver != null) {
                             // Owner is the person we're generating the report for (from the shift ownership)
                             String ownerDriverNumber = person.getDriverNumber();
 
-                            MileageCalculationResult result = calculateMileageAndInsuranceForDay(driver, leaseItem.getLogonTime(), leaseItem.getLogoffTime(),
+                            MileageCalculationResult result = calculateMileageLeaseForDay(driver, leaseItem.getLogonTime(), leaseItem.getLogoffTime(),
                                     ownerDriverNumber, leaseItem.getCabNumber(), leaseItem.getShiftType());
                             mileageLeaseAmount = result.mileageLease;
-                            insuranceRevenueAmount = result.insuranceExpense;
-                            dayMileageForRevenue = result.dayMileage;
+                            // Note: insuranceExpense (result.insuranceExpense) is deducted as driver expense, not owner revenue
                         }
 
                         // Total lease = fixed + mileage
@@ -677,26 +692,6 @@ public class FinancialStatementService {
                         log.debug("Added lease revenue: Cab {} Driver {} on {} = ${} (Fixed: ${}, Mileage: ${})",
                             leaseItem.getCabNumber(), leaseItem.getDriverNumber(), leaseItem.getShiftDate(),
                             totalLease, fixedLeaseAmount, mileageLeaseAmount);
-
-                        // Add insurance revenue (calculated alongside lease using same mileage)
-                        if (insuranceRevenueAmount.compareTo(BigDecimal.ZERO) > 0) {
-                            String insuranceDescription = "Insurance Mileage Income - Cab " + leaseItem.getCabNumber() +
-                                " (" + leaseItem.getShiftType() + ") - Driver: " + leaseItem.getDriverName() +
-                                " - Mileage: " + dayMileageForRevenue + " miles";
-
-                            report.getInsuranceMileageRevenues().add(OwnerReportDTO.RevenueLineItem.builder()
-                                .categoryName("Insurance Mileage Income")
-                                .revenueDate(leaseItem.getShiftDate())
-                                .description(insuranceDescription)
-                                .revenueSubType("INSURANCE_MILEAGE_INCOME")
-                                .miles(dayMileageForRevenue)
-                                .amount(insuranceRevenueAmount)
-                                .build());
-
-                            log.debug("Added insurance revenue: Cab {} Driver {} on {} = ${}",
-                                leaseItem.getCabNumber(), leaseItem.getDriverNumber(), leaseItem.getShiftDate(),
-                                insuranceRevenueAmount);
-                        }
                     }
                 }
             } catch (Exception e) {
@@ -950,10 +945,11 @@ public class FinancialStatementService {
     }
 
     /**
-     * Calculate both mileage lease and insurance expense for a driver for a specific shift
-     * Gets mileage record once and calculates both amounts using the same mileage
-     * - Mileage Lease: dayMileage × mileageRate (from MILEAGE ItemRate)
-     * - Insurance Expense: dayMileage × insuranceRate (from INSURANCE ItemRate)
+     * Calculate mileage lease amount for a driver for a specific shift
+     * Gets mileage record and calculates mileage lease amount
+     * - Mileage Lease: dayMileage × mileageRate (from MILAGE_RATE ItemRate)
+     *
+     * Note: Insurance is now calculated separately in section 3.6 based on total period miles
      *
      * @param driver Driver to calculate mileage for
      * @param logonTime Shift logon time
@@ -961,9 +957,9 @@ public class FinancialStatementService {
      * @param ownerDriverNumber Shift owner for override checking
      * @param cabNumber Cab number for override matching
      * @param shiftType Shift type (DAY/NIGHT) for override matching
-     * @return MileageCalculationResult with both mileage lease and insurance amounts
+     * @return MileageCalculationResult with dayMileage and mileageLease only
      */
-    private MileageCalculationResult calculateMileageAndInsuranceForDay(
+    private MileageCalculationResult calculateMileageLeaseForDay(
             Driver driver, LocalDateTime logonTime, LocalDateTime logoffTime,
             String ownerDriverNumber, String cabNumber, String shiftType) {
         try {
@@ -990,7 +986,6 @@ public class FinancialStatementService {
             }
 
             BigDecimal mileageLease = BigDecimal.ZERO;
-            BigDecimal insuranceExpense = BigDecimal.ZERO;
             LocalDate shiftDate = logonTime.toLocalDate();
             String dayOfWeek = shiftDate.getDayOfWeek().toString();
 
@@ -1026,45 +1021,11 @@ public class FinancialStatementService {
                 log.debug("Calculated mileage lease for driver {}: {} miles × ${}/mile = ${}",
                         driver.getDriverNumber(), dayMileage, mileageRate, mileageLease);
             } else {
-                log.debug("MILEAGE_RATE not found in item_rate table");
+                log.debug("MILAGE_RATE not found in item_rate table");
             }
 
-            // ═══════════════════════════════════════════════════════════════════════
-            // GET INSURANCE EXPENSE RATE
-            // ═══════════════════════════════════════════════════════════════════════
-            java.util.Optional<ItemRate> insuranceRateOpt = itemRateRepository.findByName("INSURANCE_RATE");
-
-            if (insuranceRateOpt.isPresent()) {
-                ItemRate baseInsuranceRate = insuranceRateOpt.get();
-                BigDecimal insuranceRate = baseInsuranceRate.getRate();
-
-                // Check for overrides
-                if (ownerDriverNumber != null) {
-                    List<ItemRateOverride> applicableOverrides = itemRateOverrideRepository
-                        .findActiveOverridesForRate(baseInsuranceRate.getId(), ownerDriverNumber, shiftDate);
-
-                    if (!applicableOverrides.isEmpty()) {
-                        for (ItemRateOverride override : applicableOverrides) {
-                            if (override.matches(cabNumber, shiftType, dayOfWeek)) {
-                                insuranceRate = override.getOverrideRate();
-                                log.debug("Using insurance override rate ${}/mile for owner {} cab {} {} shift",
-                                        insuranceRate, ownerDriverNumber, cabNumber, shiftType);
-                                break;
-                            }
-                        }
-                    }
-                }
-
-                insuranceExpense = dayMileage.multiply(insuranceRate)
-                        .setScale(2, java.math.RoundingMode.HALF_UP);
-
-                log.debug("Calculated insurance expense for driver {}: {} miles × ${}/mile = ${}",
-                        driver.getDriverNumber(), dayMileage, insuranceRate, insuranceExpense);
-            } else {
-                log.debug("INSURANCE_RATE not found in item_rate table");
-            }
-
-            return new MileageCalculationResult(dayMileage, mileageLease, insuranceExpense);
+            // Insurance is now calculated separately in section 3.6 based on total period miles
+            return new MileageCalculationResult(dayMileage, mileageLease, BigDecimal.ZERO);
 
         } catch (Exception e) {
             log.error("Error calculating mileage/insurance for driver {} (shift {} to {})",

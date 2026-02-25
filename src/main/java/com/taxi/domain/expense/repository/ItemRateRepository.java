@@ -24,6 +24,12 @@ public interface ItemRateRepository extends JpaRepository<ItemRate, Long> {
     Optional<ItemRate> findByName(String name);
 
     /**
+     * Find rate by name (case-insensitive)
+     */
+    @Query("SELECT r FROM ItemRate r WHERE UPPER(r.name) = UPPER(:name)")
+    Optional<ItemRate> findByNameIgnoreCase(@Param("name") String name);
+
+    /**
      * Find all rates active on a given date
      */
     @Query("SELECT r FROM ItemRate r " +
