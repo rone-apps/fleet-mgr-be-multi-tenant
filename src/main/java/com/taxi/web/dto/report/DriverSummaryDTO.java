@@ -6,6 +6,8 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 import java.math.BigDecimal;
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * DTO for driver financial summary
@@ -22,27 +24,48 @@ public class DriverSummaryDTO {
     private String driverNumber;
     private String driverName;
     private Boolean isOwner;
-    
+
     // Revenue metrics
     private BigDecimal leaseRevenue;           // Revenue earned from owning shifts
     private BigDecimal creditCardRevenue;      // Revenue from credit card transactions
     private BigDecimal chargesRevenue;         // Revenue from account charges
     private BigDecimal otherRevenue;           // Other miscellaneous revenue
-    
+
     // Expense metrics
     private BigDecimal fixedExpense;           // Fixed expenses (from OneTimeExpense/RecurringExpense)
     private BigDecimal leaseExpense;           // Lease paid to shift owners
     private BigDecimal variableExpense;        // Variable expenses
     private BigDecimal otherExpense;           // Other miscellaneous expenses
-    
+
     // Financial totals
     private BigDecimal totalRevenue;           // Sum of all revenues
     private BigDecimal totalExpense;           // Sum of all expenses
     private BigDecimal netOwed;                // Total revenue - total expense
-    
+
     // Payment tracking
     private BigDecimal paid;                   // Amount already paid
     private BigDecimal outstanding;            // Amount still owed (netOwed - paid)
+
+    // ✅ NEW: Itemized breakdown for dynamic columns (Excel/PDF export)
+    @Builder.Default
+    private List<ItemizedBreakdown> revenueBreakdown = new ArrayList<>();
+
+    @Builder.Default
+    private List<ItemizedBreakdown> expenseBreakdown = new ArrayList<>();
+
+    /**
+     * Inner class for itemized revenue/expense breakdown
+     * Used for dynamic column generation in reports and exports
+     */
+    @Data
+    @NoArgsConstructor
+    @AllArgsConstructor
+    @Builder
+    public static class ItemizedBreakdown {
+        private String key;           // Stable column key (e.g., "CC", "RECURRING:Dispatch Fee")
+        private String displayName;   // Human-readable label for column header
+        private BigDecimal amount;    // Amount for this breakdown item
+    }
     
     /**
      * Calculate total revenue from all sources

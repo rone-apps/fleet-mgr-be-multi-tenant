@@ -284,6 +284,136 @@ public class ReportService {
             summary.setPaid(safeBigDecimal(fullReport.getPaidAmount()));
             summary.setOutstanding(netOwed.subtract(safeBigDecimal(fullReport.getPaidAmount())));
 
+            // ✅ ITEMIZED BREAKDOWN FOR DYNAMIC COLUMNS (Excel/PDF export)
+            // Extract revenue breakdown with unique keys and display names
+            java.util.Map<String, DriverSummaryDTO.ItemizedBreakdown> revenueMap = new java.util.LinkedHashMap<>();
+
+            // Revenue breakdown from fullReport.getRevenues()
+            for (com.taxi.web.dto.expense.OwnerReportDTO.RevenueLineItem rev : fullReport.getRevenues()) {
+                String subType = rev.getRevenueSubType();
+
+                if ("CARD_REVENUE".equals(subType)) {
+                    String key = "CC";
+                    if (!revenueMap.containsKey(key)) {
+                        revenueMap.put(key, DriverSummaryDTO.ItemizedBreakdown.builder()
+                                .key(key)
+                                .displayName("Credit Card")
+                                .amount(BigDecimal.ZERO)
+                                .build());
+                    }
+                    DriverSummaryDTO.ItemizedBreakdown item = revenueMap.get(key);
+                    item.setAmount(item.getAmount().add(safeBigDecimal(rev.getAmount())));
+                } else if ("ACCOUNT_REVENUE".equals(subType)) {
+                    String key = "CHARGES";
+                    if (!revenueMap.containsKey(key)) {
+                        revenueMap.put(key, DriverSummaryDTO.ItemizedBreakdown.builder()
+                                .key(key)
+                                .displayName("Charges")
+                                .amount(BigDecimal.ZERO)
+                                .build());
+                    }
+                    DriverSummaryDTO.ItemizedBreakdown item = revenueMap.get(key);
+                    item.setAmount(item.getAmount().add(safeBigDecimal(rev.getAmount())));
+                } else if ("LEASE_INCOME".equals(subType)) {
+                    String key = "LEASE_INC";
+                    if (!revenueMap.containsKey(key)) {
+                        revenueMap.put(key, DriverSummaryDTO.ItemizedBreakdown.builder()
+                                .key(key)
+                                .displayName("Lease Income")
+                                .amount(BigDecimal.ZERO)
+                                .build());
+                    }
+                    DriverSummaryDTO.ItemizedBreakdown item = revenueMap.get(key);
+                    item.setAmount(item.getAmount().add(safeBigDecimal(rev.getAmount())));
+                } else if ("OTHER_REVENUE".equals(subType) || "SHIFT_REVENUE".equals(subType)) {
+                    // For OTHER_REVENUE, use description as unique key
+                    String description = rev.getDescription() != null ? rev.getDescription().trim() : "Other Revenue";
+                    String key = "OTHER:" + description;
+                    if (!revenueMap.containsKey(key)) {
+                        revenueMap.put(key, DriverSummaryDTO.ItemizedBreakdown.builder()
+                                .key(key)
+                                .displayName(description)
+                                .amount(BigDecimal.ZERO)
+                                .build());
+                    }
+                    DriverSummaryDTO.ItemizedBreakdown item = revenueMap.get(key);
+                    item.setAmount(item.getAmount().add(safeBigDecimal(rev.getAmount())));
+                }
+            }
+            summary.setRevenueBreakdown(new java.util.ArrayList<>(revenueMap.values()));
+
+            // Extract expense breakdown with unique keys and display names
+            java.util.Map<String, DriverSummaryDTO.ItemizedBreakdown> expenseMap = new java.util.LinkedHashMap<>();
+
+            // Recurring expenses
+            if (fullReport.getRecurringExpenses() != null) {
+                for (com.taxi.web.dto.expense.StatementLineItem exp : fullReport.getRecurringExpenses()) {
+                    String categoryName = exp.getCategoryName() != null ? exp.getCategoryName() : "Recurring Expense";
+                    String key = "RECURRING:" + categoryName;
+                    if (!expenseMap.containsKey(key)) {
+                        expenseMap.put(key, DriverSummaryDTO.ItemizedBreakdown.builder()
+                                .key(key)
+                                .displayName(categoryName)
+                                .amount(BigDecimal.ZERO)
+                                .build());
+                    }
+                    DriverSummaryDTO.ItemizedBreakdown item = expenseMap.get(key);
+                    item.setAmount(item.getAmount().add(safeBigDecimal(exp.getAmount())));
+                }
+            }
+
+            // One-time expenses (split lease vs non-lease)
+            if (fullReport.getOneTimeExpenses() != null) {
+                for (com.taxi.web.dto.expense.StatementLineItem exp : fullReport.getOneTimeExpenses()) {
+                    String categoryCode = exp.getCategoryCode();
+                    String applicationType = exp.getApplicationType();
+
+                    // Check if lease expense
+                    if ((categoryCode != null && categoryCode.equals("LEASE_EXP")) ||
+                        (applicationType != null && applicationType.equals("LEASE_RENT"))) {
+                        String key = "LEASE_EXP";
+                        if (!expenseMap.containsKey(key)) {
+                            expenseMap.put(key, DriverSummaryDTO.ItemizedBreakdown.builder()
+                                    .key(key)
+                                    .displayName("Lease Expense")
+                                    .amount(BigDecimal.ZERO)
+                                    .build());
+                        }
+                        DriverSummaryDTO.ItemizedBreakdown item = expenseMap.get(key);
+                        item.setAmount(item.getAmount().add(safeBigDecimal(exp.getAmount())));
+                    } else {
+                        // Non-lease one-time expense, group by category
+                        String categoryName = exp.getCategoryName() != null ? exp.getCategoryName() : "Other Expense";
+                        String key = "ONETIME:" + categoryName;
+                        if (!expenseMap.containsKey(key)) {
+                            expenseMap.put(key, DriverSummaryDTO.ItemizedBreakdown.builder()
+                                    .key(key)
+                                    .displayName(categoryName)
+                                    .amount(BigDecimal.ZERO)
+                                    .build());
+                        }
+                        DriverSummaryDTO.ItemizedBreakdown item = expenseMap.get(key);
+                        item.setAmount(item.getAmount().add(safeBigDecimal(exp.getAmount())));
+                    }
+                }
+            }
+
+            // Insurance mileage expenses
+            if (fullReport.getInsuranceMileageExpenses() != null && !fullReport.getInsuranceMileageExpenses().isEmpty()) {
+                BigDecimal totalInsurance = fullReport.getInsuranceMileageExpenses().stream()
+                        .map(exp -> safeBigDecimal(exp.getAmount()))
+                        .reduce(BigDecimal.ZERO, BigDecimal::add);
+                if (totalInsurance.compareTo(BigDecimal.ZERO) > 0) {
+                    expenseMap.put("INSURANCE", DriverSummaryDTO.ItemizedBreakdown.builder()
+                            .key("INSURANCE")
+                            .displayName("Insurance Mileage")
+                            .amount(totalInsurance)
+                            .build());
+                }
+            }
+
+            summary.setExpenseBreakdown(new java.util.ArrayList<>(expenseMap.values()));
+
             log.debug("Completed summary for {}: Revenue=${}, Expense=${}, NetOwed=${}, Outstanding=${}",
                     driver.getDriverNumber(),
                     summary.getTotalRevenue(),
