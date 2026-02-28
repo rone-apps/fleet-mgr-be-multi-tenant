@@ -43,23 +43,26 @@ public class FixedExpenseReportService {
     /**
      * Check if a cab has at least one active shift
      * Note: Cab status has been moved to shift level
+     * DUPLICATE: Also exists in DriverFinancialCalculationService - consider consolidation
      */
     private boolean isCabActive(Cab cab) {
         if (cab == null || cab.getShifts() == null) return false;
         return cab.getShifts().stream()
                 .anyMatch(shift -> shift.getStatus() == CabShift.ShiftStatus.ACTIVE);
     }
-    
+
     /**
      * Check if a shift is active
+     * DUPLICATE: Also exists in DriverFinancialCalculationService
      */
     private boolean isShiftActive(CabShift shift) {
         if (shift == null) return false;
         return shift.getStatus() == CabShift.ShiftStatus.ACTIVE;
     }
-    
+
     /**
      * Check if both cab and shift are active (used for expense calculations)
+     * DUPLICATE: Also exists in DriverFinancialCalculationService
      */
     private boolean isCabShiftActive(CabShift shift) {
         if (shift == null) return false;

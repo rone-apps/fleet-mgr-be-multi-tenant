@@ -23,7 +23,6 @@ import com.taxi.domain.shift.model.ShiftOwnership;
 import com.taxi.domain.shift.model.ShiftType;
 import com.taxi.domain.shift.repository.CabShiftRepository;
 import com.taxi.domain.shift.repository.DriverShiftRepository;
-import com.taxi.domain.shift.service.ShiftOwnershipService;
 import com.taxi.web.dto.report.*;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -67,11 +66,10 @@ public class DriverFinancialCalculationService {
     private final DriverRepository driverRepository;
     private final DriverShiftRepository driverShiftRepository;
     private final LeaseCalculationService leaseCalculationService;
-    private final ShiftOwnershipService shiftOwnershipService;
+    private final com.taxi.domain.shift.repository.ShiftOwnershipRepository shiftOwnershipRepository;
     private final AccountChargeRepository accountChargeRepository;
     private final CreditCardTransactionRepository creditCardTransactionRepository;
     private final CabShiftRepository cabShiftRepository;
-    private final FixedExpenseReportService fixedExpenseReportService;
     private final LeaseRateRepository leaseRateRepository;
 
     // ✅ NEW: Lease rate override service for custom owner rates
@@ -190,8 +188,8 @@ public class DriverFinancialCalculationService {
         Driver owner = driverRepository.findByDriverNumber(ownerDriverNumber)
                 .orElseThrow(() -> new IllegalArgumentException(
                         "Driver not found: " + ownerDriverNumber));
-        
-        List<ShiftOwnership> ownerships = shiftOwnershipService.getCurrentOwnerships(owner);
+
+        List<ShiftOwnership> ownerships = shiftOwnershipRepository.findByOwnerOrderByStartDateDesc(owner);
         
         log.debug("   ✓ Driver owns {} shifts", ownerships.size());
         
@@ -478,29 +476,6 @@ public class DriverFinancialCalculationService {
 
     /**
      * ═══════════════════════════════════════════════════════════════════════
-     * FIXED EXPENSES CALCULATION
-     * ═══════════════════════════════════════════════════════════════════════
-     */
-    @Transactional(readOnly = true)
-    public FixedExpenseReportDTO calculateFixedExpenses(
-            String driverNumber,
-            LocalDate startDate,
-            LocalDate endDate) {
-        
-        log.info("📊 [FIXED EXPENSES] Driver: {} | Dates: {} to {}", 
-                driverNumber, startDate, endDate);
-        
-        FixedExpenseReportDTO report = fixedExpenseReportService.generateFixedExpenseReport(
-                driverNumber, startDate, endDate);
-        
-        log.info("   ✅ RESULT: {} expenses, TOTAL: ${}", 
-                report.getTotalExpenses(), report.getTotalAmount());
-        
-        return report;
-    }
-
-    /**
-     * ═══════════════════════════════════════════════════════════════════════
      * LEASE EXPENSE CALCULATION
      * ═══════════════════════════════════════════════════════════════════════
      */
@@ -746,5 +721,119 @@ public class DriverFinancialCalculationService {
             log.error("Error finding cab shift: {}", e.getMessage());
             return null;
         }
+    }
+
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * SHARED LEASE EXPENSE CALCULATION
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * SINGLE SOURCE OF TRUTH for calculating total lease expense for a driver
+     * This method is used by:
+     * - Driver Summary Report (calculateLeaseExpenseFromShifts in ReportService)
+     * - Lease Reconciliation Report (for individual shift calculations)
+     *
+     * Ensures both reports use identical lease calculation logic
+     */
+    public BigDecimal calculateTotalLeaseExpenseForDriver(
+            String driverNumber,
+            LocalDate startDate,
+            LocalDate endDate) {
+
+        log.info("📊 [SHARED LEASE CALC] Calculating total lease expense for driver: {} | Dates: {} to {}",
+                driverNumber, startDate, endDate);
+
+        BigDecimal totalLease = BigDecimal.ZERO;
+
+        try {
+            // Get all driver shifts in the date range
+            List<DriverShift> allShifts = driverShiftRepository.findByDriverNumberAndDateRange(
+                    driverNumber, startDate, endDate);
+
+            log.debug("   ✓ Found {} shifts for driver {}", allShifts.size(), driverNumber);
+
+            for (DriverShift ds : allShifts) {
+                try {
+                    // Find cab
+                    var cabOpt = cabShiftRepository.findByCabNumberAndShiftType(
+                            ds.getCabNumber(),
+                            ShiftType.valueOf("DAY".equals(ds.getPrimaryShiftType()) ? "DAY" : "NIGHT"));
+
+                    if (cabOpt.isEmpty()) {
+                        continue;
+                    }
+
+                    CabShift cabShift = cabOpt.get();
+
+                    // Skip if cab not active
+                    if (cabShift.getCab() == null || !"ACTIVE".equals(cabShift.getStatus())) {
+                        log.debug("   ⊘ SKIP INACTIVE: {} {} ",
+                                ds.getCabNumber(), ds.getPrimaryShiftType());
+                        continue;
+                    }
+
+                    // Find owner on this date
+                    LocalDate shiftDate = ds.getLogonTime().toLocalDate();
+                    var ownershipOpt = shiftOwnershipRepository.findOwnershipOnDate(cabShift.getId(), shiftDate);
+
+                    if (ownershipOpt.isEmpty()) {
+                        log.debug("   ⊘ NO OWNER: {} on {}", ds.getCabNumber(), shiftDate);
+                        continue;
+                    }
+
+                    Driver owner = ownershipOpt.get().getOwner();
+
+                    // Skip if self-driven (driver is the owner)
+                    if (owner.getDriverNumber().equals(driverNumber)) {
+                        log.debug("   ⊘ SELF-DRIVEN: {} owns {}", driverNumber, ds.getCabNumber());
+                        continue;
+                    }
+
+                    // ✅ Calculate BASE rate
+                    BigDecimal baseRate = getApplicableLeaseRate(
+                            owner.getDriverNumber(), ds.getCabNumber(), ds.getPrimaryShiftType(),
+                            ds.getLogonTime(), cabShift.getCab());
+
+                    // ✅ Calculate MILEAGE-BASED lease (if applicable)
+                    BigDecimal shiftLease = baseRate;
+                    BigDecimal miles = ds.getTotalDistance();
+
+                    if (miles != null && miles.compareTo(BigDecimal.ZERO) > 0) {
+                        try {
+                            LeaseRate leaseRate = leaseCalculationService.findApplicableRate(
+                                null,  // cabType
+                                false, // hasAirportLicense
+                                ds.getLogonTime()
+                            );
+
+                            if (leaseRate != null) {
+                                BigDecimal mileageRate = leaseRate.getMileageRate();
+                                if (mileageRate != null && mileageRate.compareTo(BigDecimal.ZERO) > 0) {
+                                    BigDecimal mileageLease = mileageRate.multiply(miles);
+                                    shiftLease = baseRate.add(mileageLease);
+                                    log.debug("   ✓ Shift {}: base=${}, mileage=${}*{}mi = ${}",
+                                        ds.getId(), baseRate, mileageRate, miles, shiftLease);
+                                }
+                            }
+                        } catch (Exception e) {
+                            log.debug("   ⚠️ Mileage calc error for shift {}: {}", ds.getId(), e.getMessage());
+                            shiftLease = baseRate;
+                        }
+                    }
+
+                    totalLease = totalLease.add(shiftLease);
+                    log.debug("   ✓ Added lease: ${} | Running total: ${}", shiftLease, totalLease);
+
+                } catch (Exception e) {
+                    log.debug("   ❌ Error processing shift {}: {}", ds.getId(), e.getMessage());
+                }
+            }
+
+        } catch (Exception e) {
+            log.error("   ❌ Error calculating total lease for driver {}: {}", driverNumber, e.getMessage(), e);
+        }
+
+        log.info("   ✅ Total lease expense for driver {}: ${}", driverNumber, totalLease);
+        return totalLease;
     }
 }
