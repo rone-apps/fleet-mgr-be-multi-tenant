@@ -529,21 +529,29 @@ public class DriverFinancialCalculationService {
         
         List<DriverShift> driverShifts = driverShiftRepository
                 .findByDriverNumberAndLogonTimeBetween(driverNumber, startDateTime, endDateTime);
-        
+
         log.debug("   ✓ Found {} driver shifts", driverShifts.size());
-        
+
+        // ✅ DEDUPLICATION: Prevent duplicate shifts from being counted multiple times
+        // This matches the deduplication in calculateLeaseRevenue for consistency
+        java.util.Map<String, DriverShift> uniqueDriverShifts = new java.util.LinkedHashMap<>();
+        for (DriverShift ds : driverShifts) {
+            String key = ds.getDriverNumber() + "|" + ds.getLogonTime();
+            uniqueDriverShifts.putIfAbsent(key, ds);
+        }
+
         LeaseExpenseReportDTO report = LeaseExpenseReportDTO.builder()
                 .workingDriverNumber(driverNumber)
                 .workingDriverName(driver.getFullName())
                 .startDate(startDate)
                 .endDate(endDate)
                 .build();
-        
+
         int skippedInactive = 0;
         int skippedOwnShift = 0;
         int totalProcessed = 0;
-        
-        for (DriverShift driverShift : driverShifts) {
+
+        for (DriverShift driverShift : uniqueDriverShifts.values()) {
             if (!"COMPLETED".equals(driverShift.getStatus())) {
                 continue;
             }

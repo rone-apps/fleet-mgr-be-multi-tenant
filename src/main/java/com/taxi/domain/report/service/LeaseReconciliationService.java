@@ -51,9 +51,19 @@ public class LeaseReconciliationService {
         List<DriverShift> allShifts = driverShiftRepository.findByDateRange(startDate, endDate);
         log.info("Found {} driver shifts in range", allShifts.size());
 
+        // ✅ DEDUPLICATION: Prevent duplicate shifts from being counted multiple times
+        // This matches the deduplication in lease revenue/expense calculations for consistency
+        java.util.Map<String, DriverShift> uniqueShifts = new java.util.LinkedHashMap<>();
+        for (DriverShift ds : allShifts) {
+            String key = ds.getDriverNumber() + "|" + ds.getLogonTime();
+            uniqueShifts.putIfAbsent(key, ds);
+        }
+
+        log.info("After deduplication: {} unique driver shifts", uniqueShifts.size());
+
         List<LeaseReconciliationRowDTO> rows = new ArrayList<>();
 
-        for (DriverShift ds : allShifts) {
+        for (DriverShift ds : uniqueShifts.values()) {
             LocalDate shiftDate = ds.getLogonTime().toLocalDate();
             String shiftType = ds.getPrimaryShiftType(); // "DAY" or "NIGHT"
 
