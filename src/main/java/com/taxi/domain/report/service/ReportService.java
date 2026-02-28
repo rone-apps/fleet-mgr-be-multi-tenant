@@ -272,13 +272,28 @@ public class ReportService {
             summary.setVariableExpense(BigDecimal.ZERO); // Not tracked separately in detailed report
             summary.setOtherExpense(otherExpenseTotal);
 
-            // Totals from detailed report
+            // ✅ RECALCULATE TOTAL EXPENSE AS SUM OF INDIVIDUAL CATEGORIES
+            // This ensures consistency: totalExpense = fixedExpense + leaseExpense + variableExpense + otherExpense
+            BigDecimal recalculatedTotalExpense = safeBigDecimal(fullReport.getTotalRecurringExpenses())
+                    .add(leaseExpenseTotal)
+                    .add(BigDecimal.ZERO) // variableExpense is 0
+                    .add(otherExpenseTotal);
+
+            log.debug("   📊 Expense Breakdown for {}: Fixed=${}, Lease=${}, Variable=${}, Other=${} → Total=${}",
+                    driver.getDriverNumber(),
+                    fullReport.getTotalRecurringExpenses(),
+                    leaseExpenseTotal,
+                    "0.00",
+                    otherExpenseTotal,
+                    recalculatedTotalExpense);
+
+            // Totals
             summary.setTotalRevenue(safeBigDecimal(fullReport.getTotalRevenues()));
-            summary.setTotalExpense(safeBigDecimal(fullReport.getTotalExpenses()));
+            summary.setTotalExpense(recalculatedTotalExpense); // Use recalculated value for consistency
 
             // Calculate net and outstanding
             BigDecimal netOwed = safeBigDecimal(fullReport.getTotalRevenues())
-                    .subtract(safeBigDecimal(fullReport.getTotalExpenses()));
+                    .subtract(recalculatedTotalExpense);
             summary.setNetOwed(netOwed);
             summary.setPaid(safeBigDecimal(fullReport.getPaidAmount()));
             summary.setOutstanding(netOwed.subtract(safeBigDecimal(fullReport.getPaidAmount())));
@@ -361,39 +376,41 @@ public class ReportService {
                 }
             }
 
-            // One-time expenses (split lease vs non-lease)
+            // ✅ LEASE EXPENSE - Use the calculated value (SINGLE SOURCE OF TRUTH)
+            // This matches the value in summary.leaseExpense (from calculateTotalLeaseExpenseForDriver)
+            if (leaseExpenseTotal.compareTo(BigDecimal.ZERO) > 0) {
+                expenseMap.put("LEASE_EXP", DriverSummaryDTO.ItemizedBreakdown.builder()
+                        .key("LEASE_EXP")
+                        .displayName("Lease Expense")
+                        .amount(leaseExpenseTotal)
+                        .build());
+            }
+
+            // One-time expenses (non-lease only)
             if (fullReport.getOneTimeExpenses() != null) {
                 for (com.taxi.web.dto.expense.StatementLineItem exp : fullReport.getOneTimeExpenses()) {
                     String categoryCode = exp.getCategoryCode();
                     String applicationType = exp.getApplicationType();
 
-                    // Check if lease expense
+                    // ✅ SKIP LEASE EXPENSES - they are calculated from driver shifts (line 255-256)
                     if ((categoryCode != null && categoryCode.equals("LEASE_EXP")) ||
                         (applicationType != null && applicationType.equals("LEASE_RENT"))) {
-                        String key = "LEASE_EXP";
-                        if (!expenseMap.containsKey(key)) {
-                            expenseMap.put(key, DriverSummaryDTO.ItemizedBreakdown.builder()
-                                    .key(key)
-                                    .displayName("Lease Expense")
-                                    .amount(BigDecimal.ZERO)
-                                    .build());
-                        }
-                        DriverSummaryDTO.ItemizedBreakdown item = expenseMap.get(key);
-                        item.setAmount(item.getAmount().add(safeBigDecimal(exp.getAmount())));
-                    } else {
-                        // Non-lease one-time expense, group by category
-                        String categoryName = exp.getCategoryName() != null ? exp.getCategoryName() : "Other Expense";
-                        String key = "ONETIME:" + categoryName;
-                        if (!expenseMap.containsKey(key)) {
-                            expenseMap.put(key, DriverSummaryDTO.ItemizedBreakdown.builder()
-                                    .key(key)
-                                    .displayName(categoryName)
-                                    .amount(BigDecimal.ZERO)
-                                    .build());
-                        }
-                        DriverSummaryDTO.ItemizedBreakdown item = expenseMap.get(key);
-                        item.setAmount(item.getAmount().add(safeBigDecimal(exp.getAmount())));
+                        log.debug("   ⊘ Skipping lease expense from fullReport (using calculated value instead): {}", exp.getAmount());
+                        continue; // Skip - use calculated value instead
                     }
+
+                    // Non-lease one-time expense, group by category
+                    String categoryName = exp.getCategoryName() != null ? exp.getCategoryName() : "Other Expense";
+                    String key = "ONETIME:" + categoryName;
+                    if (!expenseMap.containsKey(key)) {
+                        expenseMap.put(key, DriverSummaryDTO.ItemizedBreakdown.builder()
+                                .key(key)
+                                .displayName(categoryName)
+                                .amount(BigDecimal.ZERO)
+                                .build());
+                    }
+                    DriverSummaryDTO.ItemizedBreakdown item = expenseMap.get(key);
+                    item.setAmount(item.getAmount().add(safeBigDecimal(exp.getAmount())));
                 }
             }
 
