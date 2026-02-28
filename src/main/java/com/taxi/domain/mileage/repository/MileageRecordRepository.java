@@ -19,7 +19,7 @@ public interface MileageRecordRepository extends JpaRepository<MileageRecord, Lo
 
     List<MileageRecord> findByDriverNumberOrderByLogonTimeDesc(String driverNumber);
 
-    @Query("SELECT m FROM MileageRecord m WHERE DATE(m.logonTime) BETWEEN :startDate AND :endDate ORDER BY m.logonTime DESC")
+    @Query("SELECT m FROM MileageRecord m WHERE DATE(CONVERT_TZ(m.logonTime, '+00:00', '-08:00')) BETWEEN :startDate AND :endDate ORDER BY m.logonTime DESC")
     List<MileageRecord> findByDateRange(
         @Param("startDate") LocalDate startDate,
         @Param("endDate") LocalDate endDate);
@@ -27,44 +27,44 @@ public interface MileageRecordRepository extends JpaRepository<MileageRecord, Lo
     /**
      * Paginated queries for data view (using logonTime for date filtering)
      */
-    @Query("SELECT m FROM MileageRecord m WHERE DATE(m.logonTime) BETWEEN :startDate AND :endDate")
+    @Query("SELECT m FROM MileageRecord m WHERE DATE(CONVERT_TZ(m.logonTime, '+00:00', '-08:00')) BETWEEN :startDate AND :endDate")
     Page<MileageRecord> findByLogonDateBetween(
-        @Param("startDate") LocalDate startDate, 
-        @Param("endDate") LocalDate endDate, 
+        @Param("startDate") LocalDate startDate,
+        @Param("endDate") LocalDate endDate,
         Pageable pageable);
     
-    @Query("SELECT m FROM MileageRecord m WHERE DATE(m.logonTime) BETWEEN :startDate AND :endDate AND m.cabNumber = :cabNumber")
+    @Query("SELECT m FROM MileageRecord m WHERE DATE(CONVERT_TZ(m.logonTime, '+00:00', '-08:00')) BETWEEN :startDate AND :endDate AND m.cabNumber = :cabNumber")
     Page<MileageRecord> findByLogonDateBetweenAndCabNumber(
-        @Param("startDate") LocalDate startDate, 
-        @Param("endDate") LocalDate endDate, 
-        @Param("cabNumber") String cabNumber, 
+        @Param("startDate") LocalDate startDate,
+        @Param("endDate") LocalDate endDate,
+        @Param("cabNumber") String cabNumber,
         Pageable pageable);
     
-    @Query("SELECT m FROM MileageRecord m WHERE DATE(m.logonTime) BETWEEN :startDate AND :endDate AND m.driverNumber = :driverNumber")
+    @Query("SELECT m FROM MileageRecord m WHERE DATE(CONVERT_TZ(m.logonTime, '+00:00', '-08:00')) BETWEEN :startDate AND :endDate AND m.driverNumber = :driverNumber")
     Page<MileageRecord> findByLogonDateBetweenAndDriverNumber(
-        @Param("startDate") LocalDate startDate, 
-        @Param("endDate") LocalDate endDate, 
-        @Param("driverNumber") String driverNumber, 
+        @Param("startDate") LocalDate startDate,
+        @Param("endDate") LocalDate endDate,
+        @Param("driverNumber") String driverNumber,
         Pageable pageable);
     
-    @Query("SELECT m FROM MileageRecord m WHERE DATE(m.logonTime) BETWEEN :startDate AND :endDate " +
+    @Query("SELECT m FROM MileageRecord m WHERE DATE(CONVERT_TZ(m.logonTime, '+00:00', '-08:00')) BETWEEN :startDate AND :endDate " +
            "AND m.cabNumber = :cabNumber AND m.driverNumber = :driverNumber")
     Page<MileageRecord> findByLogonDateBetweenAndCabNumberAndDriverNumber(
-        @Param("startDate") LocalDate startDate, 
-        @Param("endDate") LocalDate endDate, 
-        @Param("cabNumber") String cabNumber, 
-        @Param("driverNumber") String driverNumber, 
+        @Param("startDate") LocalDate startDate,
+        @Param("endDate") LocalDate endDate,
+        @Param("cabNumber") String cabNumber,
+        @Param("driverNumber") String driverNumber,
         Pageable pageable);
 
     @Query("SELECT m FROM MileageRecord m WHERE m.cabNumber = :cabNumber " +
-           "AND DATE(m.logonTime) BETWEEN :startDate AND :endDate ORDER BY m.logonTime DESC")
+           "AND DATE(CONVERT_TZ(m.logonTime, '+00:00', '-08:00')) BETWEEN :startDate AND :endDate ORDER BY m.logonTime DESC")
     List<MileageRecord> findByCabNumberAndDateRange(
         @Param("cabNumber") String cabNumber,
         @Param("startDate") LocalDate startDate,
         @Param("endDate") LocalDate endDate);
 
     @Query("SELECT m FROM MileageRecord m WHERE m.driverNumber = :driverNumber " +
-           "AND DATE(m.logonTime) BETWEEN :startDate AND :endDate ORDER BY m.logonTime DESC")
+           "AND DATE(CONVERT_TZ(m.logonTime, '+00:00', '-08:00')) BETWEEN :startDate AND :endDate ORDER BY m.logonTime DESC")
     List<MileageRecord> findByDriverNumberAndDateRange(
         @Param("driverNumber") String driverNumber,
         @Param("startDate") LocalDate startDate,
@@ -77,7 +77,7 @@ public interface MileageRecordRepository extends JpaRepository<MileageRecord, Lo
 
     @Query("SELECT m.cabNumber, SUM(m.mileageA), SUM(m.mileageB), SUM(m.mileageC), " +
            "SUM(m.totalMileage), COUNT(m), SUM(m.shiftHours) " +
-           "FROM MileageRecord m WHERE DATE(m.logonTime) BETWEEN :startDate AND :endDate " +
+           "FROM MileageRecord m WHERE DATE(CONVERT_TZ(m.logonTime, '+00:00', '-08:00')) BETWEEN :startDate AND :endDate " +
            "GROUP BY m.cabNumber ORDER BY m.cabNumber")
     List<Object[]> getMileageSummaryByCab(
         @Param("startDate") LocalDate startDate,
@@ -85,7 +85,7 @@ public interface MileageRecordRepository extends JpaRepository<MileageRecord, Lo
 
     @Query("SELECT m.driverNumber, SUM(m.mileageA), SUM(m.mileageB), SUM(m.mileageC), " +
            "SUM(m.totalMileage), COUNT(m), SUM(m.shiftHours) " +
-           "FROM MileageRecord m WHERE DATE(m.logonTime) BETWEEN :startDate AND :endDate " +
+           "FROM MileageRecord m WHERE DATE(CONVERT_TZ(m.logonTime, '+00:00', '-08:00')) BETWEEN :startDate AND :endDate " +
            "GROUP BY m.driverNumber ORDER BY m.driverNumber")
     List<Object[]> getMileageSummaryByDriver(
         @Param("startDate") LocalDate startDate,
@@ -106,7 +106,7 @@ public interface MileageRecordRepository extends JpaRepository<MileageRecord, Lo
      * Find all shifts for a cab on a given date, ordered by logon time.
      */
     @Query("SELECT m FROM MileageRecord m WHERE UPPER(m.cabNumber) = UPPER(:cabNumber) " +
-           "AND (DATE(m.logonTime) = :date OR DATE(m.logoffTime) = :date) " +
+           "AND (DATE(CONVERT_TZ(m.logonTime, '+00:00', '-08:00')) = :date OR DATE(CONVERT_TZ(m.logoffTime, '+00:00', '-08:00')) = :date) " +
            "ORDER BY m.logonTime ASC")
     List<MileageRecord> findShiftsForCabOnDate(
         @Param("cabNumber") String cabNumber,

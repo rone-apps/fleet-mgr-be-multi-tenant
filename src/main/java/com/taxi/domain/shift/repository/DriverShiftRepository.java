@@ -33,7 +33,7 @@ public interface DriverShiftRepository extends JpaRepository<DriverShift, Long> 
      * Find shifts for a driver in a date range
      */
     @Query("SELECT ds FROM DriverShift ds WHERE ds.driverNumber = :driverNumber " +
-           "AND DATE(ds.logonTime) BETWEEN :startDate AND :endDate " +
+           "AND DATE(CONVERT_TZ(ds.logonTime, '+00:00', '-08:00')) BETWEEN :startDate AND :endDate " +
            "ORDER BY ds.logonTime DESC")
     List<DriverShift> findByDriverNumberAndDateRange(
         @Param("driverNumber") String driverNumber,
@@ -44,7 +44,8 @@ public interface DriverShiftRepository extends JpaRepository<DriverShift, Long> 
     /**
      * Find all shifts in a date range
      */
-    @Query("SELECT ds FROM DriverShift ds WHERE DATE(ds.logonTime) BETWEEN :startDate AND :endDate " +
+    @Query("SELECT ds FROM DriverShift ds WHERE " +
+           "DATE(CONVERT_TZ(ds.logonTime, '+00:00', '-08:00')) BETWEEN :startDate AND :endDate " +
            "ORDER BY ds.logonTime DESC")
     List<DriverShift> findByDateRange(
         @Param("startDate") LocalDate startDate,
@@ -76,7 +77,7 @@ public interface DriverShiftRepository extends JpaRepository<DriverShift, Long> 
            "FROM DriverShift ds " +
            "WHERE ds.driverNumber = :driverNumber " +
            "AND ds.status = 'COMPLETED' " +
-           "AND DATE(ds.logonTime) BETWEEN :startDate AND :endDate")
+           "AND DATE(CONVERT_TZ(ds.logonTime, '+00:00', '-08:00')) BETWEEN :startDate AND :endDate")
     Object[] getDriverShiftSummary(
         @Param("driverNumber") String driverNumber,
         @Param("startDate") LocalDate startDate,
@@ -87,7 +88,7 @@ public interface DriverShiftRepository extends JpaRepository<DriverShift, Long> 
      * Find shifts by cab_number in date range
      */
     @Query("SELECT ds FROM DriverShift ds WHERE ds.cabNumber = :cabNumber " +
-           "AND DATE(ds.logonTime) BETWEEN :startDate AND :endDate " +
+           "AND DATE(CONVERT_TZ(ds.logonTime, '+00:00', '-08:00')) BETWEEN :startDate AND :endDate " +
            "ORDER BY ds.logonTime DESC")
     List<DriverShift> findByCabNumberAndDateRange(
         @Param("cabNumber") String cabNumber,
@@ -144,7 +145,7 @@ public interface DriverShiftRepository extends JpaRepository<DriverShift, Long> 
     );
 
     @Query("SELECT ds FROM DriverShift ds WHERE ds.cabNumber = :cabNumber " +
-           "AND DATE(ds.logonTime) = :shiftDate " +
+           "AND DATE(CONVERT_TZ(ds.logonTime, '+00:00', '-08:00')) = :shiftDate " +
            "ORDER BY ds.logonTime DESC")
     List<DriverShift> findByCabNumberAndShiftDate(
         @Param("cabNumber") String cabNumber,
