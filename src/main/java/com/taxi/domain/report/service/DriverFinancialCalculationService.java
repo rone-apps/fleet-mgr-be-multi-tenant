@@ -766,7 +766,7 @@ public class DriverFinancialCalculationService {
                     CabShift cabShift = cabOpt.get();
 
                     // Skip if cab not active
-                    if (cabShift.getCab() == null || !"ACTIVE".equals(cabShift.getStatus())) {
+                    if (cabShift.getCab() == null || !isCabShiftActive(cabShift)) {
                         log.debug("   ⊘ SKIP INACTIVE: {} {} ",
                                 ds.getCabNumber(), ds.getPrimaryShiftType());
                         continue;
