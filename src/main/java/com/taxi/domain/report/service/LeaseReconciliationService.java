@@ -106,12 +106,13 @@ public class LeaseReconciliationService {
                     continue;
                 }
 
-                // Compute lease rate (reuse existing logic)
-                BigDecimal leaseRate = driverFinancialCalculationService.getApplicableLeaseRate(
-                    owner.getDriverNumber(), ds.getCabNumber(), shiftType, ds.getLogonTime(), cab);
+                // ✅ CRITICAL FIX: Calculate FULL lease amount (baseRate + mileage), not just base rate
+                // This ensures lease reconciliation matches driver summary calculations
+                BigDecimal totalLease = driverFinancialCalculationService.calculateLeaseForSingleShift(
+                    ds, cab, owner, shiftType);
 
                 rows.add(buildRow(ds, shiftDate, shiftType, driverName, owner.getDriverNumber(),
-                    owner.getFirstName() + " " + owner.getLastName(), leaseRate, "MATCHED"));
+                    owner.getFirstName() + " " + owner.getLastName(), totalLease, "MATCHED"));
 
             } catch (Exception e) {
                 log.error("Error processing shift {}: {}", ds.getId(), e.getMessage(), e);

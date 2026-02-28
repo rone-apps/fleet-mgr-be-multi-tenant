@@ -169,16 +169,13 @@ public class DriverFinancialCalculationService {
                 .orElseThrow(() -> new IllegalArgumentException(
                         "Driver not found: " + ownerDriverNumber));
 
-        List<ShiftOwnership> ownerships = shiftOwnershipRepository.findByOwnerOrderByStartDateDesc(owner);
+        // ✅ FIX: Use DATE-AWARE query to find ownerships active during the report period
+        // This ensures we only count lease revenue for shifts owned during the date range
+        List<ShiftOwnership> ownerships = shiftOwnershipRepository.findOwnershipsInRange(
+                owner.getId(), startDate, endDate);
 
-        // ✅ FIX: Filter out transferred/expired ownerships (only include current ones)
-        // Also deduplicate by shift to avoid processing the same shift multiple times
-        List<ShiftOwnership> relevantOwnerships = ownerships.stream()
-                .filter(o -> o.isCurrent())  // Only current ownership (not transferred away)
-                .distinct()  // Deduplicate ownerships
-                .toList();
-
-        log.debug("   ✓ Driver owns {} total shifts, {} are current", ownerships.size(), relevantOwnerships.size());
+        log.debug("   ✓ Driver owned {} shifts during period {} to {}",
+                ownerships.size(), startDate, endDate);
 
         LeaseRevenueReportDTO report = LeaseRevenueReportDTO.builder()
                 .ownerDriverNumber(ownerDriverNumber)
@@ -194,7 +191,7 @@ public class DriverFinancialCalculationService {
         int totalProcessed = 0;
         java.util.Set<Long> processedShiftIds = new java.util.HashSet<>();  // Track processed shifts
 
-        for (ShiftOwnership ownership : relevantOwnerships) {
+        for (ShiftOwnership ownership : ownerships) {
             CabShift cabShift = ownership.getShift();
 
             // ✅ FIX: Skip if we've already processed this shift (deduplicate)
@@ -555,7 +552,7 @@ public class DriverFinancialCalculationService {
             if (cabShift == null) {
                 continue;
             }
-            
+
             if (!shiftValidationService.isCabShiftActive(cabShift)) {
                 skippedInactive++;
                 log.debug("   ⊘ SKIP INACTIVE: {} {} (shift: {})",
@@ -563,14 +560,35 @@ public class DriverFinancialCalculationService {
                         cabShift.getStatus());
                 continue;
             }
-            
-            Driver shiftOwner = cabShift.getCurrentOwner();
-            
+
+            // ✅ CRITICAL FIX: Get the owner at the time of the shift, not the current owner
+            // This ensures consistency with lease revenue which calculates based on shift ownership at time of driving
+            LocalDate shiftDate = driverShift.getLogonTime().toLocalDate();
+            java.util.Optional<ShiftOwnership> ownershipAtTime = shiftOwnershipRepository.findOwnershipOnDate(
+                    cabShift.getId(), shiftDate);
+
+            if (ownershipAtTime.isEmpty()) {
+                log.debug("   ⊘ SKIP NO OWNERSHIP: {} on {} (no owner record found)",
+                        cabShift.getCab().getCabNumber(), shiftDate);
+                continue;
+            }
+
+            Driver shiftOwner = ownershipAtTime.get().getOwner();
+
             if (shiftOwner.getDriverNumber().equals(driverNumber)) {
                 skippedOwnShift++;
                 continue; // Driver drove own shift
             }
-            
+
+            // ✅ CONSISTENCY CHECK: Verify shift types match
+            // This ensures lease expense uses the same logic as lease revenue calculation
+            if (!cabShift.getShiftType().name().equals(driverShift.getPrimaryShiftType())) {
+                log.debug("   ⊘ SKIP SHIFT TYPE MISMATCH: {} {} (driver shift type: {})",
+                        cabShift.getCab().getCabNumber(), cabShift.getShiftType(),
+                        driverShift.getPrimaryShiftType());
+                continue;
+            }
+
             LeaseExpenseDTO leaseItem = calculateLeaseExpenseForShift(
                     driverShift, cabShift.getCab(), shiftOwner, cabShift.getShiftType().name());
 
@@ -767,6 +785,22 @@ public class DriverFinancialCalculationService {
             return total;
         } catch (Exception e) {
             log.error("   ❌ Error calculating total lease for driver {}: {}", driverNumber, e.getMessage(), e);
+            return BigDecimal.ZERO;
+        }
+    }
+
+    /**
+     * ✅ Calculate lease amount for a single driver shift
+     * Used by Lease Reconciliation to show correct lease amounts
+     * Ensures consistency with driver summary and lease revenue/expense calculations
+     */
+    public BigDecimal calculateLeaseForSingleShift(
+            DriverShift shift, Cab cab, Driver owner, String shiftType) {
+        try {
+            LeaseCalculationResult leaseCalc = calculateShiftLeaseAmount(shift, cab, owner, shiftType);
+            return leaseCalc.totalLease;
+        } catch (Exception e) {
+            log.error("Error calculating lease for shift {}: {}", shift.getId(), e.getMessage());
             return BigDecimal.ZERO;
         }
     }
