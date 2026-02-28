@@ -308,16 +308,16 @@ public class DriverFinancialCalculationService {
     }
 
     /**
-     * Simple result object for lease calculation
+     * Simple result object for lease calculation (made public for debugging)
      */
-    private static class LeaseCalculationResult {
-        final BigDecimal baseRate;
-        final BigDecimal mileageRate;
-        final BigDecimal miles;
-        final BigDecimal mileageLease;
-        final BigDecimal totalLease;
+    public static class LeaseCalculationResult {
+        public final BigDecimal baseRate;
+        public final BigDecimal mileageRate;
+        public final BigDecimal miles;
+        public final BigDecimal mileageLease;
+        public final BigDecimal totalLease;
 
-        LeaseCalculationResult(BigDecimal baseRate, BigDecimal mileageRate, BigDecimal miles,
+        public LeaseCalculationResult(BigDecimal baseRate, BigDecimal mileageRate, BigDecimal miles,
                 BigDecimal mileageLease, BigDecimal totalLease) {
             this.baseRate = baseRate;
             this.mileageRate = mileageRate;
@@ -811,5 +811,51 @@ public class DriverFinancialCalculationService {
             log.error("Error calculating lease for shift {}: {}", shift.getId(), e.getMessage());
             return BigDecimal.ZERO;
         }
+    }
+
+    /**
+     * ✅ Get detailed lease calculation breakdown (for debugging)
+     * Returns all components: baseRate, mileageRate, miles, mileageLease, totalLease
+     */
+    public LeaseCalculationResult calculateLeaseForSingleShiftDetailed(
+            DriverShift shift, Cab cab, Driver owner, String shiftType) {
+        try {
+            return calculateShiftLeaseAmount(shift, cab, owner, shiftType);
+        } catch (Exception e) {
+            log.error("Error calculating lease for shift {}: {}", shift.getId(), e.getMessage());
+            return new LeaseCalculationResult(BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO,
+                    BigDecimal.ZERO, BigDecimal.ZERO);
+        }
+    }
+
+    /**
+     * ✅ Determine lease reconciliation status (SINGLE SOURCE OF TRUTH)
+     * Matches the logic in LeaseReconciliationService
+     *
+     * Rules:
+     * - SELF_DRIVEN: Driver owns the shift (driver == owner) → NO LEASE
+     * - MATCHED: Driver doesn't own shift (driver != owner) → LEASE CHARGED
+     *
+     * This ensures all reports (expense, revenue, reconciliation) use identical logic
+     */
+    public String determineLeaseStatus(String driverNumber, Driver owner) {
+        if (owner == null) {
+            return "NO_OWNER";
+        }
+
+        if (owner.getDriverNumber().equals(driverNumber)) {
+            return "SELF_DRIVEN";  // Driver owns cab, no lease
+        }
+
+        return "MATCHED";  // Driver doesn't own cab, must pay lease
+    }
+
+    /**
+     * ✅ Check if lease should be charged for this shift
+     * Returns true if lease should be calculated (driver != owner)
+     * Returns false if no lease (driver == owner)
+     */
+    public boolean shouldChargeLeaseForShift(String driverNumber, Driver owner) {
+        return "MATCHED".equals(determineLeaseStatus(driverNumber, owner));
     }
 }

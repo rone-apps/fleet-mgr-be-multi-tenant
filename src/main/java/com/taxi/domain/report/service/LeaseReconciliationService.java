@@ -108,15 +108,24 @@ public class LeaseReconciliationService {
 
                 Driver owner = ownershipOpt.get().getOwner();
 
-                // Check if driver is the owner (self-driven, no lease)
-                if (owner.getDriverNumber().equals(ds.getDriverNumber())) {
+                // ✅ Use shared logic to determine lease status (SINGLE SOURCE OF TRUTH)
+                String leaseStatus = driverFinancialCalculationService.determineLeaseStatus(
+                    ds.getDriverNumber(), owner);
+
+                if ("SELF_DRIVEN".equals(leaseStatus)) {
                     log.debug("Driver {} owns cab {}, no lease required", ds.getDriverNumber(), ds.getCabNumber());
                     rows.add(buildRow(ds, shiftDate, shiftType, driverName, owner.getDriverNumber(),
                         owner.getFirstName() + " " + owner.getLastName(), BigDecimal.ZERO, "SELF_DRIVEN"));
                     continue;
                 }
 
-                // ✅ CRITICAL FIX: Calculate FULL lease amount (baseRate + mileage), not just base rate
+                if ("NO_OWNER".equals(leaseStatus)) {
+                    rows.add(buildRow(ds, shiftDate, shiftType, driverName, null, null,
+                        BigDecimal.ZERO, "NO_OWNER"));
+                    continue;
+                }
+
+                // ✅ MATCHED: Calculate FULL lease amount (baseRate + mileage)
                 // This ensures lease reconciliation matches driver summary calculations
                 BigDecimal totalLease = driverFinancialCalculationService.calculateLeaseForSingleShift(
                     ds, cab, owner, shiftType);
