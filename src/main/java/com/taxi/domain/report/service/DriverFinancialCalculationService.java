@@ -161,33 +161,49 @@ public class DriverFinancialCalculationService {
             String ownerDriverNumber,
             LocalDate startDate,
             LocalDate endDate) {
-        
-        log.info("📊 [LEASE REVENUE] Driver: {} | Dates: {} to {}", 
+
+        log.info("📊 [LEASE REVENUE] Driver: {} | Dates: {} to {}",
                 ownerDriverNumber, startDate, endDate);
-        
+
         Driver owner = driverRepository.findByDriverNumber(ownerDriverNumber)
                 .orElseThrow(() -> new IllegalArgumentException(
                         "Driver not found: " + ownerDriverNumber));
 
         List<ShiftOwnership> ownerships = shiftOwnershipRepository.findByOwnerOrderByStartDateDesc(owner);
-        
-        log.debug("   ✓ Driver owns {} shifts", ownerships.size());
-        
+
+        // ✅ FIX: Filter out transferred/expired ownerships (only include current ones)
+        // Also deduplicate by shift to avoid processing the same shift multiple times
+        List<ShiftOwnership> relevantOwnerships = ownerships.stream()
+                .filter(o -> o.isCurrent())  // Only current ownership (not transferred away)
+                .distinct()  // Deduplicate ownerships
+                .toList();
+
+        log.debug("   ✓ Driver owns {} total shifts, {} are current", ownerships.size(), relevantOwnerships.size());
+
         LeaseRevenueReportDTO report = LeaseRevenueReportDTO.builder()
                 .ownerDriverNumber(ownerDriverNumber)
                 .ownerDriverName(owner.getFullName())
                 .startDate(startDate)
                 .endDate(endDate)
                 .build();
-        
+
         LocalDateTime startDateTime = startDate.atStartOfDay();
         LocalDateTime endDateTime = endDate.atTime(23, 59, 59);
-        
+
         int skippedInactive = 0;
         int totalProcessed = 0;
-        
-        for (ShiftOwnership ownership : ownerships) {
+        java.util.Set<Long> processedShiftIds = new java.util.HashSet<>();  // Track processed shifts
+
+        for (ShiftOwnership ownership : relevantOwnerships) {
             CabShift cabShift = ownership.getShift();
+
+            // ✅ FIX: Skip if we've already processed this shift (deduplicate)
+            if (processedShiftIds.contains(cabShift.getId())) {
+                log.debug("   ⊘ SKIP: Already processed shift {} ", cabShift.getId());
+                continue;
+            }
+            processedShiftIds.add(cabShift.getId());
+
             Cab cab = cabShift.getCab();
             
             if (!shiftValidationService.isCabShiftActive(cabShift)) {
