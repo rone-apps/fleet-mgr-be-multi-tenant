@@ -119,7 +119,7 @@ public class DriverFinancialCalculationService {
      * This allows owners to customize rates while maintaining backwards
      * compatibility with existing default rate system.
      */
-    private BigDecimal getApplicableLeaseRate(
+    BigDecimal getApplicableLeaseRate(
             String ownerDriverNumber,
             String cabNumber,
             String shiftType,

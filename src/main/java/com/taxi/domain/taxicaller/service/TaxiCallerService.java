@@ -173,7 +173,7 @@ public class TaxiCallerService {
             String response = readResponse(conn);
             JSONObject jsonObject = new JSONObject(response);
             JSONArray array = jsonObject.getJSONArray("rows");
-            System.out.println(array);
+            //System.out.println(array);
             return array;
 
         } catch (TenantConfigurationException e) {

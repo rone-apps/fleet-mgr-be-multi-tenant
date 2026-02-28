@@ -121,20 +121,21 @@ public class TaxiCallerController {
         try {
             JSONArray rows = taxiCallerService.generateAccountJobReports(startDate, endDate);
 
-            //add importAccountJobReports
-           TaxiCallerImportResult result = taxiCallerAccountChargeImportService.importAccountJobReports(rows);
-            
+            TaxiCallerImportResult result = taxiCallerAccountChargeImportService.importAccountJobReports(rows);
+
             if (result == null) {
                 response.put("success", false);
                 response.put("message", "Failed to fetch account job reports");
                 return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(response);
             }
 
+            String formattedMessage = buildAccountJobImportMessage(result);
             response.put("success", true);
-            response.put("message", "Account job reports loaded successfully");
-            response.put("count", result.getSuccessCount());
-            response.put("duplicate", result.getDuplicateCount());
-            response.put("total records read", result.getTotalRecords());
+            response.put("message", formattedMessage);
+            response.put("totalRecords", result.getTotalRecords());
+            response.put("successCount", result.getSuccessCount());
+            response.put("duplicateCount", result.getDuplicateCount());
+            response.put("errorCount", result.getErrorCount());
             response.put("data", result);
             return ResponseEntity.ok(response);
         } catch (TenantConfigurationException e) {
@@ -445,10 +446,11 @@ public class TaxiCallerController {
             
             // Step 2: Import into driver_shifts table
             DriverShiftImportResult result = taxiCallerDriverShiftImportService.importDriverShifts(rows);
-            
-            // Step 3: Build response
+
+            // Step 3: Build response with formatted message
+            String formattedMessage = buildDriverShiftImportMessage(result);
             response.put("success", true);
-            response.put("message", "Driver shifts import completed");
+            response.put("message", formattedMessage);
             response.put("startDate", startDate.toString());
             response.put("endDate", endDate.toString());
             response.put("totalRecords", result.getTotalRecords());
@@ -456,20 +458,20 @@ public class TaxiCallerController {
             response.put("duplicateCount", result.getDuplicateCount());
             response.put("skippedCount", result.getSkippedCount());
             response.put("failedCount", result.getFailedCount());
-            
+
             // Add detailed statistics
             Map<String, Object> details = new HashMap<>();
             details.put("errors", result.getErrors());
             details.put("skippedReasons", result.getSkippedReasons());
             response.put("details", details);
-            
+
             // Determine HTTP status based on results
             if (result.getSuccessCount() == 0 && result.getFailedCount() > 0) {
                 response.put("success", false);
-                response.put("message", "All records failed to import");
+                response.put("message", "All driver logon/logoff records failed to import");
                 return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(response);
             } else if (result.getFailedCount() > 0) {
-                response.put("message", "Driver shifts import completed with some errors");
+                response.put("message", formattedMessage);
                 return ResponseEntity.status(HttpStatus.PARTIAL_CONTENT).body(response);
             }
             
@@ -530,5 +532,45 @@ public class TaxiCallerController {
             response.put("error", e.getMessage());
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(response);
         }
+    }
+
+    /**
+     * Build a formatted message for driver shift import results
+     */
+    private String buildDriverShiftImportMessage(DriverShiftImportResult result) {
+        StringBuilder message = new StringBuilder();
+        message.append("Loaded ").append(result.getSuccessCount()).append(" driver logon/logoff jobs");
+
+        if (result.getDuplicateCount() > 0) {
+            message.append(", ").append(result.getDuplicateCount()).append(" duplicates skipped");
+        }
+
+        if (result.getSkippedCount() > 0) {
+            message.append(", ").append(result.getSkippedCount()).append(" records skipped");
+        }
+
+        if (result.getFailedCount() > 0) {
+            message.append(", ").append(result.getFailedCount()).append(" failed");
+        }
+
+        return message.toString();
+    }
+
+    /**
+     * Build a formatted message for account job import results
+     */
+    private String buildAccountJobImportMessage(TaxiCallerImportResult result) {
+        StringBuilder message = new StringBuilder();
+        message.append("Loaded ").append(result.getSuccessCount()).append(" account jobs");
+
+        if (result.getDuplicateCount() > 0) {
+            message.append(", ").append(result.getDuplicateCount()).append(" duplicates skipped");
+        }
+
+        if (result.getErrorCount() > 0) {
+            message.append(", ").append(result.getErrorCount()).append(" errors");
+        }
+
+        return message.toString();
     }
 }

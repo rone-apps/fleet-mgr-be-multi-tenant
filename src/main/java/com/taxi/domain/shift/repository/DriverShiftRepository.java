@@ -113,6 +113,13 @@ public interface DriverShiftRepository extends JpaRepository<DriverShift, Long> 
     boolean existsByDriverUsernameAndLogonTime(String driverUsername, LocalDateTime logonTime);
     
     /**
+     * Check if shift exists by unique constraint fields (driver_number, cab_number, logon_time, logoff_time)
+     * Used for duplicate detection during TaxiCaller import
+     */
+    boolean existsByDriverNumberAndCabNumberAndLogonTimeAndLogoffTime(
+        String driverNumber, String cabNumber, LocalDateTime logonTime, LocalDateTime logoffTime);
+    
+    /**
      * Find shifts by cab number and logon time range (for lease revenue reports)
      */
     @Query("SELECT ds FROM DriverShift ds WHERE ds.cabNumber = :cabNumber " +

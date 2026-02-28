@@ -21,6 +21,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * Service to import driver shift data from TaxiCaller API
@@ -67,6 +69,11 @@ public class TaxiCallerDriverShiftImportService {
                 String driverFirstName = row.optString("driver.first_name", "");
                 String driverLastName = row.optString("driver.last_name", "");
                 
+                // Debug: Log raw row data for first few rows to see actual field names
+                if (i < 5) {
+                    log.info("Row {}: RAW DATA = {}", i, row.toString());
+                }
+                
                 // Validate required fields
                 if (driverUsername.isEmpty() || vehicleCallsign.isEmpty() || 
                     trackStart.isEmpty() || trackEnd.isEmpty()) {
@@ -104,8 +111,8 @@ public class TaxiCallerDriverShiftImportService {
                 }
 
                 // **Extract cab number from vehicle callsign**
-                // TaxiCaller sends formats like "M345" or "345" → We want just the numeric part
-                String cabNumber = vehicleCallsign.replaceAll("\\D+", "");
+                // TaxiCaller sends formats like "M89", "M89,CHT FEB 28TH(9:15-13:45)" → We want just the numeric part
+                String cabNumber = extractCabNumber(vehicleCallsign);
                 if (cabNumber.isEmpty()) {
                     String reason = "Invalid cab callsign (callsign: " + vehicleCallsign + ")";
                     skippedReasons.put("Invalid cab callsign",
@@ -226,6 +233,17 @@ public class TaxiCallerDriverShiftImportService {
                 
                 shift.setStatus("COMPLETED");
                 
+                // Check for duplicate before saving
+                boolean isDuplicate = driverShiftRepository.existsByDriverNumberAndCabNumberAndLogonTimeAndLogoffTime(
+                    driverNumber, cabNumber, logonTime, logoffTime);
+                
+                if (isDuplicate) {
+                    result.incrementDuplicate();
+                    log.debug("Row {}: Skipping duplicate shift for driver {} in cab {} ({} - {})", 
+                        i, driverNumber, cabNumber, logonTime, logoffTime);
+                    continue;
+                }
+                
                 // Save to database in isolated transaction
                 final DriverShift shiftToSave = shift;
                 final int rowNum = i;
@@ -299,5 +317,39 @@ public class TaxiCallerDriverShiftImportService {
             log.warn("Failed to parse duration '{}': {}", duration, e.getMessage());
             return null;
         }
+    }
+
+    /**
+     * Extract cab number from vehicle callsign using regex pattern.
+     * Handles patterns like:
+     * - "M89" → "89"
+     * - "M89,CHT FEB 28TH(9:15-13:45)" → "89"
+     * - "89" → "89"
+     *
+     * @param callsign the vehicle callsign string
+     * @return the extracted numeric cab number, or empty string if no match
+     */
+    private String extractCabNumber(String callsign) {
+        if (callsign == null || callsign.isEmpty()) {
+            return "";
+        }
+
+        // Pattern: one or more letters followed by one or more digits
+        // Captures only the digits part
+        Pattern pattern = Pattern.compile("[A-Za-z]+(\\d+)");
+        Matcher matcher = pattern.matcher(callsign);
+
+        if (matcher.find()) {
+            return matcher.group(1); // Return captured digits
+        }
+
+        // Fallback: if no letters, try to extract just the leading digits
+        pattern = Pattern.compile("^(\\d+)");
+        matcher = pattern.matcher(callsign);
+        if (matcher.find()) {
+            return matcher.group(1);
+        }
+
+        return ""; // No cab number found
     }
 }

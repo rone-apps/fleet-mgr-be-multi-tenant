@@ -1,6 +1,8 @@
 package com.taxi.web.controller;
 
+import com.taxi.domain.report.dto.LeaseReconciliationReportDTO;
 import com.taxi.domain.report.service.FixedExpenseReportService;
+import com.taxi.domain.report.service.LeaseReconciliationService;
 import com.taxi.domain.report.service.ReportService;
 import com.taxi.web.dto.report.ChargesRevenueReportDTO;
 import com.taxi.web.dto.report.CreditCardRevenueReportDTO;
@@ -29,6 +31,7 @@ public class ReportController {
 
     private final ReportService reportService;
     private final FixedExpenseReportService fixedExpenseReportService;
+    private final LeaseReconciliationService leaseReconciliationService;
 
     /**
      * Generate lease revenue report for a cab owner
@@ -179,6 +182,38 @@ public class ReportController {
             return ResponseEntity.badRequest().build();
         } catch (Exception e) {
             log.error("❌ Error generating fixed expense report", e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+        }
+    }
+
+    /**
+     * Generate lease reconciliation report
+     * Shows shift-by-shift breakdown of driver lease expenses vs. owner lease revenues
+     * GET /api/reports/lease-reconciliation?startDate=2026-02-01&endDate=2026-02-27
+     */
+    @GetMapping("/lease-reconciliation")
+    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN', 'MANAGER')")
+    public ResponseEntity<LeaseReconciliationReportDTO> getLeaseReconciliation(
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate startDate,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate endDate) {
+
+        log.info("📋 Lease reconciliation report request: start={}, end={}", startDate, endDate);
+
+        try {
+            if (endDate.isBefore(startDate)) {
+                log.error("❌ Invalid date range: end date before start date");
+                return ResponseEntity.badRequest().build();
+            }
+
+            LeaseReconciliationReportDTO report = leaseReconciliationService.generateReport(startDate, endDate);
+
+            log.info("✅ Lease reconciliation report generated: {} shifts, {} matched, {} no_owner",
+                    report.getTotalShifts(), report.getMatchedCount(), report.getNoOwnerCount());
+
+            return ResponseEntity.ok(report);
+
+        } catch (Exception e) {
+            log.error("❌ Error generating lease reconciliation report", e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
         }
     }
