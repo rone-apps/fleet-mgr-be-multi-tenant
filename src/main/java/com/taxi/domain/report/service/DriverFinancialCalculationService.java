@@ -217,20 +217,27 @@ public class DriverFinancialCalculationService {
             List<DriverShift> driverShifts = driverShiftRepository
                     .findByCabNumberAndLogonTimeBetween(
                             cab.getCabNumber(), startDateTime, endDateTime);
-            
-            for (DriverShift driverShift : driverShifts) {
+
+            // ✅ FIX: Deduplicate driver shifts by (driver, logonTime) to prevent adding duplicates
+            java.util.Map<String, DriverShift> uniqueDriverShifts = new java.util.LinkedHashMap<>();
+            for (DriverShift ds : driverShifts) {
+                String key = ds.getDriverNumber() + "|" + ds.getLogonTime();
+                uniqueDriverShifts.putIfAbsent(key, ds);
+            }
+
+            for (DriverShift driverShift : uniqueDriverShifts.values()) {
                 if (driverShift.getDriverNumber().equals(ownerDriverNumber)) {
                     continue; // Owner drove own shift
                 }
-                
+
                 if (!"COMPLETED".equals(driverShift.getStatus())) {
                     continue;
                 }
-                
+
                 if (!cabShift.getShiftType().name().equals(driverShift.getPrimaryShiftType())) {
                     continue;
                 }
-                
+
                 LeaseRevenueDTO leaseItem = calculateLeaseForShift(
                     driverShift, cab, owner, cabShift.getShiftType().name());
 

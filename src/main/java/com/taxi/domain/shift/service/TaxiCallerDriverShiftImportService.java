@@ -5,15 +5,17 @@ import com.taxi.domain.shift.repository.DriverShiftRepository;
 import com.taxi.domain.shift.dto.DriverShiftImportResult;
 import com.taxi.domain.driver.model.Driver;
 import com.taxi.domain.driver.repository.DriverRepository;
-import com.taxi.domain.cab.repository.CabRepository;  // ADD THIS
+import com.taxi.domain.cab.repository.CabRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.json.JSONArray;
 import org.json.JSONObject;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
@@ -21,8 +23,10 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.TreeMap;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 /**
  * Service to import driver shift data from TaxiCaller API
@@ -37,25 +41,37 @@ public class TaxiCallerDriverShiftImportService {
     private final CabRepository cabRepository;
     private final TransactionTemplate transactionTemplate;
     
-    // TaxiCaller date format: "04/12/2025 06:32"
-    private static final DateTimeFormatter TAXICALLER_DATE_FORMAT = 
+    // TaxiCaller date formats (support multiple precisions)
+    // Primary: with seconds (dd/MM/yyyy HH:mm:ss) - preferred for accuracy
+    // Fallback: with minutes only (dd/MM/yyyy HH:mm) - legacy format
+    private static final DateTimeFormatter TAXICALLER_DATE_FORMAT_WITH_SECONDS =
+        DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm:ss");
+    private static final DateTimeFormatter TAXICALLER_DATE_FORMAT_MINUTES_ONLY =
         DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm");
+
+    // Optional: Millisecond precision if TaxiCaller provides it: "dd/MM/yyyy HH:mm:ss.SSS"
+    private static final DateTimeFormatter TAXICALLER_DATE_FORMAT_WITH_MILLIS =
+        DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm:ss.SSS");
 
     /**
      * Import driver shifts from TaxiCaller report data
-     * 
+     * ✅ CONSOLIDATION: Multiple logons/logoffs on the same day are merged into a single shift
+     *
      * @param rows JSONArray from TaxiCaller driver log on/off report
      * @return DriverShiftImportResult with import statistics
      */
     public DriverShiftImportResult importDriverShifts(JSONArray rows) {
         log.info("Starting TaxiCaller driver shift import. Total records: {}", rows.length());
-        
+
         DriverShiftImportResult result = new DriverShiftImportResult();
         result.setTotalRecords(rows.length());
-        
+
         List<String> errors = new ArrayList<>();
         Map<String, Integer> skippedReasons = new HashMap<>();
-        
+
+        // ✅ STEP 1: Parse all raw shifts from TaxiCaller data
+        Map<String, DriverShift> shiftsToProcess = new TreeMap<>();  // Key: driver|cab|date|shiftType
+
         for (int i = 0; i < rows.length(); i++) {
             try {
                 JSONObject row = rows.getJSONObject(i);
@@ -84,17 +100,21 @@ public class TaxiCallerDriverShiftImportService {
                     continue;
                 }
                 
-                // Parse dates
+                // Parse dates with precision preservation
+                // ✅ Try to capture seconds (or milliseconds) for accuracy
                 LocalDateTime logonTime;
                 LocalDateTime logoffTime;
                 try {
-                    log.debug("Row {}: Parsing dates - trackStart raw: '{}', trackEnd raw: '{}'", 
+                    log.debug("Row {}: Parsing dates - trackStart raw: '{}', trackEnd raw: '{}'",
                         i, trackStart, trackEnd);
-                    logonTime = LocalDateTime.parse(trackStart, TAXICALLER_DATE_FORMAT);
-                    logoffTime = LocalDateTime.parse(trackEnd, TAXICALLER_DATE_FORMAT);
-                    log.info("Row {}: Date conversion - TaxiCaller trackStart: '{}' → parsed logonTime: '{}', TaxiCaller trackEnd: '{}' → parsed logoffTime: '{}'", 
-                        i, trackStart, logonTime, trackEnd, logoffTime);
-                    
+
+                    // ✅ Try multiple date formats in order of precision (highest first)
+                    logonTime = parseDateTimeWithPrecision(trackStart);
+                    logoffTime = parseDateTimeWithPrecision(trackEnd);
+
+                    log.info("Row {}: Date conversion - TaxiCaller trackStart: '{}' → parsed logonTime: '{}' (nanoseconds: {}), TaxiCaller trackEnd: '{}' → parsed logoffTime: '{}' (nanoseconds: {})",
+                        i, trackStart, logonTime, logonTime.getNano(), trackEnd, logoffTime, logoffTime.getNano());
+
                     // Validate that logoff is after logon
                     if (logoffTime.isBefore(logonTime)) {
                         log.warn("Row {}: logoffTime ({}) is before logonTime ({}), this may indicate a date parsing issue", 
@@ -173,14 +193,20 @@ public class TaxiCallerDriverShiftImportService {
                     }
                     
                     if (driverNumber == null) {
-                        // Driver not found by any method - skip this shift
-                        String reason = "Driver not found (username: " + driverUsername + ", name: " + 
-                            driverFirstName + " " + driverLastName + ")";
-                        skippedReasons.put("Driver not found", 
-                            skippedReasons.getOrDefault("Driver not found", 0) + 1);
-                        result.incrementSkipped();
-                        log.warn("Row {}: Skipping - {}", i, reason);
-                        continue;
+                        // ✅ AUTO-CREATE: Driver not found - create a new driver record with defaults
+                        try {
+                            driverNumber = createNewDriver(driverUsername, driverFirstName, driverLastName);
+                            log.info("Row {}: Created new driver record - username: '{}', name: '{} {}', driver_number: '{}'",
+                                i, driverUsername, driverFirstName, driverLastName, driverNumber);
+                        } catch (Exception createEx) {
+                            // Failed to create driver - skip this shift
+                            String reason = "Failed to create driver (username: " + driverUsername + "): " + createEx.getMessage();
+                            skippedReasons.put("Failed to create driver",
+                                skippedReasons.getOrDefault("Failed to create driver", 0) + 1);
+                            result.incrementSkipped();
+                            log.error("Row {}: Could not create new driver - {}", i, reason);
+                            continue;
+                        }
                     }
                 } catch (Exception e) {
                     log.error("Row {}: Error looking up driver_number for username '{}'", 
@@ -204,63 +230,74 @@ public class TaxiCallerDriverShiftImportService {
                 // Parse total hours from duration string (e.g., "08:30" -> 8.5)
                 BigDecimal totalHours = parseDurationToHours(hosDuration);
                 shift.setTotalHours(totalHours);
-                
-                // Calculate shift types based on logon time
-                // DAY = logon between 00:00-11:59, NIGHT = logon between 12:00-23:59
-                int logonHour = logonTime.getHour();
-                String primaryType = (logonHour < 12) ? "DAY" : "NIGHT";
-                String secondaryType = (logonHour < 12) ? "NIGHT" : "DAY";
-                
-                shift.setPrimaryShiftType(primaryType);
-                shift.setSecondaryShiftType(secondaryType);
-                
-                // Calculate shift counts based on total hours
-                // Up to 12 hours = 1 primary, 12-15 = +0.25, 15-18 = +0.5, 18+ = +1 secondary
-                shift.setPrimaryShiftCount(BigDecimal.ONE);
-                
-                BigDecimal secondaryCount = BigDecimal.ZERO;
-                if (totalHours != null) {
-                    double hours = totalHours.doubleValue();
-                    if (hours > 18) {
-                        secondaryCount = BigDecimal.ONE;
-                    } else if (hours > 15) {
-                        secondaryCount = new BigDecimal("0.50");
-                    } else if (hours > 12) {
-                        secondaryCount = new BigDecimal("0.25");
-                    }
-                }
-                shift.setSecondaryShiftCount(secondaryCount);
-                
+
+                // ✅ Shift type will be determined in consolidation logic based on FIRST logon time
                 shift.setStatus("COMPLETED");
                 
-                // Check for duplicate before saving
-                boolean isDuplicate = driverShiftRepository.existsByDriverNumberAndCabNumberAndLogonTimeAndLogoffTime(
-                    driverNumber, cabNumber, logonTime, logoffTime);
-                
-                if (isDuplicate) {
-                    result.incrementDuplicate();
-                    log.debug("Row {}: Skipping duplicate shift for driver {} in cab {} ({} - {})", 
-                        i, driverNumber, cabNumber, logonTime, logoffTime);
-                    continue;
-                }
-                
-                // Save to database in isolated transaction
-                final DriverShift shiftToSave = shift;
-                final int rowNum = i;
-                final String username = driverUsername;
-                final String cab = cabNumber;
-                try {
-                    transactionTemplate.executeWithoutResult(status -> {
-                        driverShiftRepository.save(shiftToSave);
-                    });
-                    result.incrementSuccess();
-                    log.debug("Row {}: Successfully imported shift for driver {} in cab {}", 
-                        rowNum, username, cab);
-                } catch (Exception saveEx) {
-                    result.incrementFailed();
-                    String errorMsg = String.format("Row %d: Error - %s", rowNum, saveEx.getMessage());
-                    errors.add(errorMsg);
-                    log.error("Row {}: Failed to save - {}", rowNum, saveEx.getMessage());
+                // ✅ CONSOLIDATION: Determine shift window based on FIRST logon time
+                // DAY Shift Window: 1:00 AM - 12:59 PM (1 AM start)
+                // NIGHT Shift Window: 1:00 PM - 12:59 AM (1 PM start, spans to next calendar day)
+                int logonHour = logonTime.getHour();
+                String shiftType = determineShiftType(logonHour);
+                LocalDate shiftRecordDate = determineShiftRecordDate(logonTime, shiftType);
+
+                String consolidationKey = driverNumber + "|" + cabNumber + "|" + shiftRecordDate + "|" + shiftType;
+
+                if (shiftsToProcess.containsKey(consolidationKey)) {
+                    // ✅ MERGE: Extend existing shift with this new logon/logoff pair
+                    DriverShift existing = shiftsToProcess.get(consolidationKey);
+
+                    // Take the earliest logon time
+                    if (logonTime.isBefore(existing.getLogonTime())) {
+                        existing.setLogonTime(logonTime);
+                    }
+
+                    // Take the latest logoff time
+                    if (logoffTime.isAfter(existing.getLogoffTime())) {
+                        existing.setLogoffTime(logoffTime);
+                    }
+
+                    // Check if total hours exceed 12 hour window - if so, this should be a new shift
+                    BigDecimal currentTotal = (existing.getTotalHours() != null ? existing.getTotalHours() : BigDecimal.ZERO)
+                            .add(totalHours != null ? totalHours : BigDecimal.ZERO);
+
+                    if (currentTotal.doubleValue() > 12.0) {
+                        log.warn("Row {}: Total hours ({}) exceed 12-hour shift window for {} {} on {}. This may need manual review.",
+                            i, currentTotal, driverNumber, cabNumber, shiftRecordDate);
+                    }
+
+                    existing.setTotalHours(currentTotal);
+
+                    // Recalculate shift counts based on new total hours
+                    existing.setPrimaryShiftCount(BigDecimal.ONE);
+                    double hours = currentTotal.doubleValue();
+                    if (hours > 18) {
+                        existing.setSecondaryShiftCount(BigDecimal.ONE);
+                    } else if (hours > 15) {
+                        existing.setSecondaryShiftCount(new BigDecimal("0.50"));
+                    } else if (hours > 12) {
+                        existing.setSecondaryShiftCount(new BigDecimal("0.25"));
+                    } else {
+                        existing.setSecondaryShiftCount(BigDecimal.ZERO);
+                    }
+
+                    // ✅ AUDIT TRAIL: Append session to notes field in JSON format
+                    appendSessionToHistory(existing, logonTime, logoffTime, totalHours);
+
+                    log.debug("Row {}: Consolidated {} shift for driver {} cab {} (record date: {}) - now spans {} to {}, total hours: {}",
+                            i, shiftType, driverNumber, cabNumber, shiftRecordDate,
+                            existing.getLogonTime(), existing.getLogoffTime(), existing.getTotalHours());
+                } else {
+                    // First occurrence of this shift - store it
+                    shift.setPrimaryShiftType(shiftType);
+                    shift.setSecondaryShiftType("DAY".equals(shiftType) ? "NIGHT" : "DAY");
+
+                    // ✅ AUDIT TRAIL: Initialize session history in notes field
+                    initializeSessionHistory(shift, logonTime, logoffTime, totalHours);
+
+                    shiftsToProcess.put(consolidationKey, shift);
+                    log.debug("Row {}: New {} shift for driver {} cab {} (record date: {}) - first logon at {}:00",
+                            i, shiftType, driverNumber, cabNumber, shiftRecordDate, logonHour);
                 }
                 
             } catch (Exception e) {
@@ -270,12 +307,47 @@ public class TaxiCallerDriverShiftImportService {
                 log.error("Row {}: Failed to import - {}", i, e.getMessage(), e);
             }
         }
-        
+
+        // ✅ STEP 2: Save all consolidated shifts to database
+        log.info("Processing {} consolidated shifts", shiftsToProcess.size());
+
+        for (Map.Entry<String, DriverShift> entry : shiftsToProcess.entrySet()) {
+            DriverShift shiftToSave = entry.getValue();
+            String key = entry.getKey();
+
+            try {
+                // Check for existing duplicate before saving
+                boolean isDuplicate = driverShiftRepository.existsByDriverNumberAndCabNumberAndLogonTimeAndLogoffTime(
+                    shiftToSave.getDriverNumber(), shiftToSave.getCabNumber(),
+                    shiftToSave.getLogonTime(), shiftToSave.getLogoffTime());
+
+                if (isDuplicate) {
+                    result.incrementDuplicate();
+                    log.debug("Skipping duplicate shift: {}", key);
+                    continue;
+                }
+
+                // Save in isolated transaction
+                transactionTemplate.executeWithoutResult(status -> {
+                    driverShiftRepository.save(shiftToSave);
+                });
+                result.incrementSuccess();
+                log.debug("Saved consolidated shift: {} (logon: {}, logoff: {}, hours: {})",
+                        key, shiftToSave.getLogonTime(), shiftToSave.getLogoffTime(), shiftToSave.getTotalHours());
+
+            } catch (Exception saveEx) {
+                result.incrementFailed();
+                String errorMsg = String.format("Failed to save shift %s: %s", key, saveEx.getMessage());
+                errors.add(errorMsg);
+                log.error("Error saving consolidated shift {}: {}", key, saveEx.getMessage());
+            }
+        }
+
         result.setErrors(errors);
         result.setSkippedReasons(skippedReasons);
-        
-        log.info("TaxiCaller driver shift import completed. Success: {}, Duplicates: {}, Skipped: {}, Failed: {}", 
-            result.getSuccessCount(), result.getDuplicateCount(), 
+
+        log.info("TaxiCaller driver shift import completed. Input rows: {}, Consolidated shifts: {}, Success: {}, Duplicates: {}, Skipped: {}, Failed: {}",
+            rows.length(), shiftsToProcess.size(), result.getSuccessCount(), result.getDuplicateCount(),
             result.getSkippedCount(), result.getFailedCount());
         
         return result;
@@ -297,6 +369,120 @@ public class TaxiCallerDriverShiftImportService {
     }
     
     /**
+     * ✅ AUTO-CREATE: Create a new driver record with default values when importing from TaxiCaller
+     * Used when a driver doesn't exist in the system
+     */
+    private String createNewDriver(String username, String firstName, String lastName) throws Exception {
+        try {
+            // Generate unique driver_number: TC-{timestamp} format for auto-created drivers
+            long timestamp = System.currentTimeMillis();
+            String generatedDriverNumber = "TC-" + timestamp;
+
+            // Ensure first/last names have defaults
+            String safeFirstName = firstName != null && !firstName.trim().isEmpty() ? firstName.trim() : "Unknown";
+            String safeLastName = lastName != null && !lastName.trim().isEmpty() ? lastName.trim() : "Unknown";
+            String safeUsername = username != null && !username.trim().isEmpty() ? username.trim() : "tc_" + timestamp;
+
+            // Create new driver with defaults
+            Driver newDriver = Driver.builder()
+                    .driverNumber(username)          // TC-{timestamp}
+                    .firstName(safeFirstName)                      // From TaxiCaller
+                    .lastName(safeLastName)                        // From TaxiCaller
+                    .username(safeUsername)                        // From TaxiCaller or generated
+                    .status(Driver.DriverStatus.ACTIVE)           // Default: ACTIVE
+                    .isOwner(false)                               // Default: driver only (not owner)
+                    .isAdmin(false)                               // Default: not admin
+                    .joinedDate(LocalDate.now())                 // Today's date
+                    .notes("Auto-created from TaxiCaller import on " + LocalDateTime.now() +
+                           ". Original username: " + username)    // Audit trail
+                    .build();
+
+            // Save to database in transaction
+            Driver savedDriver = driverRepository.save(newDriver);
+            log.info("✅ Created new driver: {} ({} {}) with driver_number: {}",
+                    savedDriver.getUsername(), savedDriver.getFirstName(), savedDriver.getLastName(),
+                    savedDriver.getDriverNumber());
+
+            return savedDriver.getDriverNumber();
+
+        } catch (Exception e) {
+            log.error("❌ Failed to create new driver for username '{}': {}", username, e.getMessage(), e);
+            throw new RuntimeException("Unable to create new driver record: " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * ✅ SHIFT WINDOWS: Determine shift type based on logon hour
+     * DAY Shift: 1:00 AM (01:00) - 12:59 PM (12:59)
+     * NIGHT Shift: 1:00 PM (13:00) - 12:59 AM (00:59)
+     */
+    private String determineShiftType(int logonHour) {
+        // logonHour 1-12 = 1 AM to 12:59 PM = DAY shift
+        // logonHour 13-23 or 0 = 1 PM to 12:59 AM = NIGHT shift
+        if (logonHour >= 1 && logonHour <= 12) {
+            return "DAY";
+        } else {
+            return "NIGHT";  // Hours 0, 13-23
+        }
+    }
+
+    /**
+     * ✅ SHIFT RECORD DATE: Determine which date to record the shift under
+     * NIGHT shifts that span midnight are recorded under the date they START
+     * If logon is 12:00 AM - 12:59 AM, it's part of previous day's NIGHT shift
+     */
+    private LocalDate determineShiftRecordDate(LocalDateTime logonTime, String shiftType) {
+        int logonHour = logonTime.getHour();
+        LocalDate logonDate = logonTime.toLocalDate();
+
+        if ("NIGHT".equals(shiftType) && logonHour == 0) {
+            // Midnight hour (12:00 AM - 12:59 AM) belongs to previous day's NIGHT shift
+            return logonDate.minusDays(1);
+        } else {
+            // DAY shifts and normal NIGHT shifts (1 PM+) are recorded under their start date
+            return logonDate;
+        }
+    }
+
+    /**
+     * ✅ PRECISION: Parse datetime with support for multiple precision levels
+     * Tries formats in order: milliseconds → seconds → minutes (fallback)
+     * Preserves the highest available precision
+     */
+    private LocalDateTime parseDateTimeWithPrecision(String dateString) throws Exception {
+        Exception e1 = null, e2 = null, e3 = null;
+
+        // Try millisecond precision first (highest precision)
+        try {
+            return LocalDateTime.parse(dateString, TAXICALLER_DATE_FORMAT_WITH_MILLIS);
+        } catch (Exception ex) {
+            e1 = ex;
+            log.debug("Millisecond format failed for '{}', trying seconds format", dateString);
+        }
+
+        // Try second precision (common format)
+        try {
+            return LocalDateTime.parse(dateString, TAXICALLER_DATE_FORMAT_WITH_SECONDS);
+        } catch (Exception ex) {
+            e2 = ex;
+            log.debug("Second format failed for '{}', falling back to minute format", dateString);
+        }
+
+        // Fallback to minute precision (legacy format)
+        try {
+            return LocalDateTime.parse(dateString, TAXICALLER_DATE_FORMAT_MINUTES_ONLY);
+        } catch (Exception ex) {
+            e3 = ex;
+            log.error("All date formats failed for '{}': milliseconds={}, seconds={}, minutes={}",
+                dateString,
+                e1 != null ? e1.getMessage() : "N/A",
+                e2 != null ? e2.getMessage() : "N/A",
+                e3 != null ? e3.getMessage() : "N/A");
+            throw new IllegalArgumentException("Unable to parse date: " + dateString);
+        }
+    }
+
+    /**
      * Parse duration string (e.g., "08:30" or "8:30") to decimal hours (e.g., 8.5)
      */
     private BigDecimal parseDurationToHours(String duration) {
@@ -316,6 +502,60 @@ public class TaxiCallerDriverShiftImportService {
         } catch (Exception e) {
             log.warn("Failed to parse duration '{}': {}", duration, e.getMessage());
             return null;
+        }
+    }
+
+    /**
+     * ✅ AUDIT TRAIL: Initialize session history in JSON format
+     * Stores individual logon/logoff pairs for record keeping
+     */
+    private void initializeSessionHistory(DriverShift shift, LocalDateTime logonTime, LocalDateTime logoffTime, BigDecimal hours) {
+        try {
+            JSONArray sessions = new JSONArray();
+            JSONObject session = new JSONObject();
+            session.put("logon", logonTime.toString());
+            session.put("logoff", logoffTime.toString());
+            session.put("hours", hours != null ? hours.doubleValue() : 0);
+            sessions.put(session);
+
+            // Store as JSON in notes field
+            shift.setNotes("SESSIONS: " + sessions.toString());
+            log.debug("Initialized session history: {}", sessions.toString());
+        } catch (Exception e) {
+            log.warn("Failed to initialize session history: {}", e.getMessage());
+            shift.setNotes("SESSIONS: [session tracking failed]");
+        }
+    }
+
+    /**
+     * ✅ AUDIT TRAIL: Append session to existing history in JSON format
+     */
+    private void appendSessionToHistory(DriverShift shift, LocalDateTime logonTime, LocalDateTime logoffTime, BigDecimal hours) {
+        try {
+            String existingNotes = shift.getNotes() != null ? shift.getNotes() : "";
+
+            JSONArray sessions;
+            if (existingNotes.startsWith("SESSIONS: ")) {
+                // Parse existing sessions
+                String jsonStr = existingNotes.substring(10); // Remove "SESSIONS: " prefix
+                sessions = new JSONArray(jsonStr);
+            } else {
+                sessions = new JSONArray();
+            }
+
+            // Add new session
+            JSONObject newSession = new JSONObject();
+            newSession.put("logon", logonTime.toString());
+            newSession.put("logoff", logoffTime.toString());
+            newSession.put("hours", hours != null ? hours.doubleValue() : 0);
+            sessions.put(newSession);
+
+            // Update notes with appended session
+            shift.setNotes("SESSIONS: " + sessions.toString());
+            log.debug("Appended session to history. Total sessions: {}", sessions.length());
+        } catch (Exception e) {
+            log.warn("Failed to append session history: {}", e.getMessage());
+            // Gracefully fall back - don't fail the entire import
         }
     }
 
