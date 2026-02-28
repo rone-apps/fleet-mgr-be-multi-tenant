@@ -20,6 +20,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Optional;
 import java.util.stream.Collectors;
 
 /**
@@ -195,13 +196,22 @@ public class ShiftService {
         LocalDate transferDate = request.getTransferDate() != null ? 
                 request.getTransferDate() : LocalDate.now();
 
-        // Close current ownership
-        ShiftOwnership currentOwnership = shiftOwnershipRepository.findCurrentOwnership(shiftId)
-                .orElseThrow(() -> new RuntimeException("No current ownership found for shift"));
+        // Close current ownership (only if it's still active)
+        Optional<ShiftOwnership> currentOwnershipOpt = shiftOwnershipRepository.findCurrentOwnership(shiftId);
 
-        currentOwnership.close(transferDate, newOwner, request.getSalePrice());
-        shiftOwnershipRepository.save(currentOwnership);
-        log.info("Closed ownership from driver {}", currentOwner.getDriverNumber());
+        if (currentOwnershipOpt.isPresent()) {
+            ShiftOwnership currentOwnership = currentOwnershipOpt.get();
+            currentOwnership.close(transferDate, newOwner, request.getSalePrice());
+            shiftOwnershipRepository.save(currentOwnership);
+            log.info("Closed ownership from driver {}", currentOwner.getDriverNumber());
+        } else {
+            // Shift is already closed - verify it has ownership history
+            List<ShiftOwnership> allOwnerships = shiftOwnershipRepository.findByShiftIdOrderByStartDateDesc(shiftId);
+            if (allOwnerships.isEmpty()) {
+                throw new RuntimeException("No ownership found for shift - shift may not have been properly initialized");
+            }
+            log.info("Shift is already closed. Previous owner: {}", currentOwner.getDriverNumber());
+        }
 
         // Update shift current owner
         shift.transferOwnership(newOwner);
