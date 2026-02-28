@@ -9,6 +9,7 @@ import com.taxi.domain.expense.repository.OneTimeExpenseRepository;
 import com.taxi.domain.expense.repository.RecurringExpenseRepository;
 import com.taxi.domain.shift.model.CabShift;
 import com.taxi.domain.shift.repository.CabShiftRepository;
+import com.taxi.domain.shift.service.ShiftValidationService;
 import com.taxi.web.dto.report.FixedExpenseItemDTO;
 import com.taxi.web.dto.report.FixedExpenseReportDTO;
 import lombok.RequiredArgsConstructor;
@@ -39,35 +40,7 @@ public class FixedExpenseReportService {
     private final OneTimeExpenseRepository oneTimeExpenseRepository;
     private final DriverRepository driverRepository;
     private final CabShiftRepository cabShiftRepository;
-
-    /**
-     * Check if a cab has at least one active shift
-     * Note: Cab status has been moved to shift level
-     * DUPLICATE: Also exists in DriverFinancialCalculationService - consider consolidation
-     */
-    private boolean isCabActive(Cab cab) {
-        if (cab == null || cab.getShifts() == null) return false;
-        return cab.getShifts().stream()
-                .anyMatch(shift -> shift.getStatus() == CabShift.ShiftStatus.ACTIVE);
-    }
-
-    /**
-     * Check if a shift is active
-     * DUPLICATE: Also exists in DriverFinancialCalculationService
-     */
-    private boolean isShiftActive(CabShift shift) {
-        if (shift == null) return false;
-        return shift.getStatus() == CabShift.ShiftStatus.ACTIVE;
-    }
-
-    /**
-     * Check if both cab and shift are active (used for expense calculations)
-     * DUPLICATE: Also exists in DriverFinancialCalculationService
-     */
-    private boolean isCabShiftActive(CabShift shift) {
-        if (shift == null) return false;
-        return isCabActive(shift.getCab()) && isShiftActive(shift);
-    }
+    private final ShiftValidationService shiftValidationService;
 
     @Transactional(readOnly = true)
     public FixedExpenseReportDTO generateFixedExpenseReport(
@@ -134,7 +107,7 @@ public class FixedExpenseReportService {
         }
         
         // ✅ BUSINESS RULE: Skip expenses for INACTIVE cabs
-        if (!isCabActive(cab)) {
+        if (!shiftValidationService.isCabActive(cab)) {
             log.debug("   Skipping expense for cab with no active shifts: {}",
                     cab.getCabNumber());
             return;
@@ -145,7 +118,7 @@ public class FixedExpenseReportService {
         
         // Filter to only ACTIVE shifts
         List<CabShift> activeShifts = shifts.stream()
-                .filter(this::isShiftActive)
+                .filter(shiftValidationService::isShiftActive)
                 .toList();
         
         if (activeShifts.isEmpty()) {
@@ -178,13 +151,13 @@ public class FixedExpenseReportService {
         
         for (CabShift shift : ownedShifts) {
             // ✅ BUSINESS RULE: Skip INACTIVE shifts
-            if (!isShiftActive(shift)) {
+            if (!shiftValidationService.isShiftActive(shift)) {
                 skippedInactive++;
                 continue;
             }
             
             // ✅ BUSINESS RULE: Skip shifts on RETIRED or MAINTENANCE cabs
-            if (!isCabActive(shift.getCab())) {
+            if (!shiftValidationService.isCabActive(shift.getCab())) {
                 skippedInactive++;
                 log.debug("   Skipping shift expense - cab {} has no active shifts",
                         shift.getCab().getCabNumber());
@@ -359,7 +332,7 @@ public class FixedExpenseReportService {
         }
         
         // ✅ BUSINESS RULE: Skip expenses for INACTIVE cabs
-        if (!isCabActive(cab)) {
+        if (!shiftValidationService.isCabActive(cab)) {
             log.debug("   Skipping one-time expense for cab with no active shifts: {}",
                     cab.getCabNumber());
             return;
@@ -370,7 +343,7 @@ public class FixedExpenseReportService {
         
         // Filter to only ACTIVE shifts
         List<CabShift> activeShifts = shifts.stream()
-                .filter(this::isShiftActive)
+                .filter(shiftValidationService::isShiftActive)
                 .toList();
         
         if (activeShifts.isEmpty()) {
@@ -426,7 +399,7 @@ public class FixedExpenseReportService {
         }
         
         // ✅ BUSINESS RULE: Skip INACTIVE shifts or shifts on cabs with no active shifts
-        if (!isCabShiftActive(shift)) {
+        if (!shiftValidationService.isCabShiftActive(shift)) {
             log.debug("   Skipping one-time shift expense - shift is INACTIVE or cab has no active shifts");
             return;
         }
