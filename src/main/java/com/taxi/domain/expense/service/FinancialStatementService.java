@@ -778,6 +778,48 @@ public class FinancialStatementService {
         List<OwnerReportDTO.PerUnitExpenseLineItem> relevantPerUnitExpenses =
             perUnitMap.getOrDefault(relevantKey, new ArrayList<>());
 
+        // ✅ NEW: Calculate airport trip charges for ANYONE who drove (owner or driver)
+        // Get total trips and charges with rate via DriverFinancialCalculationService
+        // which queries the same airport trips and rates as the detailed calculation
+        int totalAirportTrips = driverFinancialCalculationService.countTotalAirportTrips(
+            person.getDriverNumber(), from, to);
+
+        // Get the charge using the existing method (we know it works correctly)
+        BigDecimal airportExpense = driverFinancialCalculationService
+            .calculateAirportExpense(person.getDriverNumber(), from, to);
+
+        if (airportExpense.compareTo(BigDecimal.ZERO) > 0 && totalAirportTrips > 0) {
+            // Calculate the implied rate from the charge and trip count
+            // (This ensures we show the same rate that was actually used for calculation)
+            BigDecimal ratePerTrip = airportExpense.divide(
+                BigDecimal.valueOf(totalAirportTrips),
+                2,
+                java.math.RoundingMode.HALF_UP);
+
+            log.info("   ✈️ Airport trip rate (calculated from charge): ${}/trip", ratePerTrip);
+
+            OwnerReportDTO.PerUnitExpenseLineItem airportLineItem =
+                OwnerReportDTO.PerUnitExpenseLineItem.builder()
+                .name("Airport Trips")
+                .unitType("AIRPORT_TRIP")
+                .unitTypeDisplay("Airport trips")
+                .totalUnits(BigDecimal.valueOf(totalAirportTrips))  // Show trip count
+                .rate(ratePerTrip)                                    // Show rate per trip
+                .amount(airportExpense)
+                .chargedTo("DRIVER")  // Whoever drove gets charged
+                .build();
+
+            relevantPerUnitExpenses.add(airportLineItem);
+            log.info("Added airport trip expense: {} trips × ${}/trip = ${} for {} {} (owner={}, driverNum={})",
+                totalAirportTrips,
+                ratePerTrip,
+                airportExpense,
+                Boolean.TRUE.equals(person.getIsOwner()) ? "owner" : "driver",
+                person.getFullName(),
+                person.getIsOwner(),
+                person.getDriverNumber());
+        }
+
         report.setPerUnitExpenses(relevantPerUnitExpenses);
 
         if (!relevantPerUnitExpenses.isEmpty()) {

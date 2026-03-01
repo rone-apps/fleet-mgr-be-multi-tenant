@@ -15,7 +15,7 @@ public class AirportTripUploadDTO {
     
     private String vehicleName;
     private String cabNumber;
-    private String shift; // "DAY" or "NIGHT"
+    private String shift = "BOTH"; // All trips in 24-hour period
     private Integer year;
     private Integer month;
     private Integer day;
@@ -41,18 +41,5 @@ public class AirportTripUploadDTO {
             .filter(v -> v != null)
             .mapToInt(Integer::intValue)
             .sum();
-    }
-    
-    /**
-     * Determine shift based on hour.
-     * DAY: 4am-4pm (hours 4-15)
-     * NIGHT: 4pm-4am (hours 16-23, 0-3)
-     */
-    public static String getShiftForHour(int hour) {
-        if (hour >= 4 && hour < 16) {
-            return "DAY";
-        } else {
-            return "NIGHT";
-        }
     }
 }

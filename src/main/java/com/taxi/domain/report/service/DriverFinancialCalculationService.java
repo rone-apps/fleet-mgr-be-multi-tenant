@@ -82,6 +82,9 @@ public class DriverFinancialCalculationService {
     private final ItemRateRepository itemRateRepository;
     private final ItemRateOverrideRepository itemRateOverrideRepository;
 
+    // ✅ NEW: Airport charge service for calculating airport trip charges
+    private final com.taxi.domain.airport.service.AirportChargeService airportChargeService;
+
     /**
      * ═══════════════════════════════════════════════════════════════════════
      * LEASE RATE CALCULATION - WITH OVERRIDE SUPPORT
@@ -857,5 +860,94 @@ public class DriverFinancialCalculationService {
      */
     public boolean shouldChargeLeaseForShift(String driverNumber, Driver owner) {
         return "MATCHED".equals(determineLeaseStatus(driverNumber, owner));
+    }
+
+    /**
+     * ✅ Count total airport trips for a driver over a date range.
+     *
+     * @param driverNumber The driver number
+     * @param startDate Start date (inclusive)
+     * @param endDate End date (inclusive)
+     * @return Total airport trip count for the period
+     */
+    public int countTotalAirportTrips(String driverNumber, LocalDate startDate, LocalDate endDate) {
+        if (driverNumber == null || startDate == null || endDate == null) {
+            return 0;
+        }
+
+        List<DriverShift> shifts = driverShiftRepository.findByDriverNumberAndDateRange(driverNumber, startDate, endDate);
+        int totalTrips = 0;
+
+        for (DriverShift shift : shifts) {
+            if (shift.getLogonTime() == null || shift.getLogoffTime() == null) {
+                continue;
+            }
+
+            int tripCount = airportChargeService.countAirportTripsForShift(
+                shift.getCabNumber(),
+                shift.getLogonTime(),
+                shift.getLogoffTime()
+            );
+            totalTrips += tripCount;
+        }
+
+        return totalTrips;
+    }
+
+    /**
+     * ✅ Calculate total airport trip charges for a driver over a date range.
+     *
+     * For each driver shift in the period:
+     * 1. Count airport trips during logon/logoff hours
+     * 2. Apply ItemRate (AIRPORT_TRIP unit type) to calculate charge
+     * 3. Sum all charges
+     *
+     * @param driverNumber The driver number
+     * @param startDate Start date (inclusive)
+     * @param endDate End date (inclusive)
+     * @return Total airport charges for the period
+     */
+    public BigDecimal calculateAirportExpense(String driverNumber, LocalDate startDate, LocalDate endDate) {
+        if (driverNumber == null || startDate == null || endDate == null) {
+            log.warn("calculateAirportExpense: null parameters - driverNumber={}, startDate={}, endDate={}",
+                driverNumber, startDate, endDate);
+            return BigDecimal.ZERO;
+        }
+
+        log.info("🛫 Calculating airport expenses for driver {} from {} to {}", driverNumber, startDate, endDate);
+
+        // Fetch all active driver shifts for this driver in the date range
+        List<DriverShift> shifts = driverShiftRepository.findByDriverNumberAndDateRange(driverNumber, startDate, endDate);
+        log.info("   Found {} driver shifts for {}", shifts.size(), driverNumber);
+
+        BigDecimal totalExpense = BigDecimal.ZERO;
+
+        for (DriverShift shift : shifts) {
+            if (shift.getLogonTime() == null || shift.getLogoffTime() == null) {
+                log.warn("   Skipping shift with null times: id={}", shift.getId());
+                continue;
+            }
+
+            // Calculate airport charge for this shift
+            LocalDate shiftDate = shift.getLogonTime().toLocalDate();
+            log.debug("   Processing shift on {} - cab {} - logon {} logoff {}",
+                shiftDate, shift.getCabNumber(), shift.getLogonTime(), shift.getLogoffTime());
+
+            BigDecimal shiftCharge = airportChargeService.calculateAirportChargeForShift(
+                shift.getCabNumber(),
+                shift.getLogonTime(),
+                shift.getLogoffTime(),
+                shiftDate
+            );
+
+            if (shiftCharge.compareTo(BigDecimal.ZERO) > 0) {
+                log.info("   ✈️ Shift on {}: ${} airport charge", shiftDate, shiftCharge);
+            }
+
+            totalExpense = totalExpense.add(shiftCharge);
+        }
+
+        log.info("🛫 Total airport expense for {}: ${}", driverNumber, totalExpense);
+        return totalExpense;
     }
 }

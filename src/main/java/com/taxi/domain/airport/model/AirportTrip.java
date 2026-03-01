@@ -13,21 +13,19 @@ import java.time.LocalDateTime;
 /**
  * Entity representing airport trips imported from CSV.
  * CSV format: Vehicle,year,month,Day,0,1,2,...,23,Grand Total
- * 
- * Trips are split by shift:
- * - DAY shift: 4am - 4pm (hours 4-15)
- * - NIGHT shift: 4pm - 4am (hours 16-23, 0-3)
+ *
+ * One record per cab per day with all 24 hours of trip data.
+ * The shift field is set to "BOTH" and indicates data spans full day.
  */
 @Entity
 @Table(name = "airport_trips",
        indexes = {
            @Index(name = "idx_airport_cab_number", columnList = "cab_number"),
            @Index(name = "idx_airport_trip_date", columnList = "trip_date"),
-           @Index(name = "idx_airport_shift", columnList = "shift"),
            @Index(name = "idx_airport_upload_batch", columnList = "upload_batch_id")
        },
        uniqueConstraints = {
-           @UniqueConstraint(name = "uk_airport_cab_shift_date", columnNames = {"cab_number", "shift", "trip_date"})
+           @UniqueConstraint(name = "uk_airport_cab_date", columnNames = {"cab_number", "trip_date"})
        })
 @Data
 @NoArgsConstructor
@@ -42,7 +40,7 @@ public class AirportTrip {
     private String cabNumber;
 
     @Column(name = "shift", length = 10, nullable = false)
-    private String shift; // "DAY" or "NIGHT"
+    private String shift; // Always "BOTH" - indicates full 24-hour data
 
     @Column(name = "driver_number", length = 50)
     private String driverNumber;
@@ -101,32 +99,6 @@ public class AirportTrip {
     @Column(name = "updated_at", nullable = false)
     private LocalDateTime updatedAt;
 
-    /**
-     * Determine shift based on hour.
-     * DAY: 4am-4pm (hours 4-15)
-     * NIGHT: 4pm-4am (hours 16-23, 0-3)
-     */
-    public static String getShiftForHour(int hour) {
-        if (hour >= 4 && hour < 16) {
-            return "DAY";
-        } else {
-            return "NIGHT";
-        }
-    }
-
-    /**
-     * Check if this hour belongs to DAY shift
-     */
-    public static boolean isDayShift(int hour) {
-        return hour >= 4 && hour < 16;
-    }
-
-    /**
-     * Check if this hour belongs to NIGHT shift
-     */
-    public static boolean isNightShift(int hour) {
-        return hour >= 16 || hour < 4;
-    }
 
     public void setTripsByHour(int hour, Integer count) {
         int value = count != null ? count : 0;

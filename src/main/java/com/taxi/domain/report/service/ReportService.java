@@ -32,6 +32,7 @@ public class ReportService {
     private final DriverShiftRepository driverShiftRepository;
     private final DriverFinancialCalculationService driverFinancialCalculationService;
     private final com.taxi.domain.expense.service.FinancialStatementService financialStatementService;
+    private final com.taxi.domain.expense.repository.ItemRateRepository itemRateRepository;
 
     // ═══════════════════════════════════════════════════════════════════════
     // INDIVIDUAL REPORT METHODS - NOW DELEGATE TO SHARED SERVICE
@@ -268,16 +269,21 @@ public class ReportService {
                 }
             }
 
+            // ✅ NEW: Calculate airport trip charges
+            BigDecimal airportExpenseTotal = driverFinancialCalculationService
+                    .calculateAirportExpense(driver.getDriverNumber(), startDate, endDate);
+
             summary.setLeaseExpense(leaseExpenseTotal);
             summary.setVariableExpense(BigDecimal.ZERO); // Not tracked separately in detailed report
             summary.setOtherExpense(otherExpenseTotal);
 
             // ✅ RECALCULATE TOTAL EXPENSE AS SUM OF INDIVIDUAL CATEGORIES
-            // This ensures consistency: totalExpense = fixedExpense + leaseExpense + variableExpense + otherExpense
+            // This ensures consistency: totalExpense = fixedExpense + leaseExpense + variableExpense + otherExpense + airportExpense
             BigDecimal recalculatedTotalExpense = safeBigDecimal(fullReport.getTotalRecurringExpenses())
                     .add(leaseExpenseTotal)
                     .add(BigDecimal.ZERO) // variableExpense is 0
-                    .add(otherExpenseTotal);
+                    .add(otherExpenseTotal)
+                    .add(airportExpenseTotal);
 
             log.debug("   📊 Expense Breakdown for {}: Fixed=${}, Lease=${}, Variable=${}, Other=${} → Total=${}",
                     driver.getDriverNumber(),
@@ -426,6 +432,30 @@ public class ReportService {
                             .amount(totalInsurance)
                             .build());
                 }
+            }
+
+            // ✅ NEW: Airport trip charges (calculated earlier for total)
+            if (airportExpenseTotal.compareTo(BigDecimal.ZERO) > 0) {
+                // Count total trips and get rate for display
+                int totalAirportTrips = driverFinancialCalculationService
+                        .countTotalAirportTrips(driver.getDriverNumber(), startDate, endDate);
+
+                // Get rate for display
+                com.taxi.domain.expense.model.ItemRate airportRate = itemRateRepository.findActiveOnDate(startDate)
+                    .stream()
+                    .filter(r -> r.getUnitType() == com.taxi.domain.profile.model.ItemRateUnitType.AIRPORT_TRIP)
+                    .findFirst()
+                    .orElse(null);
+
+                String displayName = airportRate != null
+                    ? String.format("Airport Trips (%d × $%s)", totalAirportTrips, airportRate.getRate())
+                    : String.format("Airport Trips (%d trips)", totalAirportTrips);
+
+                expenseMap.put("AIRPORT", DriverSummaryDTO.ItemizedBreakdown.builder()
+                        .key("AIRPORT")
+                        .displayName(displayName)
+                        .amount(airportExpenseTotal)
+                        .build());
             }
 
             summary.setExpenseBreakdown(new java.util.ArrayList<>(expenseMap.values()));

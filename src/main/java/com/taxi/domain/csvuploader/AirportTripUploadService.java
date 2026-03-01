@@ -65,31 +65,26 @@ public class AirportTripUploadService {
             
             log.info("Loaded {} cabs into cache", cabCache.size());
 
-            // Parse ALL rows and split by shift
+            // Parse ALL rows (one per cab per date, with all 24 hours)
             List<AirportTripUploadDTO> previewData = new ArrayList<>();
             int validCount = 0, invalidCount = 0, cabMatchCount = 0;
-            int dayShiftCount = 0, nightShiftCount = 0;
 
             for (int i = 0; i < dataRows.size(); i++) {
                 try {
-                    // Parse the raw row first
-                    AirportTripUploadDTO rawDto = parseRow(dataRows.get(i), columnMappings, headers, i + 2);
-                    enrichWithCabInfoCached(rawDto, cabCache);
-                    
-                    // Split by shift (DAY and NIGHT)
-                    List<AirportTripUploadDTO> splitByShift = splitTripsByShift(rawDto);
-                    
-                    for (AirportTripUploadDTO dto : splitByShift) {
-                        validateRow(dto);
-                        previewData.add(dto);
+                    // Parse the raw row
+                    AirportTripUploadDTO dto = parseRow(dataRows.get(i), columnMappings, headers, i + 2);
+                    enrichWithCabInfoCached(dto, cabCache);
 
-                        if (dto.isValid()) validCount++;
-                        else invalidCount++;
-                        if (dto.isCabLookupSuccess()) cabMatchCount++;
-                        if ("DAY".equals(dto.getShift())) dayShiftCount++;
-                        if ("NIGHT".equals(dto.getShift())) nightShiftCount++;
-                    }
-                    
+                    // Set shift to "BOTH" - indicates full 24-hour data
+                    dto.setShift("BOTH");
+
+                    validateRow(dto);
+                    previewData.add(dto);
+
+                    if (dto.isValid()) validCount++;
+                    else invalidCount++;
+                    if (dto.isCabLookupSuccess()) cabMatchCount++;
+
                     // Log progress every 500 rows
                     if (i > 0 && i % 500 == 0) {
                         log.info("Processed {} of {} rows", i, dataRows.size());
@@ -111,11 +106,8 @@ public class AirportTripUploadService {
             stats.put("validRows", validCount);
             stats.put("invalidRows", invalidCount);
             stats.put("cabMatches", cabMatchCount);
-            stats.put("dayShiftRows", dayShiftCount);
-            stats.put("nightShiftRows", nightShiftCount);
             stats.put("uploadType", "AIRPORT_TRIPS");
-            stats.put("originalRows", dataRows.size());
-            stats.put("splitRows", previewData.size());
+            stats.put("totalRows", dataRows.size());
             preview.setStatistics(stats);
 
             return preview;
@@ -125,76 +117,6 @@ public class AirportTripUploadService {
         }
     }
 
-    /**
-     * Split a single CSV row into DTOs by shift.
-     * 
-     * DAY shift: 4am-4pm (hours 4-15)
-     * NIGHT shift: 4pm-4am (hours 16-23, 0-3)
-     * 
-     * Note: Night shift hours 0-3 belong to the PREVIOUS day's night shift.
-     * So trips at 2am on Nov 25 = night shift of Nov 24.
-     */
-    private List<AirportTripUploadDTO> splitTripsByShift(AirportTripUploadDTO rawDto) {
-        List<AirportTripUploadDTO> result = new ArrayList<>();
-
-        Map<Integer, Integer> dayHours = new HashMap<>();
-        Map<Integer, Integer> nightHoursCurrentDate = new HashMap<>();
-        Map<Integer, Integer> nightHoursPreviousDate = new HashMap<>();
-
-        for (int hour = 0; hour <= 23; hour++) {
-            int trips = rawDto.getTripsForHour(hour);
-            if (trips <= 0) continue;
-
-            if (hour >= 4 && hour < 16) {
-                // DAY shift: 4am-4pm
-                dayHours.put(hour, trips);
-            } else if (hour >= 16) {
-                // NIGHT shift hours 16-23: belongs to current date's night shift
-                nightHoursCurrentDate.put(hour, trips);
-            } else {
-                // NIGHT shift hours 0-3: belongs to PREVIOUS date's night shift
-                nightHoursPreviousDate.put(hour, trips);
-            }
-        }
-
-        // Create DAY shift DTO if there are day trips
-        if (!dayHours.isEmpty()) {
-            AirportTripUploadDTO dayDto = createShiftDTO(rawDto, "DAY", dayHours, rawDto.getTripDate());
-            result.add(dayDto);
-        }
-
-        // Create NIGHT shift for current date (hours 16-23)
-        if (!nightHoursCurrentDate.isEmpty()) {
-            AirportTripUploadDTO nightDto = createShiftDTO(rawDto, "NIGHT", nightHoursCurrentDate, rawDto.getTripDate());
-            result.add(nightDto);
-        }
-
-        // Create NIGHT shift for previous date (hours 0-3)
-        if (!nightHoursPreviousDate.isEmpty() && rawDto.getTripDate() != null) {
-            LocalDate previousDate = rawDto.getTripDate().minusDays(1);
-            AirportTripUploadDTO nightDto = createShiftDTO(rawDto, "NIGHT", nightHoursPreviousDate, previousDate);
-            result.add(nightDto);
-        }
-
-        return result.isEmpty() ? Collections.singletonList(rawDto) : result;
-    }
-
-    private AirportTripUploadDTO createShiftDTO(AirportTripUploadDTO rawDto, String shift, Map<Integer, Integer> hourlyTrips, LocalDate tripDate) {
-        AirportTripUploadDTO dto = new AirportTripUploadDTO();
-        dto.setRowNumber(rawDto.getRowNumber());
-        dto.setVehicleName(rawDto.getCabNumber());
-        dto.setCabNumber(rawDto.getCabNumber());
-        dto.setShift(shift);
-        dto.setYear(tripDate != null ? tripDate.getYear() : rawDto.getYear());
-        dto.setMonth(tripDate != null ? tripDate.getMonthValue() : rawDto.getMonth());
-        dto.setDay(tripDate != null ? tripDate.getDayOfMonth() : rawDto.getDay());
-        dto.setTripDate(tripDate);
-        dto.setCabLookupSuccess(rawDto.isCabLookupSuccess());
-        dto.setCabLookupMessage(rawDto.getCabLookupMessage());
-        dto.setHourlyTrips(new HashMap<>(hourlyTrips));
-        dto.calculateGrandTotal();
-        return dto;
-    }
 
     @Transactional
     public Map<String, Object> importRecords(
@@ -220,9 +142,9 @@ public class AirportTripUploadService {
                     continue;
                 }
 
-                // Check for existing record by cab + shift + date
+                // Check for existing record by cab + date (shift is always "BOTH")
                 Optional<AirportTrip> existing = airportTripRepository
-                    .findByCabNumberAndShiftAndTripDate(dto.getCabNumber(), dto.getShift(), dto.getTripDate());
+                    .findByCabNumberAndTripDate(dto.getCabNumber(), dto.getTripDate());
 
                 if (existing.isPresent()) {
                     if (overwriteExisting) {
@@ -387,7 +309,6 @@ public class AirportTripUploadService {
 
         if (dto.getCabNumber() == null || dto.getCabNumber().isEmpty()) errors.append("Cab number required. ");
         if (dto.getTripDate() == null) errors.append("Valid date required. ");
-        if (dto.getShift() == null || dto.getShift().isEmpty()) errors.append("Shift required. ");
         if (dto.getGrandTotal() == null || dto.getGrandTotal() == 0) errors.append("No trips recorded. ");
 
         dto.setValid(errors.length() == 0);
