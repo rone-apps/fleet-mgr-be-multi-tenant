@@ -788,36 +788,46 @@ public class FinancialStatementService {
         BigDecimal airportExpense = driverFinancialCalculationService
             .calculateAirportExpense(person.getDriverNumber(), from, to);
 
-        if (airportExpense.compareTo(BigDecimal.ZERO) > 0 && totalAirportTrips > 0) {
-            // Calculate the implied rate from the charge and trip count
-            // (This ensures we show the same rate that was actually used for calculation)
-            BigDecimal ratePerTrip = airportExpense.divide(
-                BigDecimal.valueOf(totalAirportTrips),
-                2,
-                java.math.RoundingMode.HALF_UP);
+        if (airportExpense != null && airportExpense.compareTo(BigDecimal.ZERO) > 0 && totalAirportTrips > 0) {
+            try {
+                // Calculate the implied rate from the charge and trip count
+                // (This ensures we show the same rate that was actually used for calculation)
+                BigDecimal ratePerTrip = airportExpense.divide(
+                    BigDecimal.valueOf(totalAirportTrips),
+                    2,
+                    java.math.RoundingMode.HALF_UP);
 
-            log.info("   ✈️ Airport trip rate (calculated from charge): ${}/trip", ratePerTrip);
+                // Ensure all values are non-null before building
+                if (ratePerTrip == null) {
+                    ratePerTrip = BigDecimal.ZERO;
+                }
 
-            OwnerReportDTO.PerUnitExpenseLineItem airportLineItem =
-                OwnerReportDTO.PerUnitExpenseLineItem.builder()
-                .name("Airport Trips")
-                .unitType("AIRPORT_TRIP")
-                .unitTypeDisplay("Airport trips")
-                .totalUnits(BigDecimal.valueOf(totalAirportTrips))  // Show trip count
-                .rate(ratePerTrip)                                    // Show rate per trip
-                .amount(airportExpense)
-                .chargedTo("DRIVER")  // Whoever drove gets charged
-                .build();
+                log.info("   ✈️ Airport trip rate (calculated from charge): ${}/trip", ratePerTrip);
 
-            relevantPerUnitExpenses.add(airportLineItem);
-            log.info("Added airport trip expense: {} trips × ${}/trip = ${} for {} {} (owner={}, driverNum={})",
-                totalAirportTrips,
-                ratePerTrip,
-                airportExpense,
-                Boolean.TRUE.equals(person.getIsOwner()) ? "owner" : "driver",
-                person.getFullName(),
-                person.getIsOwner(),
-                person.getDriverNumber());
+                OwnerReportDTO.PerUnitExpenseLineItem airportLineItem =
+                    OwnerReportDTO.PerUnitExpenseLineItem.builder()
+                    .name("Airport Trips")
+                    .unitType("AIRPORT_TRIP")
+                    .unitTypeDisplay("Airport trips")
+                    .totalUnits(BigDecimal.valueOf(totalAirportTrips))  // Show trip count
+                    .rate(ratePerTrip)                                    // Show rate per trip
+                    .amount(airportExpense)
+                    .chargedTo("DRIVER")  // Whoever drove gets charged
+                    .build();
+
+                relevantPerUnitExpenses.add(airportLineItem);
+                log.info("Added airport trip expense: {} trips × ${}/trip = ${} for {} {} (owner={}, driverNum={})",
+                    totalAirportTrips,
+                    ratePerTrip,
+                    airportExpense,
+                    Boolean.TRUE.equals(person.getIsOwner()) ? "owner" : "driver",
+                    person.getFullName(),
+                    person.getIsOwner(),
+                    person.getDriverNumber());
+            } catch (Exception e) {
+                log.error("Error calculating airport trip expense for {}: {}", person.getDriverNumber(), e.getMessage(), e);
+                // Don't add malformed data - skip this line item on error
+            }
         }
 
         report.setPerUnitExpenses(relevantPerUnitExpenses);
