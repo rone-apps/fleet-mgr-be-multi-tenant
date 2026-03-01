@@ -4,7 +4,7 @@ import com.itextpdf.text.*;
 import com.itextpdf.text.pdf.PdfWriter;
 import com.itextpdf.text.pdf.PdfPTable;
 import com.itextpdf.text.pdf.PdfPCell;
-import com.taxi.web.dto.expense.OwnerReportDTO;
+import com.taxi.web.dto.report.OwnerReportDTO;
 import com.taxi.web.dto.expense.StatementLineItem;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.core.io.ByteArrayResource;

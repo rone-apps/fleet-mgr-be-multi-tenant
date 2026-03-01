@@ -1,6 +1,6 @@
 package com.taxi.web.dto.email;
 
-import com.taxi.web.dto.expense.OwnerReportDTO;
+import com.taxi.web.dto.report.OwnerReportDTO;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotNull;
 import lombok.AllArgsConstructor;

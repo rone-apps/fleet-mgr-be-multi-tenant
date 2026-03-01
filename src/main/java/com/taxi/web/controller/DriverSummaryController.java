@@ -29,11 +29,16 @@ public class DriverSummaryController {
 
     /**
      * Get comprehensive driver summary report for active drivers with pagination
-     * 
+     *
      * GET /api/reports/driver-summary?startDate=2024-01-01&endDate=2024-01-31&page=0&size=25
-     * 
+     * GET /api/reports/driver-summary?startDate=2024-01-01&endDate=2024-01-31&personType=DRIVER
+     * GET /api/reports/driver-summary?startDate=2024-01-01&endDate=2024-01-31&personType=OWNER
+     * GET /api/reports/driver-summary?startDate=2024-01-01&endDate=2024-01-31&quickMode=true
+     *
      * @param startDate Start date for the report period (required)
      * @param endDate End date for the report period (required)
+     * @param personType Filter by person type: "DRIVER" (drivers only), "OWNER" (owners only), "ALL" (both) - default: ALL
+     * @param quickMode If true, returns summary totals only (faster, no detailed breakdown) - default: false
      * @param page Page number (default: 0)
      * @param size Page size (default: 25)
      * @param sort Sort field (default: driverName)
@@ -45,6 +50,8 @@ public class DriverSummaryController {
     public ResponseEntity<DriverSummaryReportDTO> getDriverSummaryReport(
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate startDate,
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate endDate,
+            @RequestParam(defaultValue = "ALL") String personType,
+            @RequestParam(defaultValue = "false") boolean quickMode,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "25") int size,
             @RequestParam(defaultValue = "lastName") String sort,
@@ -67,28 +74,35 @@ public class DriverSummaryController {
         }
         
         try {
+            // Validate person type
+            if (!personType.matches("(?i)DRIVER|OWNER|ALL")) {
+                log.warn("Invalid personType: {}", personType);
+                return ResponseEntity.badRequest().build();
+            }
+
             // Create pageable with sorting
-            Sort.Direction sortDirection = "desc".equalsIgnoreCase(direction) 
-                    ? Sort.Direction.DESC 
+            Sort.Direction sortDirection = "desc".equalsIgnoreCase(direction)
+                    ? Sort.Direction.DESC
                     : Sort.Direction.ASC;
-            
+
             // Map driverName to lastName since Driver entity uses firstName/lastName
             String sortField = sort;
             if ("driverName".equalsIgnoreCase(sort)) {
                 sortField = "lastName";
             }
-            
+
             Pageable pageable = PageRequest.of(page, size, Sort.by(sortDirection, sortField));
-            
-            log.info("Calling report service...");
+
+            log.info("Calling report service... personType={}, quickMode={}", personType, quickMode);
             DriverSummaryReportDTO report = reportService.generateDriverSummaryReportPaginated(
-                    startDate, endDate, pageable);
-            
-            log.info("Successfully generated driver summary report with {} drivers (page {} of {})", 
+                    startDate, endDate, pageable, personType.toUpperCase(), quickMode);
+
+            log.info("Successfully generated driver summary report with {} drivers (page {} of {}) [{}]",
                     report.getDriverSummaries().size(),
                     report.getCurrentPage() + 1,
-                    report.getTotalPages());
-            
+                    report.getTotalPages(),
+                    quickMode ? "QUICK MODE" : "FULL MODE");
+
             return ResponseEntity.ok(report);
             
         } catch (Exception e) {

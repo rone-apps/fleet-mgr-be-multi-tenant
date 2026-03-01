@@ -1,12 +1,12 @@
 package com.taxi.web.controller;
 
 import com.taxi.domain.account.service.EmailService;
-import com.taxi.domain.expense.service.FinancialStatementService;
+import com.taxi.domain.report.service.FinancialStatementService;
 import com.taxi.domain.report.service.ReportPdfService;
 import com.taxi.domain.statement.model.Statement;
 import com.taxi.domain.statement.repository.StatementRepository;
 import com.taxi.web.dto.email.EmailReportRequest;
-import com.taxi.web.dto.expense.OwnerReportDTO;
+import com.taxi.web.dto.report.OwnerReportDTO;
 import java.math.BigDecimal;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;

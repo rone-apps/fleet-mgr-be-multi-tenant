@@ -10,6 +10,8 @@ import com.taxi.web.dto.report.DriverSummaryDTO;
 import com.taxi.web.dto.report.DriverSummaryReportDTO;
 import com.taxi.web.dto.report.LeaseExpenseReportDTO;
 import com.taxi.web.dto.report.LeaseRevenueReportDTO;
+import com.taxi.web.dto.report.OwnerReportDTO;
+import com.taxi.web.dto.expense.StatementLineItem;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -31,7 +33,7 @@ public class ReportService {
     private final DriverRepository driverRepository;
     private final DriverShiftRepository driverShiftRepository;
     private final DriverFinancialCalculationService driverFinancialCalculationService;
-    private final com.taxi.domain.expense.service.FinancialStatementService financialStatementService;
+    private final FinancialStatementService financialStatementService;
     private final com.taxi.domain.expense.repository.ItemRateRepository itemRateRepository;
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -163,9 +165,9 @@ public class ReportService {
             if (processedCount % 10 == 0) {
                 log.info("Processed {} / {} drivers", processedCount, allDrivers.size());
             }
-            
+
             DriverSummaryDTO summary = calculateDriverSummaryOptimized(
-                    driver, startDate, endDate, shiftsByDriver);
+                    driver, startDate, endDate, shiftsByDriver, false);
             
             // ✅ ONLY INCLUDE DRIVERS WITH FINANCIAL ACTIVITY
             if (hasFinancialActivity(summary)) {
@@ -201,9 +203,11 @@ public class ReportService {
             Driver driver,
             LocalDate startDate,
             LocalDate endDate,
-            java.util.Map<String, List<DriverShift>> shiftsByDriver) {
+            java.util.Map<String, List<DriverShift>> shiftsByDriver,
+            boolean quickMode) {
 
-        log.debug("Calculating summary for driver: {} using generateOwnerReport (single source of truth)", driver.getDriverNumber());
+        log.debug("Calculating summary for driver: {} using generateOwnerReport (single source of truth) [{}]",
+                driver.getDriverNumber(), quickMode ? "QUICK" : "FULL");
 
         DriverSummaryDTO summary = DriverSummaryDTO.builder()
                 .driverId(driver.getId())                    // ✅ Include driver ID for fetching detailed reports
@@ -215,7 +219,7 @@ public class ReportService {
         try {
             // ✅ DELEGATE TO COMPREHENSIVE REPORT - ENSURES SINGLE SOURCE OF TRUTH
             // This uses the same detailed calculation logic as individual reports
-            com.taxi.web.dto.expense.OwnerReportDTO fullReport =
+            OwnerReportDTO fullReport =
                     financialStatementService.generateOwnerReport(driver.getId(), startDate, endDate);
 
             // Calculate totals from the detailed report
@@ -259,7 +263,7 @@ public class ReportService {
             // ✅ Calculate other one-time expenses from fullReport (excluding lease which we calculated from shifts)
             BigDecimal otherExpenseTotal = BigDecimal.ZERO;
             if (fullReport.getOneTimeExpenses() != null && !fullReport.getOneTimeExpenses().isEmpty()) {
-                for (com.taxi.web.dto.expense.StatementLineItem expense : fullReport.getOneTimeExpenses()) {
+                for (StatementLineItem expense : fullReport.getOneTimeExpenses()) {
                     // Exclude lease expenses - we calculated those from shifts
                     if (!((expense.getCategoryCode() != null && expense.getCategoryCode().equals("LEASE_EXP")) ||
                         (expense.getApplicationType() != null && expense.getApplicationType().equals("LEASE_RENT")))) {
@@ -316,11 +320,13 @@ public class ReportService {
             summary.setOutstanding(netOwed.subtract(safeBigDecimal(fullReport.getPaidAmount())));
 
             // ✅ ITEMIZED BREAKDOWN FOR DYNAMIC COLUMNS (Excel/PDF export)
-            // Extract revenue breakdown with unique keys and display names
-            java.util.Map<String, DriverSummaryDTO.ItemizedBreakdown> revenueMap = new java.util.LinkedHashMap<>();
+            // Skip detailed breakdowns in quick mode for faster response
+            if (!quickMode) {
+                // Extract revenue breakdown with unique keys and display names
+                java.util.Map<String, DriverSummaryDTO.ItemizedBreakdown> revenueMap = new java.util.LinkedHashMap<>();
 
-            // Revenue breakdown from fullReport.getRevenues()
-            for (com.taxi.web.dto.expense.OwnerReportDTO.RevenueLineItem rev : fullReport.getRevenues()) {
+                // Revenue breakdown from fullReport.getRevenues()
+                for (OwnerReportDTO.RevenueLineItem rev : fullReport.getRevenues()) {
                 String subType = rev.getRevenueSubType();
 
                 if ("CARD_REVENUE".equals(subType)) {
@@ -378,7 +384,7 @@ public class ReportService {
 
             // Recurring expenses
             if (fullReport.getRecurringExpenses() != null) {
-                for (com.taxi.web.dto.expense.StatementLineItem exp : fullReport.getRecurringExpenses()) {
+                for (StatementLineItem exp : fullReport.getRecurringExpenses()) {
                     String categoryName = exp.getCategoryName() != null ? exp.getCategoryName() : "Recurring Expense";
                     String key = "RECURRING:" + categoryName;
                     if (!expenseMap.containsKey(key)) {
@@ -405,7 +411,7 @@ public class ReportService {
 
             // One-time expenses (non-lease only)
             if (fullReport.getOneTimeExpenses() != null) {
-                for (com.taxi.web.dto.expense.StatementLineItem exp : fullReport.getOneTimeExpenses()) {
+                for (StatementLineItem exp : fullReport.getOneTimeExpenses()) {
                     String categoryCode = exp.getCategoryCode();
                     String applicationType = exp.getApplicationType();
 
@@ -469,7 +475,15 @@ public class ReportService {
                         .build());
             }
 
-            summary.setExpenseBreakdown(new java.util.ArrayList<>(expenseMap.values()));
+                summary.setExpenseBreakdown(new java.util.ArrayList<>(expenseMap.values()));
+
+                log.debug("Completed detailed breakdown for {}", driver.getDriverNumber());
+            } else {
+                // Quick mode - no detailed breakdown
+                summary.setRevenueBreakdown(new java.util.ArrayList<>());
+                summary.setExpenseBreakdown(new java.util.ArrayList<>());
+                log.debug("Skipped detailed breakdown for {} (quick mode)", driver.getDriverNumber());
+            }
 
             log.debug("Completed summary for {}: Revenue=${}, Expense=${}, NetOwed=${}, Outstanding=${}",
                     driver.getDriverNumber(),
@@ -526,30 +540,43 @@ public class ReportService {
     /**
      * Generate comprehensive driver summary report with PAGINATION
      * Shows financial summary for ACTIVE drivers only in a date range
-     * 
+     *
      * @param startDate Start date for the report period
      * @param endDate End date for the report period
      * @param pageable Pagination and sorting information
+     * @param personType Filter: "DRIVER" (drivers only), "OWNER" (owners only), "ALL" (both)
+     * @param quickMode If true, skip detailed breakdowns for faster response
      * @return Paginated driver summary report with all financial metrics
      */
     @Transactional(readOnly = true)
     public DriverSummaryReportDTO generateDriverSummaryReportPaginated(
             LocalDate startDate,
             LocalDate endDate,
-            org.springframework.data.domain.Pageable pageable) {
-        
-        log.info("Generating PAGINATED driver summary report from {} to {}, page={}, size={}", 
-                startDate, endDate, pageable.getPageNumber(), pageable.getPageSize());
+            org.springframework.data.domain.Pageable pageable,
+            String personType,
+            boolean quickMode) {
+
+        log.info("Generating PAGINATED driver summary report from {} to {}, page={}, size={}, personType={}, quickMode={}",
+                startDate, endDate, pageable.getPageNumber(), pageable.getPageSize(), personType, quickMode);
         long startTime = System.currentTimeMillis();
-        
-        // Get only ACTIVE drivers with pagination
-        org.springframework.data.domain.Page<Driver> driverPage = 
-                driverRepository.findAll(
-                        org.springframework.data.jpa.domain.Specification.where(
-                                (root, query, cb) -> cb.equal(root.get("status"), Driver.DriverStatus.ACTIVE)
-                        ),
-                        pageable
+
+        // Build specification for filtering
+        org.springframework.data.jpa.domain.Specification<Driver> spec =
+                org.springframework.data.jpa.domain.Specification.where(
+                        (root, query, cb) -> cb.equal(root.get("status"), Driver.DriverStatus.ACTIVE)
                 );
+
+        // Add person type filter
+        if ("DRIVER".equalsIgnoreCase(personType)) {
+            spec = spec.and((root, query, cb) -> cb.equal(root.get("isOwner"), false));
+        } else if ("OWNER".equalsIgnoreCase(personType)) {
+            spec = spec.and((root, query, cb) -> cb.equal(root.get("isOwner"), true));
+        }
+        // For "ALL", no additional filter needed
+
+        // Get filtered ACTIVE drivers with pagination
+        org.springframework.data.domain.Page<Driver> driverPage =
+                driverRepository.findAll(spec, pageable);
         
         log.info("Processing {} active drivers (page {} of {})", 
                 driverPage.getNumberOfElements(),
@@ -595,10 +622,10 @@ public class ReportService {
             if (processedCount % 10 == 0) {
                 log.info("Processed {} / {} drivers", processedCount, driverPage.getNumberOfElements());
             }
-            
+
             DriverSummaryDTO summary = calculateDriverSummaryOptimized(
-                    driver, startDate, endDate, shiftsByDriver);
-            
+                    driver, startDate, endDate, shiftsByDriver, quickMode);
+
             // ✅ ONLY INCLUDE DRIVERS WITH FINANCIAL ACTIVITY
             if (hasFinancialActivity(summary)) {
                 report.addDriverSummary(summary);
@@ -672,7 +699,7 @@ public class ReportService {
         for (Driver driver : allDrivers) {
             try {
                 DriverSummaryDTO summary = calculateDriverSummaryOptimized(
-                        driver, startDate, endDate, new java.util.HashMap<>()
+                        driver, startDate, endDate, new java.util.HashMap<>(), false
                 );
 
                 // ✅ ONLY INCLUDE DRIVERS WITH FINANCIAL ACTIVITY

@@ -1,6 +1,7 @@
-package com.taxi.web.dto.expense;
+package com.taxi.web.dto.report;
 
 import com.taxi.domain.statement.model.StatementStatus;
+import com.taxi.web.dto.expense.StatementLineItem;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
