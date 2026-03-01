@@ -14,6 +14,7 @@ import com.taxi.domain.expense.repository.ItemRateRepository;
 import com.taxi.domain.expense.repository.ItemRateOverrideRepository;
 import com.taxi.domain.mileage.model.MileageRecord;
 import com.taxi.domain.mileage.repository.MileageRecordRepository;
+import com.taxi.domain.airport.service.AirportChargeService;
 import com.taxi.domain.profile.model.ItemRateChargedTo;
 import com.taxi.domain.profile.model.ItemRateUnitType;
 import com.taxi.domain.expense.repository.RecurringExpenseRepository;
@@ -75,6 +76,7 @@ public class FinancialStatementService {
     // NEW CONSOLIDATED SERVICES - SINGLE SOURCE OF TRUTH
     // ═══════════════════════════════════════════════════════════════════════
     private final ExpenseCalculationService expenseCalculationService;
+    private final AirportChargeService airportChargeService;
     /**
      * Generate a financial statement for a driver for a date period
      * Shows all applicable recurring (prorated) and one-time charges
@@ -431,15 +433,17 @@ public class FinancialStatementService {
             }
         }
 
-        // 3.5. Add lease expenses (for drivers only - rental cost for shifts)
-        if (!Boolean.TRUE.equals(person.getIsOwner()) && person.getDriverNumber() != null) {
+        // 3.5. Add lease expenses (for drivers AND owners who drove shifts they don't own)
+        // Owners can also drive shifts owned by others, so they need lease expenses too
+        if (person.getDriverNumber() != null) {
             try {
                 com.taxi.web.dto.report.LeaseExpenseReportDTO leaseExpenseReport =
                     driverFinancialCalculationService.calculateLeaseExpense(
                         person.getDriverNumber(), from, to);
 
-                log.info("Found {} lease expense items for driver {}",
-                    leaseExpenseReport.getLeaseExpenseItems() != null ? leaseExpenseReport.getLeaseExpenseItems().size() : 0, personId);
+                log.info("Found {} lease expense items for {} {}",
+                    leaseExpenseReport.getLeaseExpenseItems() != null ? leaseExpenseReport.getLeaseExpenseItems().size() : 0,
+                    Boolean.TRUE.equals(person.getIsOwner()) ? "owner" : "driver", personId);
 
                 if (leaseExpenseReport.getLeaseExpenseItems() != null && !leaseExpenseReport.getLeaseExpenseItems().isEmpty()) {
                     for (LeaseExpenseDTO leaseItem : leaseExpenseReport.getLeaseExpenseItems()) {
@@ -485,7 +489,8 @@ public class FinancialStatementService {
                     }
                 }
             } catch (Exception e) {
-                log.warn("Error calculating lease/insurance expense for driver {}: {}", personId, e.getMessage());
+                log.warn("Error calculating lease expense for {} {}: {}", 
+                    Boolean.TRUE.equals(person.getIsOwner()) ? "owner" : "driver", personId, e.getMessage());
                 // Don't fail the whole report if lease calculation fails
             }
         }
@@ -538,6 +543,54 @@ public class FinancialStatementService {
         } catch (Exception e) {
             log.warn("Error calculating insurance expense for person {}: {}", personId, e.getMessage());
             // Don't fail the whole report if insurance calculation fails
+        }
+
+        // 3.7. Add airport trip expenses (based on mileage records - applies to everyone who drove)
+        // Airport trips are charged per trip based on the AIRPORT_TRIP rate
+        try {
+            List<MileageRecord> mileageRecordsForAirport = mileageRecordRepository.findByDriverNumberAndDateRange(
+                    person.getDriverNumber(), from, to);
+
+            log.info("Calculating airport trip expenses for {} mileage records for person {}",
+                    mileageRecordsForAirport.size(), personId);
+
+            for (MileageRecord mileageRecord : mileageRecordsForAirport) {
+                if (mileageRecord.getLogonTime() != null && mileageRecord.getLogoffTime() != null 
+                        && mileageRecord.getCabNumber() != null) {
+                    
+                    // Use AirportChargeService to calculate airport trips for this shift
+                    AirportChargeService.AirportChargeResult airportResult = 
+                        airportChargeService.calculateAirportChargeForShiftDetailed(
+                            mileageRecord.getCabNumber(),
+                            mileageRecord.getLogonTime(),
+                            mileageRecord.getLogoffTime(),
+                            mileageRecord.getLogonTime().toLocalDate());
+
+                    if (airportResult.getTripCount() > 0 && airportResult.getTotalCharge().compareTo(BigDecimal.ZERO) > 0) {
+                        String airportDescription = "Airport Trips - " + airportResult.getTripCount() + 
+                            " trips @ $" + airportResult.getRatePerTrip() + "/trip" +
+                            " (Cab " + mileageRecord.getCabNumber() + ")";
+
+                        report.getOneTimeExpenses().add(StatementLineItem.builder()
+                                .categoryCode("AIRPORT_TRIP")
+                                .categoryName("Airport Trip Expense")
+                                .applicationType("AIRPORT")
+                                .date(mileageRecord.getLogonTime().toLocalDate())
+                                .cabNumber(mileageRecord.getCabNumber())
+                                .description(airportDescription)
+                                .amount(airportResult.getTotalCharge())
+                                .isRecurring(false)
+                                .build());
+
+                        log.debug("Added airport expense for person {}: {} trips × ${}/trip = ${}",
+                                personId, airportResult.getTripCount(), airportResult.getRatePerTrip(), 
+                                airportResult.getTotalCharge());
+                    }
+                }
+            }
+        } catch (Exception e) {
+            log.warn("Error calculating airport trip expense for person {}: {}", personId, e.getMessage());
+            // Don't fail the whole report if airport calculation fails
         }
 
         // 4. Add shift-based revenues (trip fares, tips, etc.)
