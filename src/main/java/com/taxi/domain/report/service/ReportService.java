@@ -273,24 +273,35 @@ public class ReportService {
             BigDecimal airportExpenseTotal = driverFinancialCalculationService
                     .calculateAirportExpense(driver.getDriverNumber(), startDate, endDate);
 
+            // ✅ Calculate insurance mileage expense (part of per-unit expenses)
+            BigDecimal insuranceExpenseTotal = BigDecimal.ZERO;
+            if (fullReport.getInsuranceMileageExpenses() != null && !fullReport.getInsuranceMileageExpenses().isEmpty()) {
+                insuranceExpenseTotal = fullReport.getInsuranceMileageExpenses().stream()
+                        .map(exp -> safeBigDecimal(exp.getAmount()))
+                        .reduce(BigDecimal.ZERO, BigDecimal::add);
+            }
+
             summary.setLeaseExpense(leaseExpenseTotal);
             summary.setVariableExpense(BigDecimal.ZERO); // Not tracked separately in detailed report
             summary.setOtherExpense(otherExpenseTotal);
 
             // ✅ RECALCULATE TOTAL EXPENSE AS SUM OF INDIVIDUAL CATEGORIES
-            // This ensures consistency: totalExpense = fixedExpense + leaseExpense + variableExpense + otherExpense + airportExpense
+            // This ensures consistency: totalExpense = fixedExpense + leaseExpense + variableExpense + otherExpense + insuranceExpense + airportExpense
             BigDecimal recalculatedTotalExpense = safeBigDecimal(fullReport.getTotalRecurringExpenses())
                     .add(leaseExpenseTotal)
                     .add(BigDecimal.ZERO) // variableExpense is 0
                     .add(otherExpenseTotal)
+                    .add(insuranceExpenseTotal)  // Add insurance mileage
                     .add(airportExpenseTotal);
 
-            log.debug("   📊 Expense Breakdown for {}: Fixed=${}, Lease=${}, Variable=${}, Other=${} → Total=${}",
+            log.debug("   📊 Expense Breakdown for {}: Fixed=${}, Lease=${}, Variable=${}, Other=${}, Insurance=${}, Airport=${} → Total=${}",
                     driver.getDriverNumber(),
                     fullReport.getTotalRecurringExpenses(),
                     leaseExpenseTotal,
                     "0.00",
                     otherExpenseTotal,
+                    insuranceExpenseTotal,
+                    airportExpenseTotal,
                     recalculatedTotalExpense);
 
             // Totals
