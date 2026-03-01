@@ -320,13 +320,13 @@ public class ReportService {
             summary.setOutstanding(netOwed.subtract(safeBigDecimal(fullReport.getPaidAmount())));
 
             // ✅ ITEMIZED BREAKDOWN FOR DYNAMIC COLUMNS (Excel/PDF export)
-            // Skip detailed breakdowns in quick mode for faster response
-            if (!quickMode) {
-                // Extract revenue breakdown with unique keys and display names
-                java.util.Map<String, DriverSummaryDTO.ItemizedBreakdown> revenueMap = new java.util.LinkedHashMap<>();
+            // ✅ ALWAYS populate breakdown items regardless of quickMode
+            // The table needs these columns to display properly, even in quick mode
+            // Extract revenue breakdown with unique keys and display names
+            java.util.Map<String, DriverSummaryDTO.ItemizedBreakdown> revenueMap = new java.util.LinkedHashMap<>();
 
-                // Revenue breakdown from fullReport.getRevenues()
-                for (OwnerReportDTO.RevenueLineItem rev : fullReport.getRevenues()) {
+            // Revenue breakdown from fullReport.getRevenues()
+            for (OwnerReportDTO.RevenueLineItem rev : fullReport.getRevenues()) {
                 String subType = rev.getRevenueSubType();
 
                 if ("CARD_REVENUE".equals(subType)) {
@@ -475,15 +475,11 @@ public class ReportService {
                         .build());
             }
 
-                summary.setExpenseBreakdown(new java.util.ArrayList<>(expenseMap.values()));
-
-                log.debug("Completed detailed breakdown for {}", driver.getDriverNumber());
-            } else {
-                // Quick mode - no detailed breakdown
-                summary.setRevenueBreakdown(new java.util.ArrayList<>());
-                summary.setExpenseBreakdown(new java.util.ArrayList<>());
-                log.debug("Skipped detailed breakdown for {} (quick mode)", driver.getDriverNumber());
-            }
+            // ✅ ALWAYS populate breakdown items - needed for table columns
+            summary.setRevenueBreakdown(new java.util.ArrayList<>(revenueMap.values()));
+            summary.setExpenseBreakdown(new java.util.ArrayList<>(expenseMap.values()));
+            log.debug("Completed breakdown for {}: {} revenue items, {} expense items",
+                    driver.getDriverNumber(), revenueMap.size(), expenseMap.size());
 
             log.debug("Completed summary for {}: Revenue=${}, Expense=${}, NetOwed=${}, Outstanding=${}",
                     driver.getDriverNumber(),
@@ -556,9 +552,15 @@ public class ReportService {
             String personType,
             boolean quickMode) {
 
-        log.info("Generating PAGINATED driver summary report from {} to {}, page={}, size={}, personType={}, quickMode={}",
-                startDate, endDate, pageable.getPageNumber(), pageable.getPageSize(), personType, quickMode);
+        log.info("═══════════════════════════════════════════════════════════════════════");
+        log.info("▶ REPORT GENERATION START - Driver Summary Report");
+        log.info("  Date Range: {} to {} ({} days)", startDate, endDate,
+                java.time.temporal.ChronoUnit.DAYS.between(startDate, endDate) + 1);
+        log.info("  Page: {} of {}, PersonType: {}, QuickMode: {}",
+                pageable.getPageNumber() + 1, "?", personType, quickMode);
+        log.info("═══════════════════════════════════════════════════════════════════════");
         long startTime = System.currentTimeMillis();
+        long dbQueryStart = System.currentTimeMillis();
 
         // Build specification for filtering
         org.springframework.data.jpa.domain.Specification<Driver> spec =
@@ -577,11 +579,14 @@ public class ReportService {
         // Get filtered ACTIVE drivers with pagination
         org.springframework.data.domain.Page<Driver> driverPage =
                 driverRepository.findAll(spec, pageable);
-        
-        log.info("Processing {} active drivers (page {} of {})", 
+
+        long dbQueryDuration = System.currentTimeMillis() - dbQueryStart;
+        log.info("✓ Database query completed in {} ms", dbQueryDuration);
+        log.info("  Found {} active drivers (page {} of {}, total {} drivers)",
                 driverPage.getNumberOfElements(),
                 driverPage.getNumber() + 1,
-                driverPage.getTotalPages());
+                driverPage.getTotalPages(),
+                driverPage.getTotalElements());
         
         // Initialize the report
         DriverSummaryReportDTO report = DriverSummaryReportDTO.builder()
@@ -601,14 +606,17 @@ public class ReportService {
         List<String> driverNumbers = driverPage.getContent().stream()
                 .map(Driver::getDriverNumber)
                 .collect(java.util.stream.Collectors.toList());
-        
-        log.info("Pre-fetching driver shifts for {} drivers...", driverNumbers.size());
-        
+
+        long shiftQueryStart = System.currentTimeMillis();
+        log.info("  Pre-fetching driver shifts for {} drivers in date range...", driverNumbers.size());
+
         // Only fetch shifts for drivers in current page
         List<DriverShift> pageDriverShifts = driverShiftRepository
                 .findByDriverNumberInAndLogonTimeBetween(driverNumbers, startDateTime, endDateTime);
-        
-        log.info("Found {} driver shifts for current page", pageDriverShifts.size());
+
+        long shiftQueryDuration = System.currentTimeMillis() - shiftQueryStart;
+        log.info("✓ Shift query completed in {} ms - Found {} driver shifts",
+                shiftQueryDuration, pageDriverShifts.size());
         
         // Group shifts by driver number for quick lookup
         java.util.Map<String, List<DriverShift>> shiftsByDriver = pageDriverShifts.stream()
@@ -617,10 +625,18 @@ public class ReportService {
         // Process each driver in the page
         int processedCount = 0;
         int skippedCount = 0;
+        int includedCount = 0;
+        long processingStart = System.currentTimeMillis();
+
+        log.info("  Starting driver processing loop...");
+
         for (Driver driver : driverPage.getContent()) {
             processedCount++;
-            if (processedCount % 10 == 0) {
-                log.info("Processed {} / {} drivers", processedCount, driverPage.getNumberOfElements());
+            if (processedCount % 5 == 0 && processedCount > 0) {
+                long elapsed = System.currentTimeMillis() - processingStart;
+                double perDriver = (double) elapsed / processedCount;
+                log.debug("Progress: {} / {} drivers ({} included, {} skipped) - {:.0f}ms per driver",
+                        processedCount, driverPage.getNumberOfElements(), includedCount, skippedCount, perDriver);
             }
 
             DriverSummaryDTO summary = calculateDriverSummaryOptimized(
@@ -629,30 +645,102 @@ public class ReportService {
             // ✅ ONLY INCLUDE DRIVERS WITH FINANCIAL ACTIVITY
             if (hasFinancialActivity(summary)) {
                 report.addDriverSummary(summary);
+                includedCount++;
             } else {
                 skippedCount++;
                 log.debug("Skipping driver {} - no financial activity in period", driver.getDriverNumber());
             }
         }
-        
-        if (skippedCount > 0) {
-            log.info("Skipped {} drivers with no financial activity", skippedCount);
+
+        long processingDuration = System.currentTimeMillis() - processingStart;
+        if (processedCount > 0) {
+            double perDriver = (double) processingDuration / processedCount;
+            log.info("✓ Driver processing completed in {} ms ({} included, {} skipped, {:.1f}ms per driver)",
+                    processingDuration, includedCount, skippedCount, perDriver);
         }
         
         // Calculate page totals
+        long pageTotalsStart = System.currentTimeMillis();
         report.calculatePageTotals();
-        
+        long pageTotalsDuration = System.currentTimeMillis() - pageTotalsStart;
+        log.info("✓ Page totals calculated in {} ms", pageTotalsDuration);
+
         // Calculate grand totals (ALL pages) ONLY if on last page
         if (report.getCurrentPage() + 1 == report.getTotalPages()) {
-            log.info("Last page reached - calculating grand totals for all {} drivers", report.getTotalElements());
+            log.info("  Last page reached (page {} of {}) - calculating grand totals...",
+                    report.getCurrentPage() + 1, report.getTotalPages());
             calculateGrandTotalsSimple(report, startDate, endDate);
+        } else {
+            log.info("  Page {} of {} - grand totals will be calculated on final page",
+                    report.getCurrentPage() + 1, report.getTotalPages());
         }
-        
-        long duration = System.currentTimeMillis() - startTime;
-        log.info("Generated paginated driver summary report with {} drivers in {} ms (page {} of {})", 
-                report.getTotalDrivers(), duration, 
-                report.getCurrentPage() + 1, report.getTotalPages());
-        
+
+        long totalDuration = System.currentTimeMillis() - startTime;
+
+        log.info("═══════════════════════════════════════════════════════════════════════");
+        log.info("✓ REPORT GENERATION COMPLETED SUCCESSFULLY");
+        log.info("═══════════════════════════════════════════════════════════════════════");
+        log.info("  SUMMARY - Date Range: {} to {} | Page: {} of {} | Mode: {} {}",
+                startDate, endDate,
+                report.getCurrentPage() + 1, report.getTotalPages(),
+                quickMode ? "QUICK" : "DETAILED",
+                quickMode ? "(summary only)" : "(full breakdown)");
+        log.info("  Drivers: {} on page (included: {}, skipped: {}) | {} total active",
+                driverPage.getNumberOfElements(), includedCount, skippedCount, report.getTotalElements());
+        log.info("");
+
+        // PAGE TOTALS
+        log.info("  ┌─ PAGE TOTALS (Current Page)");
+        log.info("  │  Revenue:");
+        log.info("  │    Lease:              ${}", report.getPageLeaseRevenue());
+        log.info("  │    Credit Card:        ${}", report.getPageCreditCardRevenue());
+        log.info("  │    Charges:            ${}", report.getPageChargesRevenue());
+        log.info("  │    Other:              ${}", report.getPageOtherRevenue());
+        log.info("  │    ────────────────────────");
+        log.info("  │    TOTAL REVENUE:      ${}", report.getPageTotalRevenue());
+        log.info("  │");
+        log.info("  │  Expense:");
+        log.info("  │    Fixed:              ${}", report.getPageFixedExpense());
+        log.info("  │    Lease:              ${}", report.getPageLeaseExpense());
+        log.info("  │    Variable:           ${}", report.getPageVariableExpense());
+        log.info("  │    Other:              ${}", report.getPageOtherExpense());
+        log.info("  │    ────────────────────────");
+        log.info("  │    TOTAL EXPENSE:      ${}", report.getPageTotalExpense());
+        log.info("  │");
+        log.info("  │  NET OWED:             ${}", report.getPageNetOwed());
+        log.info("  │  PAID:                 ${}", report.getPageTotalPaid());
+        log.info("  │  OUTSTANDING:          ${}", report.getPageTotalOutstanding());
+        log.info("  └");
+
+        // GRAND TOTALS (if last page)
+        if (report.getCurrentPage() + 1 == report.getTotalPages()) {
+            log.info("  ┌─ GRAND TOTALS (All {} Pages)", report.getTotalPages());
+            log.info("  │  Revenue:");
+            log.info("  │    Lease:              ${}", report.getGrandTotalLeaseRevenue());
+            log.info("  │    Credit Card:        ${}", report.getGrandTotalCreditCardRevenue());
+            log.info("  │    Charges:            ${}", report.getGrandTotalChargesRevenue());
+            log.info("  │    Other:              ${}", report.getGrandTotalOtherRevenue());
+            log.info("  │    ────────────────────────");
+            log.info("  │    TOTAL REVENUE:      ${}", report.getGrandTotalRevenue());
+            log.info("  │");
+            log.info("  │  Expense:");
+            log.info("  │    Fixed:              ${}", report.getGrandTotalFixedExpense());
+            log.info("  │    Lease:              ${}", report.getGrandTotalLeaseExpense());
+            log.info("  │    Variable:           ${}", report.getGrandTotalVariableExpense());
+            log.info("  │    Other:              ${}", report.getGrandTotalOtherExpense());
+            log.info("  │    ────────────────────────");
+            log.info("  │    TOTAL EXPENSE:      ${}", report.getGrandTotalExpense());
+            log.info("  │");
+            log.info("  │  NET OWED:             ${}", report.getGrandNetOwed());
+            log.info("  │  PAID:                 ${}", report.getGrandTotalPaid());
+            log.info("  │  OUTSTANDING:          ${}", report.getGrandTotalOutstanding());
+            log.info("  └");
+        }
+
+        log.info("  Total Processing Time: {} ms ({}.{} seconds)",
+                totalDuration, totalDuration / 1000, totalDuration % 1000);
+        log.info("═══════════════════════════════════════════════════════════════════════");
+
         return report;
     }
     
@@ -666,17 +754,20 @@ public class ReportService {
             LocalDate startDate,
             LocalDate endDate) {
 
-        log.info("Calculating grand totals for ALL active drivers (last page reached)");
+        log.info("  ▶ Grand Totals Calculation START");
         long startTime = System.currentTimeMillis();
 
         // Get ALL active drivers
+        long fetchStart = System.currentTimeMillis();
         List<Driver> allDrivers = driverRepository.findAll(
                 org.springframework.data.jpa.domain.Specification.where(
                         (root, query, cb) -> cb.equal(root.get("status"), Driver.DriverStatus.ACTIVE)
                 )
         );
+        long fetchDuration = System.currentTimeMillis() - fetchStart;
 
-        log.info("Processing {} total active drivers for grand totals", allDrivers.size());
+        log.info("  ✓ Fetched {} total active drivers in {} ms", allDrivers.size(), fetchDuration);
+        log.info("    Computing financial metrics for each driver...");
 
         BigDecimal grandLeaseRev = BigDecimal.ZERO;
         BigDecimal grandCCRev = BigDecimal.ZERO;
@@ -691,6 +782,10 @@ public class ReportService {
         BigDecimal grandNetOwed = BigDecimal.ZERO;
         BigDecimal grandPaid = BigDecimal.ZERO;
         BigDecimal grandOutstanding = BigDecimal.ZERO;
+
+        // ✅ Maps to aggregate all individual breakdown items
+        java.util.Map<String, DriverSummaryDTO.ItemizedBreakdown> aggregatedRevenueItems = new java.util.LinkedHashMap<>();
+        java.util.Map<String, DriverSummaryDTO.ItemizedBreakdown> aggregatedExpenseItems = new java.util.LinkedHashMap<>();
 
         // ✅ IMPORTANT: Only count drivers that have financial activity
         // This matches the filtering done in the paginated report
@@ -723,6 +818,31 @@ public class ReportService {
                 grandPaid = grandPaid.add(safeBigDecimal(summary.getPaid()));
                 grandOutstanding = grandOutstanding.add(safeBigDecimal(summary.getOutstanding()));
 
+                // ✅ Aggregate individual breakdown items (Airport fees, Insurance, Bonus, etc.)
+                if (summary.getRevenueBreakdown() != null) {
+                    for (DriverSummaryDTO.ItemizedBreakdown item : summary.getRevenueBreakdown()) {
+                        aggregatedRevenueItems.merge(item.getKey(),
+                                item,
+                                (existing, newItem) -> {
+                                    existing.setAmount(safeBigDecimal(existing.getAmount())
+                                            .add(safeBigDecimal(newItem.getAmount())));
+                                    return existing;
+                                });
+                    }
+                }
+
+                if (summary.getExpenseBreakdown() != null) {
+                    for (DriverSummaryDTO.ItemizedBreakdown item : summary.getExpenseBreakdown()) {
+                        aggregatedExpenseItems.merge(item.getKey(),
+                                item,
+                                (existing, newItem) -> {
+                                    existing.setAmount(safeBigDecimal(existing.getAmount())
+                                            .add(safeBigDecimal(newItem.getAmount())));
+                                    return existing;
+                                });
+                    }
+                }
+
                 if (driversWithActivity % 10 == 0) {
                     log.debug("Processed {} drivers with activity so far...", driversWithActivity);
                 }
@@ -733,8 +853,10 @@ public class ReportService {
             }
         }
 
-        log.info("Grand totals calculated from {} drivers with activity (out of {} total active drivers)",
-                driversWithActivity, allDrivers.size());
+        log.info("  ✓ Grand totals calculated from {} drivers with activity",
+                driversWithActivity);
+        log.info("    (out of {} total active drivers, {} had no activity in period)",
+                allDrivers.size(), allDrivers.size() - driversWithActivity);
 
         // Set detailed grand totals
         report.setGrandTotalLeaseRevenue(grandLeaseRev);
@@ -752,13 +874,31 @@ public class ReportService {
         report.setGrandTotalOutstanding(grandOutstanding);
 
         long duration = System.currentTimeMillis() - startTime;
-        log.info("Grand totals completed in {} ms", duration);
-        log.info("Grand totals: Revenue=${}, Expense=${}, Net=${}, Outstanding=${}",
-                grandTotalRev, grandTotalExp, grandNetOwed, grandOutstanding);
-        log.info("Breakdown - Lease Rev: ${}, CC Rev: ${}, Charges Rev: ${}, Other Rev: ${}",
-                grandLeaseRev, grandCCRev, grandChargesRev, grandOtherRev);
-        log.info("Breakdown - Fixed Exp: ${}, Lease Exp: ${}, Var Exp: ${}, Other Exp: ${}",
-                grandFixedExp, grandLeaseExp, grandVarExp, grandOtherExp);
+        log.info("  ✓ Grand Totals Calculation COMPLETED in {} ms", duration);
+        log.info("    DETAILED BREAKDOWN ({} individual items):",
+                aggregatedRevenueItems.size() + aggregatedExpenseItems.size());
+
+        // Log revenue items
+        if (!aggregatedRevenueItems.isEmpty()) {
+            log.info("      Revenue Items:");
+            for (DriverSummaryDTO.ItemizedBreakdown item : aggregatedRevenueItems.values()) {
+                log.info("        • {}: ${}", item.getDisplayName(), item.getAmount());
+            }
+        }
+
+        // Log expense items
+        if (!aggregatedExpenseItems.isEmpty()) {
+            log.info("      Expense Items:");
+            for (DriverSummaryDTO.ItemizedBreakdown item : aggregatedExpenseItems.values()) {
+                log.info("        • {}: ${}", item.getDisplayName(), item.getAmount());
+            }
+        }
+
+        log.info("      ────────────────────────────────────");
+        log.info("      Total Revenue: ${}", grandTotalRev);
+        log.info("      Total Expense: ${}", grandTotalExp);
+        log.info("      Net Owed: ${}, Paid: ${}, Outstanding: ${}",
+                grandNetOwed, grandPaid, grandOutstanding);
     }
     
     /**
