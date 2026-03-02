@@ -12,15 +12,20 @@ import com.taxi.web.dto.report.LeaseExpenseReportDTO;
 import com.taxi.web.dto.report.LeaseRevenueReportDTO;
 import com.taxi.web.dto.report.OwnerReportDTO;
 import com.taxi.web.dto.expense.StatementLineItem;
+import com.taxi.domain.report.ReportJobStatus;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.stream.Collectors;
 
 /**
  * Service for generating various financial reports
@@ -35,6 +40,7 @@ public class ReportService {
     private final DriverFinancialCalculationService driverFinancialCalculationService;
     private final FinancialStatementService financialStatementService;
     private final com.taxi.domain.expense.repository.ItemRateRepository itemRateRepository;
+    private final ReportCacheService reportCacheService;
 
     // ═══════════════════════════════════════════════════════════════════════
     // INDIVIDUAL REPORT METHODS - NOW DELEGATE TO SHARED SERVICE
@@ -886,7 +892,238 @@ public class ReportService {
         return value != null ? value : BigDecimal.ZERO;
     }
 
+    // ═══════════════════════════════════════════════════════════════════════
+    // ASYNC REPORT GENERATION
+    // ═══════════════════════════════════════════════════════════════════════
 
-    
+    @Async("uploadTaskExecutor")
+    @Transactional(readOnly = true)
+    public void generateReportAsync(
+            String jobId,
+            LocalDate startDate,
+            LocalDate endDate,
+            String personType,
+            boolean quickMode,
+            String sortField,
+            String sortDirection) {
 
+        ReportJobStatus jobStatus = ReportJobStatus.get(jobId);
+        if (jobStatus == null) return;
+
+        try {
+            jobStatus.setStatus(ReportJobStatus.Status.PROCESSING);
+            jobStatus.setMessage("Querying drivers...");
+
+            // Build specification for filtering
+            org.springframework.data.jpa.domain.Specification<Driver> spec =
+                    org.springframework.data.jpa.domain.Specification.where(
+                            (root, query, cb) -> cb.equal(root.get("status"), Driver.DriverStatus.ACTIVE)
+                    );
+
+            if ("DRIVER".equalsIgnoreCase(personType)) {
+                spec = spec.and((root, query, cb) -> cb.equal(root.get("isOwner"), false));
+            } else if ("OWNER".equalsIgnoreCase(personType)) {
+                spec = spec.and((root, query, cb) -> cb.equal(root.get("isOwner"), true));
+            }
+
+            // Sort
+            org.springframework.data.domain.Sort.Direction dir = "desc".equalsIgnoreCase(sortDirection)
+                    ? org.springframework.data.domain.Sort.Direction.DESC
+                    : org.springframework.data.domain.Sort.Direction.ASC;
+            String mappedSort = "driverName".equalsIgnoreCase(sortField) ? "lastName" : sortField;
+            org.springframework.data.domain.Sort sort = org.springframework.data.domain.Sort.by(dir, mappedSort);
+
+            List<Driver> allDrivers = driverRepository.findAll(spec, sort);
+            int totalDriverCount = allDrivers.size();
+
+            // Set totalDrivers immediately so FE can show progress
+            jobStatus.setTotalDrivers(totalDriverCount);
+            jobStatus.setMessage(String.format("Processing %d drivers...", totalDriverCount));
+
+            log.info("Async report job {} - found {} drivers to process", jobId, totalDriverCount);
+
+            // Pre-fetch shifts for all drivers
+            LocalDateTime startDateTime = startDate.atStartOfDay();
+            LocalDateTime endDateTime = endDate.atTime(23, 59, 59);
+            List<String> driverNumbers = allDrivers.stream()
+                    .map(Driver::getDriverNumber)
+                    .collect(Collectors.toList());
+            List<DriverShift> allShifts = driverShiftRepository
+                    .findByDriverNumberInAndLogonTimeBetween(driverNumbers, startDateTime, endDateTime);
+            java.util.Map<String, List<DriverShift>> shiftsByDriver = allShifts.stream()
+                    .collect(Collectors.groupingBy(DriverShift::getDriverNumber));
+
+            // Grand totals accumulators
+            BigDecimal grandLeaseRev = BigDecimal.ZERO, grandCCRev = BigDecimal.ZERO;
+            BigDecimal grandChargesRev = BigDecimal.ZERO, grandOtherRev = BigDecimal.ZERO;
+            BigDecimal grandFixedExp = BigDecimal.ZERO, grandLeaseExp = BigDecimal.ZERO;
+            BigDecimal grandVarExp = BigDecimal.ZERO, grandOtherExp = BigDecimal.ZERO;
+            BigDecimal grandTotalRev = BigDecimal.ZERO, grandTotalExp = BigDecimal.ZERO;
+            BigDecimal grandNetOwed = BigDecimal.ZERO, grandPaid = BigDecimal.ZERO;
+            BigDecimal grandOutstanding = BigDecimal.ZERO;
+
+            // Process drivers one by one, emitting a cached page every 25 active drivers
+            int chunkSize = 25;
+            int pageNum = 0;
+            int processedRaw = 0;       // raw drivers examined so far
+            int totalActive = 0;        // drivers with financial activity
+            List<DriverSummaryDTO> currentChunk = new ArrayList<>();
+
+            for (Driver driver : allDrivers) {
+                processedRaw++;
+
+                DriverSummaryDTO summary = calculateDriverSummaryOptimized(
+                        driver, startDate, endDate, shiftsByDriver, quickMode);
+
+                if (!hasFinancialActivity(summary)) {
+                    // Update progress even for skipped drivers
+                    jobStatus.setProcessedDrivers(processedRaw);
+                    jobStatus.setMessage(String.format("Processing driver %d of %d...",
+                            processedRaw, totalDriverCount));
+                    continue;
+                }
+
+                totalActive++;
+                currentChunk.add(summary);
+
+                // When chunk is full, emit a cached page
+                if (currentChunk.size() == chunkSize) {
+                    DriverSummaryReportDTO pageDto = buildPageDto(
+                            startDate, endDate, pageNum, currentChunk, totalActive);
+
+                    grandLeaseRev = grandLeaseRev.add(safeBigDecimal(pageDto.getPageLeaseRevenue()));
+                    grandCCRev = grandCCRev.add(safeBigDecimal(pageDto.getPageCreditCardRevenue()));
+                    grandChargesRev = grandChargesRev.add(safeBigDecimal(pageDto.getPageChargesRevenue()));
+                    grandOtherRev = grandOtherRev.add(safeBigDecimal(pageDto.getPageOtherRevenue()));
+                    grandFixedExp = grandFixedExp.add(safeBigDecimal(pageDto.getPageFixedExpense()));
+                    grandLeaseExp = grandLeaseExp.add(safeBigDecimal(pageDto.getPageLeaseExpense()));
+                    grandVarExp = grandVarExp.add(safeBigDecimal(pageDto.getPageVariableExpense()));
+                    grandOtherExp = grandOtherExp.add(safeBigDecimal(pageDto.getPageOtherExpense()));
+                    grandTotalRev = grandTotalRev.add(safeBigDecimal(pageDto.getPageTotalRevenue()));
+                    grandTotalExp = grandTotalExp.add(safeBigDecimal(pageDto.getPageTotalExpense()));
+                    grandNetOwed = grandNetOwed.add(safeBigDecimal(pageDto.getPageNetOwed()));
+                    grandPaid = grandPaid.add(safeBigDecimal(pageDto.getPageTotalPaid()));
+                    grandOutstanding = grandOutstanding.add(safeBigDecimal(pageDto.getPageTotalOutstanding()));
+
+                    reportCacheService.putPage(jobId, pageNum, pageDto);
+                    pageNum++;
+
+                    jobStatus.setPagesReady(pageNum);
+                    jobStatus.setProcessedDrivers(processedRaw);
+                    jobStatus.setMessage(String.format("Processed %d of %d drivers (%d pages ready)",
+                            processedRaw, totalDriverCount, pageNum));
+
+                    log.info("Async report job {} - page {} cached ({} active drivers so far)",
+                            jobId, pageNum - 1, totalActive);
+
+                    currentChunk = new ArrayList<>();
+                }
+
+                jobStatus.setProcessedDrivers(processedRaw);
+                jobStatus.setMessage(String.format("Processing driver %d of %d...",
+                        processedRaw, totalDriverCount));
+            }
+
+            // Emit final partial page if any remaining
+            if (!currentChunk.isEmpty()) {
+                DriverSummaryReportDTO pageDto = buildPageDto(
+                        startDate, endDate, pageNum, currentChunk, totalActive);
+
+                grandLeaseRev = grandLeaseRev.add(safeBigDecimal(pageDto.getPageLeaseRevenue()));
+                grandCCRev = grandCCRev.add(safeBigDecimal(pageDto.getPageCreditCardRevenue()));
+                grandChargesRev = grandChargesRev.add(safeBigDecimal(pageDto.getPageChargesRevenue()));
+                grandOtherRev = grandOtherRev.add(safeBigDecimal(pageDto.getPageOtherRevenue()));
+                grandFixedExp = grandFixedExp.add(safeBigDecimal(pageDto.getPageFixedExpense()));
+                grandLeaseExp = grandLeaseExp.add(safeBigDecimal(pageDto.getPageLeaseExpense()));
+                grandVarExp = grandVarExp.add(safeBigDecimal(pageDto.getPageVariableExpense()));
+                grandOtherExp = grandOtherExp.add(safeBigDecimal(pageDto.getPageOtherExpense()));
+                grandTotalRev = grandTotalRev.add(safeBigDecimal(pageDto.getPageTotalRevenue()));
+                grandTotalExp = grandTotalExp.add(safeBigDecimal(pageDto.getPageTotalExpense()));
+                grandNetOwed = grandNetOwed.add(safeBigDecimal(pageDto.getPageNetOwed()));
+                grandPaid = grandPaid.add(safeBigDecimal(pageDto.getPageTotalPaid()));
+                grandOutstanding = grandOutstanding.add(safeBigDecimal(pageDto.getPageTotalOutstanding()));
+
+                reportCacheService.putPage(jobId, pageNum, pageDto);
+                pageNum++;
+
+                jobStatus.setPagesReady(pageNum);
+                log.info("Async report job {} - final page {} cached ({} drivers)",
+                        jobId, pageNum - 1, currentChunk.size());
+            }
+
+            int finalTotalPages = Math.max(1, pageNum);
+
+            // Update all cached pages with correct totalPages and totalElements
+            for (int p = 0; p < finalTotalPages; p++) {
+                DriverSummaryReportDTO cached = reportCacheService.getPage(jobId, p);
+                if (cached != null) {
+                    cached.setTotalPages(finalTotalPages);
+                    cached.setTotalElements((long) totalActive);
+                }
+            }
+
+            jobStatus.setTotalPages(finalTotalPages);
+            jobStatus.setTotalDrivers(totalDriverCount);
+
+            // Build and cache grand totals
+            DriverSummaryReportDTO grandTotalsDto = DriverSummaryReportDTO.builder()
+                    .startDate(startDate)
+                    .endDate(endDate)
+                    .totalPages(finalTotalPages)
+                    .totalElements((long) totalActive)
+                    .grandTotalLeaseRevenue(grandLeaseRev)
+                    .grandTotalCreditCardRevenue(grandCCRev)
+                    .grandTotalChargesRevenue(grandChargesRev)
+                    .grandTotalOtherRevenue(grandOtherRev)
+                    .grandTotalFixedExpense(grandFixedExp)
+                    .grandTotalLeaseExpense(grandLeaseExp)
+                    .grandTotalVariableExpense(grandVarExp)
+                    .grandTotalOtherExpense(grandOtherExp)
+                    .grandTotalRevenue(grandTotalRev)
+                    .grandTotalExpense(grandTotalExp)
+                    .grandNetOwed(grandNetOwed)
+                    .grandTotalPaid(grandPaid)
+                    .grandTotalOutstanding(grandOutstanding)
+                    .build();
+
+            reportCacheService.putGrandTotals(jobId, grandTotalsDto);
+
+            jobStatus.setStatus(ReportJobStatus.Status.COMPLETED);
+            jobStatus.setEndTime(LocalDateTime.now());
+            jobStatus.setMessage(String.format("Completed: %d drivers with activity (%d pages)",
+                    totalActive, finalTotalPages));
+
+            log.info("Async report job {} completed - {} active drivers, {} pages (from {} total drivers)",
+                    jobId, totalActive, finalTotalPages, totalDriverCount);
+
+        } catch (Exception e) {
+            log.error("Async report job {} failed: {}", jobId, e.getMessage(), e);
+            jobStatus.setStatus(ReportJobStatus.Status.FAILED);
+            jobStatus.setMessage("Report generation failed: " + e.getMessage());
+            jobStatus.getErrors().add(e.getMessage());
+            jobStatus.setEndTime(LocalDateTime.now());
+        }
+    }
+
+    /**
+     * Build a page DTO from a chunk of driver summaries.
+     * totalPages is set to 0 initially and corrected once all drivers are processed.
+     */
+    private DriverSummaryReportDTO buildPageDto(
+            LocalDate startDate, LocalDate endDate,
+            int pageNum, List<DriverSummaryDTO> chunk, int totalActiveSoFar) {
+
+        DriverSummaryReportDTO pageDto = DriverSummaryReportDTO.builder()
+                .startDate(startDate)
+                .endDate(endDate)
+                .currentPage(pageNum)
+                .totalPages(0) // updated later when final count known
+                .totalElements((long) totalActiveSoFar)
+                .pageSize(25)
+                .driverSummaries(new ArrayList<>(chunk))
+                .build();
+
+        pageDto.calculatePageTotals();
+        return pageDto;
+    }
 }
