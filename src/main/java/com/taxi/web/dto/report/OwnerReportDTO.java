@@ -58,6 +58,11 @@ public class OwnerReportDTO {
     private List<StatementLineItem> insuranceMileageExpenses = new ArrayList<>();  // For drivers
     private BigDecimal totalInsuranceMileageExpenses;
 
+    // Airport Trip Expenses (separate from one-time expenses)
+    @Builder.Default
+    private List<StatementLineItem> airportTripExpenses = new ArrayList<>();
+    private BigDecimal totalAirportTripExpenses;
+
     // Totals
     private BigDecimal totalExpenses;
     private BigDecimal netAmount;  // Revenues - Expenses
@@ -85,7 +90,14 @@ public class OwnerReportDTO {
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
         totalInsuranceMileageExpenses = insuranceMileageExp;
 
-        totalExpenses = totalRecurringExpenses.add(totalOneTimeExpenses).add(totalPerUnitExpenses).add(insuranceMileageExp);
+        // Add airport trip expenses to total expenses
+        BigDecimal airportTripExp = airportTripExpenses.stream()
+                .map(StatementLineItem::getAmount)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        totalAirportTripExpenses = airportTripExp;
+
+        totalExpenses = totalRecurringExpenses.add(totalOneTimeExpenses).add(totalPerUnitExpenses)
+                .add(insuranceMileageExp).add(airportTripExp);
         netAmount = totalRevenues.subtract(totalExpenses);
 
         // Calculate netDue: previousBalance + revenues - expenses - paidAmount

@@ -13,6 +13,7 @@ import com.taxi.domain.lease.model.LeaseRate;
 import com.taxi.domain.lease.repository.LeaseRateRepository;
 import com.taxi.domain.lease.service.LeaseCalculationService;
 import com.taxi.domain.lease.service.LeaseRateOverrideService;
+import com.taxi.domain.mileage.repository.MileageRecordRepository;
 import com.taxi.domain.payment.model.CreditCardTransaction;
 import com.taxi.domain.payment.repository.CreditCardTransactionRepository;
 import com.taxi.domain.profile.model.ItemRateChargedTo;
@@ -85,6 +86,9 @@ public class DriverFinancialCalculationService {
     // ✅ NEW: Airport charge service for calculating airport trip charges
     private final com.taxi.domain.airport.service.AirportChargeService airportChargeService;
 
+    // ✅ NEW: Mileage record repository for looking up actual miles when DriverShift.TotalDistance is missing
+    private final MileageRecordRepository mileageRecordRepository;
+
     /**
      * ═══════════════════════════════════════════════════════════════════════
      * LEASE RATE CALCULATION - WITH OVERRIDE SUPPORT
@@ -105,49 +109,52 @@ public class DriverFinancialCalculationService {
             String cabNumber,
             String shiftType,
             LocalDateTime shiftDateTime,
-            Cab cab) {
-        
+            Cab cab,
+            com.taxi.domain.cab.model.CabType cabType,
+            boolean hasAirportLicense) {
+
         LocalDate shiftDate = shiftDateTime.toLocalDate();
-        
+
         // ✅ STEP 1: Check for custom override FIRST
         BigDecimal overrideRate = leaseRateOverrideService.getApplicableLeaseRate(
-            ownerDriverNumber, 
-            cabNumber, 
-            shiftType, 
+            ownerDriverNumber,
+            cabNumber,
+            shiftType,
             shiftDate
         );
-        
+
         if (overrideRate != null) {
-            log.debug("   💰 Using CUSTOM override rate: ${} for owner={}, cab={}, shift={}, date={}", 
+            log.debug("   💰 Using CUSTOM override rate: ${} for owner={}, cab={}, shift={}, date={}",
                 overrideRate, ownerDriverNumber, cabNumber, shiftType, shiftDate);
             return overrideRate;
         }
-        
-        // ✅ STEP 2: No override - use default rate
-        log.debug("   💰 No override found, using DEFAULT rate for cab={}, shift={}", 
+
+        // ✅ STEP 2: No override - use default rate with CabShift attributes
+        log.debug("   💰 No override found, using DEFAULT rate for cab={}, shift={}",
             cabNumber, shiftType);
-        return getDefaultLeaseRate(cab, shiftDateTime);
+        return getDefaultLeaseRate(cab, shiftDateTime, cabType, hasAirportLicense);
     }
     
     /**
      * Get default lease rate from lease_rates table
-     * Note: Attributes are now at shift level, not cab level
+     * Uses CabShift attributes (cabType, hasAirportLicense) for correct rate lookup
      */
-    private BigDecimal getDefaultLeaseRate(Cab cab, LocalDateTime shiftDateTime) {
+    private BigDecimal getDefaultLeaseRate(Cab cab, LocalDateTime shiftDateTime,
+                                           com.taxi.domain.cab.model.CabType cabType, boolean hasAirportLicense) {
         try {
-            // Attributes moved to shift level - using null/false for now
-            // This method needs to be refactored to receive shift information
-            LeaseRate leaseRate = null;  // leaseCalculationService.findApplicableRate requires shift attributes
-            
+            LeaseRate leaseRate = leaseCalculationService.findApplicableRate(
+                cabType, hasAirportLicense, shiftDateTime);
+
             if (leaseRate == null) {
-                log.warn("   ⚠️ No default lease rate found, using fallback $50");
+                log.warn("   ⚠️ No default lease rate found for cabType={}, airport={}, using fallback $50",
+                    cabType, hasAirportLicense);
                 return new BigDecimal("50.00"); // Fallback rate
             }
-            
+
             BigDecimal baseRate = leaseRate.getBaseRate();
-            log.debug("   💰 Using DEFAULT base rate: ${}", baseRate);
+            log.debug("   💰 Using DEFAULT base rate: ${} (cabType={}, airport={})", baseRate, cabType, hasAirportLicense);
             return baseRate;
-            
+
         } catch (Exception e) {
             log.error("   ❌ Error getting default lease rate: {}", e.getMessage());
             return new BigDecimal("50.00"); // Fallback on error
@@ -239,7 +246,7 @@ public class DriverFinancialCalculationService {
                 }
 
                 LeaseRevenueDTO leaseItem = calculateLeaseForShift(
-                    driverShift, cab, owner, cabShift.getShiftType().name());
+                    driverShift, cab, owner, cabShift.getShiftType().name(), cabShift);
 
                 if (leaseItem != null) {
                     totalProcessed++;
@@ -278,30 +285,72 @@ public class DriverFinancialCalculationService {
      */
     private LeaseCalculationResult calculateShiftLeaseAmount(
             DriverShift shift, Cab cab, Driver owner, String shiftType) {
-        // ✅ Get applicable rate (override or default)
+        return calculateShiftLeaseAmount(shift, cab, owner, shiftType, null);
+    }
+
+    private LeaseCalculationResult calculateShiftLeaseAmount(
+            DriverShift shift, Cab cab, Driver owner, String shiftType, CabShift cabShift) {
+        // ✅ FIX: Extract CabShift attributes for correct LeaseRate lookup
+        com.taxi.domain.cab.model.CabType cabType = (cabShift != null) ? cabShift.getCabType() : null;
+        boolean hasAirportLicense = (cabShift != null && cabShift.getHasAirportLicense() != null)
+                ? cabShift.getHasAirportLicense() : false;
+
+        // ✅ Get applicable rate (override or default) - now passes CabShift attributes
         BigDecimal baseRate = getApplicableLeaseRate(
             owner.getDriverNumber(),
             cab.getCabNumber(),
             shiftType,
             shift.getLogonTime(),
-            cab
+            cab,
+            cabType,
+            hasAirportLicense
         );
 
-        // Get mileage rate from default lease rate
-        // Note: DriverShift doesn't have cab attributes - using defaults
-        // These should be obtained from the underlying CabShift
         LeaseRate leaseRate = leaseCalculationService.findApplicableRate(
-            null,  // cabType - need to get from CabShift
-            false, // hasAirportLicense - need to get from CabShift
+            cabType,
+            hasAirportLicense,
             shift.getLogonTime()
         );
 
-        BigDecimal mileageRate = (leaseRate != null) ?
+        BigDecimal mileageRate = (leaseRate != null && leaseRate.getMileageRate() != null) ?
             leaseRate.getMileageRate() : BigDecimal.ZERO;
 
+        // ✅ FIX: Get actual miles from DriverShift or MileageRecord
+        // Do NOT default to 10 miles - use actual recorded miles or 0
         BigDecimal miles = shift.getTotalDistance();
+
+        // If DriverShift doesn't have miles, try to fetch from MileageRecord
         if (miles == null || miles.compareTo(BigDecimal.ZERO) == 0) {
-            miles = BigDecimal.TEN;
+            try {
+                List<com.taxi.domain.mileage.model.MileageRecord> mileageRecords =
+                    mileageRecordRepository.findByDriverNumberAndShiftTimes(
+                        shift.getDriverNumber(),
+                        shift.getLogonTime(),
+                        shift.getLogoffTime()
+                    );
+
+                if (!mileageRecords.isEmpty()) {
+                    // ✅ Sum mileageA (Tariff 1 / Flag fall) to match detail modal calculation
+                    // This ensures lease and insurance use the same mileage value
+                    miles = mileageRecords.stream()
+                        .map(m -> m.getMileageA() != null ? m.getMileageA() : BigDecimal.ZERO)
+                        .reduce(BigDecimal.ZERO, BigDecimal::add);
+
+                    if (miles.compareTo(BigDecimal.ZERO) > 0) {
+                        log.debug("   Miles (mileageA) for shift {} (driver {}, cab {}): ${} from MileageRecord (not from DriverShift.TotalDistance)",
+                            shift.getId(), shift.getDriverNumber(), shift.getCabNumber(), miles);
+                    }
+                }
+            } catch (Exception e) {
+                log.warn("   Error fetching mileage records for shift {}: {}", shift.getId(), e.getMessage());
+            }
+        }
+
+        // If still no miles found, use 0 (not 10)
+        if (miles == null || miles.compareTo(BigDecimal.ZERO) == 0) {
+            miles = BigDecimal.ZERO;
+            log.debug("   No miles recorded for shift {} (driver {}, cab {}), using 0 for mileage calculation",
+                shift.getId(), shift.getDriverNumber(), shift.getCabNumber());
         }
 
         BigDecimal mileageLease = mileageRate.multiply(miles);
@@ -331,10 +380,10 @@ public class DriverFinancialCalculationService {
     }
 
     private LeaseRevenueDTO calculateLeaseForShift(
-            DriverShift shift, Cab cab, Driver owner, String shiftType) {
+            DriverShift shift, Cab cab, Driver owner, String shiftType, CabShift cabShift) {
         try {
-            // ✅ Use shared calculation
-            LeaseCalculationResult leaseCalc = calculateShiftLeaseAmount(shift, cab, owner, shiftType);
+            // ✅ Use shared calculation with CabShift for correct mileage rate lookup
+            LeaseCalculationResult leaseCalc = calculateShiftLeaseAmount(shift, cab, owner, shiftType, cabShift);
             
             // Look up driver name from repository (DriverShift.driverName is transient/not stored)
             String workingDriverName = driverRepository.findByDriverNumber(shift.getDriverNumber())
@@ -601,7 +650,7 @@ public class DriverFinancialCalculationService {
             }
 
             LeaseExpenseDTO leaseItem = calculateLeaseExpenseForShift(
-                    driverShift, cabShift.getCab(), shiftOwner, cabShift.getShiftType().name());
+                    driverShift, cabShift.getCab(), shiftOwner, cabShift.getShiftType().name(), cabShift);
 
             if (leaseItem != null) {
                 totalProcessed++;
@@ -633,10 +682,10 @@ public class DriverFinancialCalculationService {
     }
 
     private LeaseExpenseDTO calculateLeaseExpenseForShift(
-            DriverShift shift, Cab cab, Driver owner, String shiftType) {
+            DriverShift shift, Cab cab, Driver owner, String shiftType, CabShift cabShift) {
         try {
-            // ✅ Use shared calculation
-            LeaseCalculationResult leaseCalc = calculateShiftLeaseAmount(shift, cab, owner, shiftType);
+            // ✅ Use shared calculation with CabShift for correct mileage rate lookup
+            LeaseCalculationResult leaseCalc = calculateShiftLeaseAmount(shift, cab, owner, shiftType, cabShift);
 
             return LeaseExpenseDTO.builder()
                     .shiftId(shift.getId())
@@ -783,16 +832,22 @@ public class DriverFinancialCalculationService {
                 driverNumber, startDate, endDate);
 
         try {
-            // ✅ Delegate to calculateLeaseExpense and sum the results
+            // ✅ Delegate to calculateLeaseExpense which already computes totalLease per shift
+            // totalLease = baseRate + mileageLease (calculated in calculateShiftLeaseAmount)
             LeaseExpenseReportDTO report = calculateLeaseExpense(driverNumber, startDate, endDate);
 
+            // ✅ Simply sum the pre-calculated totalLease from each lease item
+            // This already includes BOTH base rate + mileage lease, calculated correctly
+            // in calculateShiftLeaseAmount() using actual miles from DriverShift/MileageRecord
             BigDecimal total = report.getLeaseExpenseItems() == null ? BigDecimal.ZERO
                 : report.getLeaseExpenseItems().stream()
                     .map(LeaseExpenseDTO::getTotalLease)
                     .filter(Objects::nonNull)
                     .reduce(BigDecimal.ZERO, BigDecimal::add);
 
-            log.info("   ✅ Total lease expense for driver {}: ${}", driverNumber, total);
+            log.info("   ✅ Total lease expense for driver {}: ${} ({} shifts)",
+                driverNumber, total,
+                report.getLeaseExpenseItems() != null ? report.getLeaseExpenseItems().size() : 0);
             return total;
         } catch (Exception e) {
             log.error("   ❌ Error calculating total lease for driver {}: {}", driverNumber, e.getMessage(), e);
@@ -807,8 +862,13 @@ public class DriverFinancialCalculationService {
      */
     public BigDecimal calculateLeaseForSingleShift(
             DriverShift shift, Cab cab, Driver owner, String shiftType) {
+        return calculateLeaseForSingleShift(shift, cab, owner, shiftType, null);
+    }
+
+    public BigDecimal calculateLeaseForSingleShift(
+            DriverShift shift, Cab cab, Driver owner, String shiftType, CabShift cabShift) {
         try {
-            LeaseCalculationResult leaseCalc = calculateShiftLeaseAmount(shift, cab, owner, shiftType);
+            LeaseCalculationResult leaseCalc = calculateShiftLeaseAmount(shift, cab, owner, shiftType, cabShift);
             return leaseCalc.totalLease;
         } catch (Exception e) {
             log.error("Error calculating lease for shift {}: {}", shift.getId(), e.getMessage());
@@ -822,8 +882,13 @@ public class DriverFinancialCalculationService {
      */
     public LeaseCalculationResult calculateLeaseForSingleShiftDetailed(
             DriverShift shift, Cab cab, Driver owner, String shiftType) {
+        return calculateLeaseForSingleShiftDetailed(shift, cab, owner, shiftType, null);
+    }
+
+    public LeaseCalculationResult calculateLeaseForSingleShiftDetailed(
+            DriverShift shift, Cab cab, Driver owner, String shiftType, CabShift cabShift) {
         try {
-            return calculateShiftLeaseAmount(shift, cab, owner, shiftType);
+            return calculateShiftLeaseAmount(shift, cab, owner, shiftType, cabShift);
         } catch (Exception e) {
             log.error("Error calculating lease for shift {}: {}", shift.getId(), e.getMessage());
             return new LeaseCalculationResult(BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO,
@@ -865,6 +930,10 @@ public class DriverFinancialCalculationService {
     /**
      * ✅ Count total airport trips for a driver over a date range.
      *
+     * ✅ CRITICAL FIX: Calculate trips by summing results from calculateAirportChargeForShiftDetailed()
+     * which includes both trip count AND charge, ensuring accuracy and consistency with charge calculation.
+     * This matches the detail modal's approach exactly.
+     *
      * @param driverNumber The driver number
      * @param startDate Start date (inclusive)
      * @param endDate End date (inclusive)
@@ -875,29 +944,56 @@ public class DriverFinancialCalculationService {
             return 0;
         }
 
-        List<DriverShift> shifts = driverShiftRepository.findByDriverNumberAndDateRange(driverNumber, startDate, endDate);
+        log.info("   Counting airport trips for {} from {} to {}", driverNumber, startDate, endDate);
+
+        // ✅ CHANGED: Use MileageRecord instead of DriverShift for consistency with detail modal
+        List<com.taxi.domain.mileage.model.MileageRecord> mileageRecords =
+            mileageRecordRepository.findByDriverNumberAndDateRange(driverNumber, startDate, endDate);
+
+        log.info("   Found {} mileage records for {} (using MileageRecord for accuracy)",
+            mileageRecords.size(), driverNumber);
+
         int totalTrips = 0;
 
-        for (DriverShift shift : shifts) {
-            if (shift.getLogonTime() == null || shift.getLogoffTime() == null) {
+        for (com.taxi.domain.mileage.model.MileageRecord mileageRecord : mileageRecords) {
+            if (mileageRecord.getLogonTime() == null || mileageRecord.getLogoffTime() == null ||
+                mileageRecord.getCabNumber() == null) {
                 continue;
             }
 
-            int tripCount = airportChargeService.countAirportTripsForShift(
-                shift.getCabNumber(),
-                shift.getLogonTime(),
-                shift.getLogoffTime()
-            );
-            totalTrips += tripCount;
+            // ✅ FIX: Use calculateAirportChargeForShiftDetailed() which returns trip count + charge
+            // This ensures trip count matches the charge calculation exactly
+            com.taxi.domain.airport.service.AirportChargeService.AirportChargeResult result =
+                airportChargeService.calculateAirportChargeForShiftDetailed(
+                    mileageRecord.getCabNumber(),
+                    mileageRecord.getLogonTime(),
+                    mileageRecord.getLogoffTime(),
+                    mileageRecord.getLogonTime().toLocalDate()
+                );
+
+            if (result != null) {
+                totalTrips += result.getTripCount();
+
+                if (result.getTripCount() > 0) {
+                    log.debug("   Mileage record for cab {}: {} airport trips",
+                        mileageRecord.getCabNumber(), result.getTripCount());
+                }
+            }
         }
 
+        log.info("   Total airport trips for {}: {}", driverNumber, totalTrips);
         return totalTrips;
     }
 
     /**
      * ✅ Calculate total airport trip charges for a driver over a date range.
      *
-     * For each driver shift in the period:
+     * ✅ UPDATED: Now uses MileageRecord (actual driving activity) instead of DriverShift
+     * This ensures consistency with the detail modal calculation and avoids discrepancies.
+     * Uses calculateAirportChargeForShiftDetailed() - SAME method as countTotalAirportTrips()
+     * to ensure charge and trip count are always in sync.
+     *
+     * For each mileage record in the period:
      * 1. Count airport trips during logon/logoff hours
      * 2. Apply ItemRate (AIRPORT_TRIP unit type) to calculate charge
      * 3. Sum all charges
@@ -914,40 +1010,53 @@ public class DriverFinancialCalculationService {
             return BigDecimal.ZERO;
         }
 
-        log.info("🛫 Calculating airport expenses for driver {} from {} to {}", driverNumber, startDate, endDate);
+        log.debug("🛫 Calculating airport expenses for driver {} from {} to {}", driverNumber, startDate, endDate);
 
-        // Fetch all active driver shifts for this driver in the date range
-        List<DriverShift> shifts = driverShiftRepository.findByDriverNumberAndDateRange(driverNumber, startDate, endDate);
-        log.info("   Found {} driver shifts for {}", shifts.size(), driverNumber);
+        // ✅ CHANGED: Use MileageRecord instead of DriverShift for consistency with detail modal
+        List<com.taxi.domain.mileage.model.MileageRecord> mileageRecords =
+            mileageRecordRepository.findByDriverNumberAndDateRange(driverNumber, startDate, endDate);
+        log.debug("   Found {} mileage records for {} for expense calculation",
+            mileageRecords.size(), driverNumber);
 
         BigDecimal totalExpense = BigDecimal.ZERO;
 
-        for (DriverShift shift : shifts) {
-            if (shift.getLogonTime() == null || shift.getLogoffTime() == null) {
-                log.warn("   Skipping shift with null times: id={}", shift.getId());
+        for (com.taxi.domain.mileage.model.MileageRecord mileageRecord : mileageRecords) {
+            if (mileageRecord.getLogonTime() == null || mileageRecord.getLogoffTime() == null ||
+                mileageRecord.getCabNumber() == null) {
+                log.debug("   Skipping mileage record with null times: id={}", mileageRecord.getId());
                 continue;
             }
 
-            // Calculate airport charge for this shift
-            LocalDate shiftDate = shift.getLogonTime().toLocalDate();
-            log.debug("   Processing shift on {} - cab {} - logon {} logoff {}",
-                shiftDate, shift.getCabNumber(), shift.getLogonTime(), shift.getLogoffTime());
+            // ✅ Use calculateAirportChargeForShiftDetailed() - SAME method as countTotalAirportTrips()
+            // This ensures trip count and charge are calculated with the exact same logic
+            LocalDate recordDate = mileageRecord.getLogonTime().toLocalDate();
+            log.debug("   Processing mileage record on {} - cab {} - logon {} logoff {}",
+                recordDate, mileageRecord.getCabNumber(), mileageRecord.getLogonTime(), mileageRecord.getLogoffTime());
 
-            BigDecimal shiftCharge = airportChargeService.calculateAirportChargeForShift(
-                shift.getCabNumber(),
-                shift.getLogonTime(),
-                shift.getLogoffTime(),
-                shiftDate
-            );
+            com.taxi.domain.airport.service.AirportChargeService.AirportChargeResult result =
+                airportChargeService.calculateAirportChargeForShiftDetailed(
+                    mileageRecord.getCabNumber(),
+                    mileageRecord.getLogonTime(),
+                    mileageRecord.getLogoffTime(),
+                    recordDate
+                );
 
-            if (shiftCharge.compareTo(BigDecimal.ZERO) > 0) {
-                log.info("   ✈️ Shift on {}: ${} airport charge", shiftDate, shiftCharge);
+            if (result != null && result.getTotalCharge().compareTo(BigDecimal.ZERO) > 0) {
+                log.debug("      Cab {}: {} trips × ${} = ${}",
+                    mileageRecord.getCabNumber(), result.getTripCount(),
+                    result.getRatePerTrip(), result.getTotalCharge());
+                totalExpense = totalExpense.add(result.getTotalCharge());
             }
-
-            totalExpense = totalExpense.add(shiftCharge);
         }
 
-        log.info("🛫 Total airport expense for {}: ${}", driverNumber, totalExpense);
+        log.debug("🛫 Total airport expense for {}: ${}", driverNumber, totalExpense);
         return totalExpense;
+    }
+
+    /**
+     * ✅ Wrapper for countTotalAirportTrips for clarity
+     */
+    public int countAirportTrips(String driverNumber, LocalDate startDate, LocalDate endDate) {
+        return countTotalAirportTrips(driverNumber, startDate, endDate);
     }
 }

@@ -40,6 +40,10 @@ public class StatementLineItem {
     // For insurance mileage and mileage-based charges
     private BigDecimal miles;  // Miles driven (for insurance calculations, etc.)
 
+    // For airport trip expenses
+    private Integer tripCount;        // Number of airport trips
+    private BigDecimal ratePerUnit;   // Rate per trip
+
     // For lease expenses breakdown: Fixed Lease | Mileage Lease | Total Lease
     private LeaseBreakdown leaseBreakdown;
 

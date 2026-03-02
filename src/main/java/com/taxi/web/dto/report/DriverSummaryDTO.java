@@ -37,6 +37,11 @@ public class DriverSummaryDTO {
     private BigDecimal variableExpense;        // Variable expenses
     private BigDecimal otherExpense;           // Other miscellaneous expenses
 
+    // ✅ Explicit expense tracking
+    private BigDecimal insuranceMileageExpense;  // Insurance mileage expense
+    private Integer airportTripCount;            // Total airport trips during period
+    private BigDecimal airportTripCost;          // Total cost of airport trips (tripCount × rate)
+
     // Financial totals
     private BigDecimal totalRevenue;           // Sum of all revenues
     private BigDecimal totalExpense;           // Sum of all expenses
@@ -73,12 +78,14 @@ public class DriverSummaryDTO {
     public void calculateTotalRevenue() {
         this.totalRevenue = safeAdd(leaseRevenue, creditCardRevenue, chargesRevenue, otherRevenue);
     }
-    
+
     /**
      * Calculate total expense from all categories
+     * Includes insurance mileage and airport trip cost
      */
     public void calculateTotalExpense() {
-        this.totalExpense = safeAdd(fixedExpense, leaseExpense, variableExpense, otherExpense);
+        this.totalExpense = safeAdd(fixedExpense, leaseExpense, variableExpense, otherExpense,
+                                    insuranceMileageExpense, airportTripCost);
     }
     
     /**

@@ -253,31 +253,39 @@ public class ReportService {
             summary.setChargesRevenue(chargesRev);
             summary.setOtherRevenue(otherRev);
 
-            // Expenses breakdown (all from fullReport)
+            // ✅ SINGLE SOURCE OF TRUTH: Extract ALL values from fullReport
+            // The individual report (generateOwnerReport) is now the authority.
+            // DO NOT recalculate lease/airport separately — use fullReport's values directly.
             summary.setFixedExpense(safeBigDecimal(fullReport.getTotalRecurringExpenses()));
 
-            // ✅ Use shared lease calculation (SINGLE SOURCE OF TRUTH)
-            BigDecimal leaseExpenseTotal = driverFinancialCalculationService.calculateTotalLeaseExpenseForDriver(
-                    driver.getDriverNumber(), startDate, endDate);
-
-            // ✅ Calculate other one-time expenses from fullReport (excluding lease which we calculated from shifts)
+            // ✅ Lease expense: sum from oneTimeExpenses where categoryCode=LEASE_EXP
+            // This matches exactly what the individual report shows
+            BigDecimal leaseExpenseTotal = BigDecimal.ZERO;
             BigDecimal otherExpenseTotal = BigDecimal.ZERO;
-            if (fullReport.getOneTimeExpenses() != null && !fullReport.getOneTimeExpenses().isEmpty()) {
+            BigDecimal airportExpenseTotal = BigDecimal.ZERO;
+            int airportTripCount = 0;
+
+            if (fullReport.getOneTimeExpenses() != null) {
                 for (StatementLineItem expense : fullReport.getOneTimeExpenses()) {
-                    // Exclude lease expenses - we calculated those from shifts
-                    if (!((expense.getCategoryCode() != null && expense.getCategoryCode().equals("LEASE_EXP")) ||
-                        (expense.getApplicationType() != null && expense.getApplicationType().equals("LEASE_RENT")))) {
+                    String catCode = expense.getCategoryCode();
+
+                    if ("LEASE_EXP".equals(catCode)) {
+                        leaseExpenseTotal = leaseExpenseTotal.add(safeBigDecimal(expense.getAmount()));
+                    } else if ("AIRPORT_TRIP".equals(catCode)) {
+                        airportExpenseTotal = airportExpenseTotal.add(safeBigDecimal(expense.getAmount()));
+                        if (expense.getTripCount() != null) {
+                            airportTripCount += expense.getTripCount();
+                        }
+                    } else {
                         otherExpenseTotal = otherExpenseTotal.add(safeBigDecimal(expense.getAmount()));
-                        log.debug("Added to other expense: {} - {}", expense.getCategoryCode(), expense.getAmount());
                     }
                 }
             }
 
-            // ✅ NEW: Calculate airport trip charges
-            BigDecimal airportExpenseTotal = driverFinancialCalculationService
-                    .calculateAirportExpense(driver.getDriverNumber(), startDate, endDate);
+            summary.setAirportTripCount(airportTripCount);
+            summary.setAirportTripCost(airportExpenseTotal);
 
-            // ✅ Calculate insurance mileage expense (part of per-unit expenses)
+            // ✅ Insurance mileage expense from fullReport
             BigDecimal insuranceExpenseTotal = BigDecimal.ZERO;
             if (fullReport.getInsuranceMileageExpenses() != null && !fullReport.getInsuranceMileageExpenses().isEmpty()) {
                 insuranceExpenseTotal = fullReport.getInsuranceMileageExpenses().stream()
@@ -286,26 +294,25 @@ public class ReportService {
             }
 
             summary.setLeaseExpense(leaseExpenseTotal);
-            summary.setVariableExpense(BigDecimal.ZERO); // Not tracked separately in detailed report
+            summary.setInsuranceMileageExpense(insuranceExpenseTotal);
+            summary.setVariableExpense(BigDecimal.ZERO);
             summary.setOtherExpense(otherExpenseTotal);
 
-            // ✅ RECALCULATE TOTAL EXPENSE AS SUM OF INDIVIDUAL CATEGORIES
-            // This ensures consistency: totalExpense = fixedExpense + leaseExpense + variableExpense + otherExpense + insuranceExpense + airportExpense
+            // Total expense = sum of all categories (matches fullReport.totalExpenses)
             BigDecimal recalculatedTotalExpense = safeBigDecimal(fullReport.getTotalRecurringExpenses())
                     .add(leaseExpenseTotal)
-                    .add(BigDecimal.ZERO) // variableExpense is 0
                     .add(otherExpenseTotal)
-                    .add(insuranceExpenseTotal)  // Add insurance mileage
+                    .add(insuranceExpenseTotal)
                     .add(airportExpenseTotal);
 
-            log.debug("   📊 Expense Breakdown for {}: Fixed=${}, Lease=${}, Variable=${}, Other=${}, Insurance=${}, Airport=${} → Total=${}",
+            log.debug("   Expense Breakdown for {}: Fixed=${}, Lease=${}, Other=${}, Insurance=${}, Airport=${} (trips={}) → Total=${}",
                     driver.getDriverNumber(),
                     fullReport.getTotalRecurringExpenses(),
                     leaseExpenseTotal,
-                    "0.00",
                     otherExpenseTotal,
                     insuranceExpenseTotal,
                     airportExpenseTotal,
+                    airportTripCount,
                     recalculatedTotalExpense);
 
             // Totals
@@ -399,80 +406,51 @@ public class ReportService {
                 }
             }
 
-            // ✅ LEASE EXPENSE - Use the calculated value (SINGLE SOURCE OF TRUTH)
-            // This matches the value in summary.leaseExpense (from calculateTotalLeaseExpenseForDriver)
-            if (leaseExpenseTotal.compareTo(BigDecimal.ZERO) > 0) {
-                expenseMap.put("LEASE_EXP", DriverSummaryDTO.ItemizedBreakdown.builder()
-                        .key("LEASE_EXP")
-                        .displayName("Lease Expense")
-                        .amount(leaseExpenseTotal)
-                        .build());
-            }
-
-            // One-time expenses (non-lease only)
+            // ✅ Expense breakdown from fullReport.oneTimeExpenses (grouped by type)
             if (fullReport.getOneTimeExpenses() != null) {
                 for (StatementLineItem exp : fullReport.getOneTimeExpenses()) {
                     String categoryCode = exp.getCategoryCode();
-                    String applicationType = exp.getApplicationType();
 
-                    // ✅ SKIP LEASE EXPENSES - they are calculated from driver shifts (line 255-256)
-                    if ((categoryCode != null && categoryCode.equals("LEASE_EXP")) ||
-                        (applicationType != null && applicationType.equals("LEASE_RENT"))) {
-                        log.debug("   ⊘ Skipping lease expense from fullReport (using calculated value instead): {}", exp.getAmount());
-                        continue; // Skip - use calculated value instead
+                    if ("LEASE_EXP".equals(categoryCode)) {
+                        // Accumulate lease into single breakdown item
+                        if (!expenseMap.containsKey("LEASE_EXP")) {
+                            expenseMap.put("LEASE_EXP", DriverSummaryDTO.ItemizedBreakdown.builder()
+                                    .key("LEASE_EXP").displayName("Lease Expense").amount(BigDecimal.ZERO).build());
+                        }
+                        expenseMap.get("LEASE_EXP").setAmount(
+                                expenseMap.get("LEASE_EXP").getAmount().add(safeBigDecimal(exp.getAmount())));
+                    } else if ("AIRPORT_TRIP".equals(categoryCode)) {
+                        // Accumulate airport into single breakdown item
+                        if (!expenseMap.containsKey("AIRPORT")) {
+                            expenseMap.put("AIRPORT", DriverSummaryDTO.ItemizedBreakdown.builder()
+                                    .key("AIRPORT").displayName("Airport Trips").amount(BigDecimal.ZERO).build());
+                        }
+                        expenseMap.get("AIRPORT").setAmount(
+                                expenseMap.get("AIRPORT").getAmount().add(safeBigDecimal(exp.getAmount())));
+                    } else {
+                        // Other one-time expenses, group by category
+                        String categoryName = exp.getCategoryName() != null ? exp.getCategoryName() : "Other Expense";
+                        String key = "ONETIME:" + categoryName;
+                        if (!expenseMap.containsKey(key)) {
+                            expenseMap.put(key, DriverSummaryDTO.ItemizedBreakdown.builder()
+                                    .key(key).displayName(categoryName).amount(BigDecimal.ZERO).build());
+                        }
+                        expenseMap.get(key).setAmount(
+                                expenseMap.get(key).getAmount().add(safeBigDecimal(exp.getAmount())));
                     }
-
-                    // Non-lease one-time expense, group by category
-                    String categoryName = exp.getCategoryName() != null ? exp.getCategoryName() : "Other Expense";
-                    String key = "ONETIME:" + categoryName;
-                    if (!expenseMap.containsKey(key)) {
-                        expenseMap.put(key, DriverSummaryDTO.ItemizedBreakdown.builder()
-                                .key(key)
-                                .displayName(categoryName)
-                                .amount(BigDecimal.ZERO)
-                                .build());
-                    }
-                    DriverSummaryDTO.ItemizedBreakdown item = expenseMap.get(key);
-                    item.setAmount(item.getAmount().add(safeBigDecimal(exp.getAmount())));
                 }
             }
 
             // Insurance mileage expenses
-            if (fullReport.getInsuranceMileageExpenses() != null && !fullReport.getInsuranceMileageExpenses().isEmpty()) {
-                BigDecimal totalInsurance = fullReport.getInsuranceMileageExpenses().stream()
-                        .map(exp -> safeBigDecimal(exp.getAmount()))
-                        .reduce(BigDecimal.ZERO, BigDecimal::add);
-                if (totalInsurance.compareTo(BigDecimal.ZERO) > 0) {
-                    expenseMap.put("INSURANCE", DriverSummaryDTO.ItemizedBreakdown.builder()
-                            .key("INSURANCE")
-                            .displayName("Insurance Mileage")
-                            .amount(totalInsurance)
-                            .build());
-                }
+            if (insuranceExpenseTotal.compareTo(BigDecimal.ZERO) > 0) {
+                expenseMap.put("INSURANCE", DriverSummaryDTO.ItemizedBreakdown.builder()
+                        .key("INSURANCE").displayName("Insurance Mileage").amount(insuranceExpenseTotal).build());
             }
 
-            // ✅ NEW: Airport trip charges (calculated earlier for total)
-            if (airportExpenseTotal.compareTo(BigDecimal.ZERO) > 0) {
-                // Count total trips and get rate for display
-                int totalAirportTrips = driverFinancialCalculationService
-                        .countTotalAirportTrips(driver.getDriverNumber(), startDate, endDate);
-
-                // Get rate for display
-                com.taxi.domain.expense.model.ItemRate airportRate = itemRateRepository.findActiveOnDate(startDate)
-                    .stream()
-                    .filter(r -> r.getUnitType() == com.taxi.domain.profile.model.ItemRateUnitType.AIRPORT_TRIP)
-                    .findFirst()
-                    .orElse(null);
-
-                String displayName = airportRate != null
-                    ? String.format("Airport Trips (%d × $%s)", totalAirportTrips, airportRate.getRate())
-                    : String.format("Airport Trips (%d trips)", totalAirportTrips);
-
-                expenseMap.put("AIRPORT", DriverSummaryDTO.ItemizedBreakdown.builder()
-                        .key("AIRPORT")
-                        .displayName(displayName)
-                        .amount(airportExpenseTotal)
-                        .build());
+            // Update airport display name with trip count
+            if (expenseMap.containsKey("AIRPORT") && airportTripCount > 0) {
+                expenseMap.get("AIRPORT").setDisplayName(
+                        String.format("Airport Trips (%d trips)", airportTripCount));
             }
 
             // ✅ ALWAYS populate breakdown items - needed for table columns
