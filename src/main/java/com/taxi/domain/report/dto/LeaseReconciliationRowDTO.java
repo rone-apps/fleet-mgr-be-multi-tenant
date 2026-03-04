@@ -26,8 +26,10 @@ public class LeaseReconciliationRowDTO {
     private String ownerNumber;
     private String ownerName;
 
-    // Lease
-    private BigDecimal leaseAmount;  // computed amount (same for both sides)
+    // Lease breakdown
+    private BigDecimal fixedLease;   // base rate from lease plan
+    private BigDecimal mileageLease; // mileageRate × miles
+    private BigDecimal leaseAmount;  // fixedLease + mileageLease (total)
 
     // Status
     private String status;           // MATCHED | NO_OWNER | SELF_DRIVEN | CAB_NOT_FOUND

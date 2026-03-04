@@ -125,13 +125,17 @@ public class LeaseReconciliationService {
                     continue;
                 }
 
-                // ✅ MATCHED: Calculate FULL lease amount (baseRate + mileage)
+                // ✅ MATCHED: Calculate FULL lease amount with breakdown (baseRate + mileage)
                 // Pass cabShift so real DB lease rates are used (not $50 fallback)
-                BigDecimal totalLease = driverFinancialCalculationService.calculateLeaseForSingleShift(
-                    ds, cab, owner, shiftType, cabShift);
+                DriverFinancialCalculationService.LeaseCalculationResult leaseCalc =
+                    driverFinancialCalculationService.calculateLeaseForSingleShiftDetailed(
+                        ds, cab, owner, shiftType, cabShift);
 
-                rows.add(buildRow(ds, shiftDate, shiftType, driverName, owner.getDriverNumber(),
-                    owner.getFirstName() + " " + owner.getLastName(), totalLease, "MATCHED"));
+                LeaseReconciliationRowDTO row = buildRow(ds, shiftDate, shiftType, driverName, owner.getDriverNumber(),
+                    owner.getFirstName() + " " + owner.getLastName(), leaseCalc.totalLease, "MATCHED");
+                row.setFixedLease(leaseCalc.baseRate);
+                row.setMileageLease(leaseCalc.mileageLease);
+                rows.add(row);
 
             } catch (Exception e) {
                 log.error("Error processing shift {}: {}", ds.getId(), e.getMessage(), e);
