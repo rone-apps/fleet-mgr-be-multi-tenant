@@ -126,9 +126,9 @@ public class LeaseReconciliationService {
                 }
 
                 // ✅ MATCHED: Calculate FULL lease amount (baseRate + mileage)
-                // This ensures lease reconciliation matches driver summary calculations
+                // Pass cabShift so real DB lease rates are used (not $50 fallback)
                 BigDecimal totalLease = driverFinancialCalculationService.calculateLeaseForSingleShift(
-                    ds, cab, owner, shiftType);
+                    ds, cab, owner, shiftType, cabShift);
 
                 rows.add(buildRow(ds, shiftDate, shiftType, driverName, owner.getDriverNumber(),
                     owner.getFirstName() + " " + owner.getLastName(), totalLease, "MATCHED"));
