@@ -74,7 +74,9 @@ public class SecurityConfig {
                 "http://44.236.224.106",
                 "http://44.236.224.106:*",
                 "https://taximgr.com",
-                "https://www.taximgr.com"
+                "https://www.taximgr.com",
+                "https://smartfleets.ai",
+                "https://www.smartfleets.ai"
         ));
         config.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"));
         config.setAllowedHeaders(List.of("*"));
