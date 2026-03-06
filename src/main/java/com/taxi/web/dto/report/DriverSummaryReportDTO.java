@@ -44,6 +44,7 @@ public class DriverSummaryReportDTO {
     private BigDecimal pageTotalRevenue;
     private BigDecimal pageTotalExpense;
     private BigDecimal pageNetOwed;
+    private BigDecimal pagePreviousBalance;
     private BigDecimal pageTotalPaid;
     private BigDecimal pageTotalOutstanding;
     
@@ -59,6 +60,7 @@ public class DriverSummaryReportDTO {
     private BigDecimal cumulativeTotalRevenue;
     private BigDecimal cumulativeTotalExpense;
     private BigDecimal cumulativeNetOwed;
+    private BigDecimal cumulativePreviousBalance;
     private BigDecimal cumulativeTotalPaid;
     private BigDecimal cumulativeTotalOutstanding;
     private Integer cumulativeDriverCount;
@@ -75,6 +77,7 @@ public class DriverSummaryReportDTO {
     private BigDecimal grandTotalRevenue;
     private BigDecimal grandTotalExpense;
     private BigDecimal grandNetOwed;
+    private BigDecimal grandPreviousBalance;
     private BigDecimal grandTotalPaid;
     private BigDecimal grandTotalOutstanding;
     
@@ -102,6 +105,7 @@ public class DriverSummaryReportDTO {
         pageTotalRevenue = BigDecimal.ZERO;
         pageTotalExpense = BigDecimal.ZERO;
         pageNetOwed = BigDecimal.ZERO;
+        pagePreviousBalance = BigDecimal.ZERO;
         pageTotalPaid = BigDecimal.ZERO;
         pageTotalOutstanding = BigDecimal.ZERO;
         
@@ -117,6 +121,7 @@ public class DriverSummaryReportDTO {
             pageTotalRevenue = pageTotalRevenue.add(safeBigDecimal(summary.getTotalRevenue()));
             pageTotalExpense = pageTotalExpense.add(safeBigDecimal(summary.getTotalExpense()));
             pageNetOwed = pageNetOwed.add(safeBigDecimal(summary.getNetOwed()));
+            pagePreviousBalance = pagePreviousBalance.add(safeBigDecimal(summary.getPreviousBalance()));
             pageTotalPaid = pageTotalPaid.add(safeBigDecimal(summary.getPaid()));
             pageTotalOutstanding = pageTotalOutstanding.add(safeBigDecimal(summary.getOutstanding()));
         }

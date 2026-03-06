@@ -325,8 +325,12 @@ public class ReportService {
             summary.setTotalRevenue(safeBigDecimal(fullReport.getTotalRevenues()));
             summary.setTotalExpense(recalculatedTotalExpense); // Use recalculated value for consistency
 
-            // Calculate net and outstanding
-            BigDecimal netOwed = safeBigDecimal(fullReport.getTotalRevenues())
+            // Set previous balance from prior period statement
+            summary.setPreviousBalance(safeBigDecimal(fullReport.getPreviousBalance()));
+
+            // Calculate net and outstanding (including previous balance)
+            BigDecimal netOwed = safeBigDecimal(fullReport.getPreviousBalance())
+                    .add(safeBigDecimal(fullReport.getTotalRevenues()))
                     .subtract(recalculatedTotalExpense);
             summary.setNetOwed(netOwed);
             summary.setPaid(safeBigDecimal(fullReport.getPaidAmount()));
@@ -764,6 +768,7 @@ public class ReportService {
         BigDecimal grandTotalRev = BigDecimal.ZERO;
         BigDecimal grandTotalExp = BigDecimal.ZERO;
         BigDecimal grandNetOwed = BigDecimal.ZERO;
+        BigDecimal grandPrevBalance = BigDecimal.ZERO;
         BigDecimal grandPaid = BigDecimal.ZERO;
         BigDecimal grandOutstanding = BigDecimal.ZERO;
 
@@ -799,6 +804,7 @@ public class ReportService {
                 grandTotalRev = grandTotalRev.add(safeBigDecimal(summary.getTotalRevenue()));
                 grandTotalExp = grandTotalExp.add(safeBigDecimal(summary.getTotalExpense()));
                 grandNetOwed = grandNetOwed.add(safeBigDecimal(summary.getNetOwed()));
+                grandPrevBalance = grandPrevBalance.add(safeBigDecimal(summary.getPreviousBalance()));
                 grandPaid = grandPaid.add(safeBigDecimal(summary.getPaid()));
                 grandOutstanding = grandOutstanding.add(safeBigDecimal(summary.getOutstanding()));
 
@@ -854,6 +860,7 @@ public class ReportService {
         report.setGrandTotalRevenue(grandTotalRev);
         report.setGrandTotalExpense(grandTotalExp);
         report.setGrandNetOwed(grandNetOwed);
+        report.setGrandPreviousBalance(grandPrevBalance);
         report.setGrandTotalPaid(grandPaid);
         report.setGrandTotalOutstanding(grandOutstanding);
 
@@ -959,7 +966,8 @@ public class ReportService {
             BigDecimal grandFixedExp = BigDecimal.ZERO, grandLeaseExp = BigDecimal.ZERO;
             BigDecimal grandVarExp = BigDecimal.ZERO, grandOtherExp = BigDecimal.ZERO;
             BigDecimal grandTotalRev = BigDecimal.ZERO, grandTotalExp = BigDecimal.ZERO;
-            BigDecimal grandNetOwed = BigDecimal.ZERO, grandPaid = BigDecimal.ZERO;
+            BigDecimal grandNetOwed = BigDecimal.ZERO, grandPrevBalance = BigDecimal.ZERO;
+            BigDecimal grandPaid = BigDecimal.ZERO;
             BigDecimal grandOutstanding = BigDecimal.ZERO;
 
             // Process drivers one by one, emitting a cached page every 25 active drivers
@@ -1002,6 +1010,7 @@ public class ReportService {
                     grandTotalRev = grandTotalRev.add(safeBigDecimal(pageDto.getPageTotalRevenue()));
                     grandTotalExp = grandTotalExp.add(safeBigDecimal(pageDto.getPageTotalExpense()));
                     grandNetOwed = grandNetOwed.add(safeBigDecimal(pageDto.getPageNetOwed()));
+                    grandPrevBalance = grandPrevBalance.add(safeBigDecimal(pageDto.getPagePreviousBalance()));
                     grandPaid = grandPaid.add(safeBigDecimal(pageDto.getPageTotalPaid()));
                     grandOutstanding = grandOutstanding.add(safeBigDecimal(pageDto.getPageTotalOutstanding()));
 
@@ -1082,6 +1091,7 @@ public class ReportService {
                     .grandTotalRevenue(grandTotalRev)
                     .grandTotalExpense(grandTotalExp)
                     .grandNetOwed(grandNetOwed)
+                    .grandPreviousBalance(grandPrevBalance)
                     .grandTotalPaid(grandPaid)
                     .grandTotalOutstanding(grandOutstanding)
                     .build();

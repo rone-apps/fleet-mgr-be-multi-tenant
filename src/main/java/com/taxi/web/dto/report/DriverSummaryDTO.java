@@ -47,7 +47,8 @@ public class DriverSummaryDTO {
     private BigDecimal totalExpense;           // Sum of all expenses
     private BigDecimal netOwed;                // Total revenue - total expense
 
-    // Payment tracking
+    // Balance & Payment tracking
+    private BigDecimal previousBalance;        // Carried forward from previous period
     private BigDecimal paid;                   // Amount already paid
     private BigDecimal outstanding;            // Amount still owed (netOwed - paid)
 
