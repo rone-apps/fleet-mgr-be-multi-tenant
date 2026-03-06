@@ -783,28 +783,28 @@ public class FinancialStatementService {
             log.debug("Added other revenue: {} (applicationType: {}, amount: {})", revenueTypeStr, applicationTypeDisplay, revenue.getAmount());
         }
 
-        // 6. Fetch previous balance from last PAID statement only
-        // (carryforward only happens when a batch is processed and completed)
-        Optional<Statement> lastStatement = statementRepository.findTopByPersonIdAndStatusOrderByPeriodToDesc(personId, StatementStatus.PAID);
+        // 6. Fetch previous balance from last FINALIZED or PAID statement before this period
+        Optional<Statement> lastStatement = statementRepository.findLatestByPersonIdAndStatusInAndPeriodToBefore(
+                personId, List.of(StatementStatus.FINALIZED, StatementStatus.PAID), from);
         if (lastStatement.isPresent()) {
-            // Calculate what's actually owed AFTER the payment was applied
-            // previousBalance = netDue - paidAmount (what remains unpaid)
-            BigDecimal netDueAfterPayment = lastStatement.get().getNetDue()
-                    .subtract(lastStatement.get().getPaidAmount() != null ? lastStatement.get().getPaidAmount() : BigDecimal.ZERO);
+            Statement prev = lastStatement.get();
+            BigDecimal paidAmt = prev.getPaidAmount() != null ? prev.getPaidAmount() : BigDecimal.ZERO;
 
-            // If fully paid or overpaid, don't carry forward a balance
-            if (netDueAfterPayment.compareTo(BigDecimal.ZERO) <= 0) {
-                report.setPreviousBalance(BigDecimal.ZERO);
-                log.info("Previous statement for {} was fully paid (netDue={}, paid={}). No carryforward.",
-                    personId, lastStatement.get().getNetDue(), lastStatement.get().getPaidAmount());
+            // For PAID statements: carry forward netDue - paidAmount (remaining balance after payment)
+            // For FINALIZED statements: carry forward netDue (no payment applied yet)
+            BigDecimal carryforward;
+            if (prev.getStatus() == StatementStatus.PAID) {
+                carryforward = prev.getNetDue().subtract(paidAmt);
             } else {
-                report.setPreviousBalance(netDueAfterPayment);
-                log.info("Found previous PAID statement for {} with outstanding balance: {}",
-                    personId, report.getPreviousBalance());
+                carryforward = prev.getNetDue();
             }
+
+            report.setPreviousBalance(carryforward);
+            log.info("Previous {} statement for {} — netDue={}, paid={}, carryforward={}",
+                    prev.getStatus(), personId, prev.getNetDue(), paidAmt, carryforward);
         } else {
             report.setPreviousBalance(BigDecimal.ZERO);
-            log.info("No previous PAID statement found for {} (carryforward only occurs after batch completion)", personId);
+            log.info("No previous statement found for {} before {}", personId, from);
         }
 
         report.setPersonType(Boolean.TRUE.equals(person.getIsOwner()) ? "OWNER" : "DRIVER");
@@ -869,6 +869,8 @@ public class FinancialStatementService {
             lineItems.put("recurringExpenses", report.getRecurringExpenses());
             lineItems.put("oneTimeExpenses", report.getOneTimeExpenses());
             lineItems.put("perUnitExpenses", report.getPerUnitExpenses());
+            lineItems.put("insuranceMileageExpenses", report.getInsuranceMileageExpenses());
+            lineItems.put("airportTripExpenses", report.getAirportTripExpenses());
 
             String lineItemsJson = objectMapper.writeValueAsString(lineItems);
 
@@ -965,6 +967,24 @@ public class FinancialStatementService {
                 );
             }
 
+            // Extract insurance mileage expenses
+            List<StatementLineItem> insuranceMileageExpenses = new ArrayList<>();
+            if (lineItemsNode.has("insuranceMileageExpenses") && lineItemsNode.get("insuranceMileageExpenses").isArray()) {
+                insuranceMileageExpenses = objectMapper.readValue(
+                    lineItemsNode.get("insuranceMileageExpenses").toString(),
+                    objectMapper.getTypeFactory().constructCollectionType(List.class, StatementLineItem.class)
+                );
+            }
+
+            // Extract airport trip expenses
+            List<StatementLineItem> airportTripExpenses = new ArrayList<>();
+            if (lineItemsNode.has("airportTripExpenses") && lineItemsNode.get("airportTripExpenses").isArray()) {
+                airportTripExpenses = objectMapper.readValue(
+                    lineItemsNode.get("airportTripExpenses").toString(),
+                    objectMapper.getTypeFactory().constructCollectionType(List.class, StatementLineItem.class)
+                );
+            }
+
             // Get driver info
             Driver person = driverRepository.findById(statement.getPersonId())
                 .orElseThrow(() -> new RuntimeException("Driver/Owner not found: " + statement.getPersonId()));
@@ -989,6 +1009,8 @@ public class FinancialStatementService {
                 .recurringExpenses(recurringExpenses)
                 .oneTimeExpenses(oneTimeExpenses)
                 .perUnitExpenses(perUnitExpenses)
+                .insuranceMileageExpenses(insuranceMileageExpenses)
+                .airportTripExpenses(airportTripExpenses)
                 .build();
 
             // Calculate totals to set netDue
