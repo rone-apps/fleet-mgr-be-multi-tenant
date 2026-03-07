@@ -792,6 +792,8 @@ public class FinancialStatementService {
 
             // For PAID statements: carry forward netDue - paidAmount (remaining balance after payment)
             // For FINALIZED statements: carry forward netDue (no payment applied yet)
+            // Only carry forward NEGATIVE balances (amount due FROM driver/owner TO company)
+            // Positive balances (payable to driver/owner) get settled via payment batch
             BigDecimal carryforward;
             if (prev.getStatus() == StatementStatus.PAID) {
                 carryforward = prev.getNetDue().subtract(paidAmt);
@@ -799,9 +801,16 @@ public class FinancialStatementService {
                 carryforward = prev.getNetDue();
             }
 
-            report.setPreviousBalance(carryforward);
-            log.info("Previous {} statement for {} — netDue={}, paid={}, carryforward={}",
-                    prev.getStatus(), personId, prev.getNetDue(), paidAmt, carryforward);
+            // Only carry forward if negative (driver/owner owes company)
+            if (carryforward.compareTo(BigDecimal.ZERO) < 0) {
+                report.setPreviousBalance(carryforward);
+                log.info("Previous {} statement for {} — netDue={}, paid={}, carryforward={} (due from person)",
+                        prev.getStatus(), personId, prev.getNetDue(), paidAmt, carryforward);
+            } else {
+                report.setPreviousBalance(BigDecimal.ZERO);
+                log.info("Previous {} statement for {} — netDue={}, paid={}, balance={} (payable, not carried forward)",
+                        prev.getStatus(), personId, prev.getNetDue(), paidAmt, carryforward);
+            }
         } else {
             report.setPreviousBalance(BigDecimal.ZERO);
             log.info("No previous statement found for {} before {}", personId, from);
