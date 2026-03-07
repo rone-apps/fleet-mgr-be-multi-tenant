@@ -52,6 +52,9 @@ public class DriverSummaryDTO {
     private BigDecimal paid;                   // Amount already paid
     private BigDecimal outstanding;            // Amount still owed (netOwed - paid)
 
+    // Statement status for bulk finalization
+    private String statementStatus;            // null=no statement, "DRAFT", "FINALIZED", "PAID"
+
     // ✅ NEW: Itemized breakdown for dynamic columns (Excel/PDF export)
     @Builder.Default
     private List<ItemizedBreakdown> revenueBreakdown = new ArrayList<>();

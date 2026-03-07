@@ -13,6 +13,8 @@ import com.taxi.web.dto.report.LeaseRevenueReportDTO;
 import com.taxi.web.dto.report.OwnerReportDTO;
 import com.taxi.web.dto.expense.StatementLineItem;
 import com.taxi.domain.report.ReportJobStatus;
+import com.taxi.domain.statement.repository.StatementRepository;
+import com.taxi.domain.statement.model.Statement;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Async;
@@ -41,6 +43,7 @@ public class ReportService {
     private final FinancialStatementService financialStatementService;
     private final com.taxi.domain.expense.repository.ItemRateRepository itemRateRepository;
     private final ReportCacheService reportCacheService;
+    private final StatementRepository statementRepository;
 
     // ═══════════════════════════════════════════════════════════════════════
     // INDIVIDUAL REPORT METHODS - NOW DELEGATE TO SHARED SERVICE
@@ -335,6 +338,13 @@ public class ReportService {
             summary.setNetOwed(netOwed);
             summary.setPaid(safeBigDecimal(fullReport.getPaidAmount()));
             summary.setOutstanding(netOwed.subtract(safeBigDecimal(fullReport.getPaidAmount())));
+
+            // Check if a statement already exists for this person and period
+            java.util.Optional<Statement> existingStatement =
+                    statementRepository.findByPersonIdAndPeriodFromAndPeriodTo(driver.getId(), startDate, endDate);
+            if (existingStatement.isPresent()) {
+                summary.setStatementStatus(existingStatement.get().getStatus().name());
+            }
 
             // ✅ ITEMIZED BREAKDOWN FOR DYNAMIC COLUMNS (Excel/PDF export)
             // ✅ ALWAYS populate breakdown items regardless of quickMode
