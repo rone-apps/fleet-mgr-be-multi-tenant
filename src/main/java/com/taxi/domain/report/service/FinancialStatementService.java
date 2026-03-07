@@ -820,18 +820,25 @@ public class FinancialStatementService {
         report.setStatus(StatementStatus.DRAFT);
         report.setStatementId(null);  // Not yet finalized
 
-        // Calculate total payments made during this period for this person
-        List<com.taxi.domain.account.model.StatementPayment> paymentsInPeriod =
-            statementPaymentRepository.findByPersonIdAndPaymentDateRange(personId, from, to);
-
+        // Calculate total payments linked to THIS period's statement (not by payment date range)
+        // Payments are linked to specific statements via statementId, so we look up the statement
+        // for this person+period and sum its completed payments. This avoids counting payments
+        // for previous periods that happened to be posted during the current date range.
         BigDecimal totalPaidInPeriod = BigDecimal.ZERO;
-        for (com.taxi.domain.account.model.StatementPayment payment : paymentsInPeriod) {
-            totalPaidInPeriod = totalPaidInPeriod.add(payment.getAmount());
+        Optional<Statement> currentStatement = statementRepository.findByPersonIdAndPeriodFromAndPeriodTo(personId, from, to);
+        if (currentStatement.isPresent()) {
+            List<com.taxi.domain.account.model.StatementPayment> statementPayments =
+                statementPaymentRepository.findCompletedPaymentsByStatement(currentStatement.get().getId());
+            for (com.taxi.domain.account.model.StatementPayment payment : statementPayments) {
+                totalPaidInPeriod = totalPaidInPeriod.add(payment.getAmount());
+            }
+            log.info("Found {} payments for person {} statement {} totaling ${}",
+                statementPayments.size(), personId, currentStatement.get().getId(), totalPaidInPeriod);
+        } else {
+            log.info("No statement found for person {} in period {} to {} — paid amount is $0", personId, from, to);
         }
 
         report.setPaidAmount(totalPaidInPeriod);
-        log.info("Found {} payments for person {} in period {} to {} totaling ${}",
-            paymentsInPeriod.size(), personId, from, to, totalPaidInPeriod);
 
         // Calculate per-unit expenses (mileage, airport trips, etc.)
         Map<ItemRateChargedTo, List<OwnerReportDTO.PerUnitExpenseLineItem>> perUnitMap =
