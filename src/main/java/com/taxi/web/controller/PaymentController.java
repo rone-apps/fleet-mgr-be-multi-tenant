@@ -206,11 +206,12 @@ public class PaymentController {
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate batchDate,
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate periodFrom,
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate periodTo,
+            @RequestParam(required = false) String batchName,
             @RequestParam(required = false) String notes,
             Authentication authentication) {
 
         Long userId = extractUserId(authentication);
-        PaymentBatch batch = paymentService.createPaymentBatch(batchDate, periodFrom, periodTo, userId);
+        PaymentBatch batch = paymentService.createPaymentBatch(batchDate, periodFrom, periodTo, batchName, userId);
         return ResponseEntity.ok(batch);
     }
 

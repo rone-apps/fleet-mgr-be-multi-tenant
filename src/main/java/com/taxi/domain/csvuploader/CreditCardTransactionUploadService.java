@@ -147,6 +147,59 @@ public class CreditCardTransactionUploadService {
         }
     }
     
+    /**
+     * Parse data rows using custom column mappings from the data mapper.
+     * Reuses the same enrichment and validation as the standard CSV upload.
+     */
+    @Transactional(readOnly = true)
+    public CsvUploadPreviewDTO parseWithCustomMappings(
+            List<String[]> dataRows,
+            Map<String, Integer> columnMappings,
+            String filename) {
+
+        log.info("Parsing {} rows with custom mappings: {}", dataRows.size(), columnMappings);
+
+        List<CreditCardTransactionUploadDTO> previewData = new ArrayList<>();
+
+        for (int i = 0; i < dataRows.size(); i++) {
+            try {
+                String[] row = dataRows.get(i);
+                CreditCardTransactionUploadDTO dto = parseRow(row, columnMappings, filename);
+                enrichWithCabAndDriver(dto);
+                validateRow(dto);
+                previewData.add(dto);
+            } catch (Exception e) {
+                log.error("Error parsing row {}: {}", i + 2, e.getMessage());
+                CreditCardTransactionUploadDTO errorDto = new CreditCardTransactionUploadDTO();
+                errorDto.setValid(false);
+                errorDto.setValidationMessage("Parse error at row " + (i + 2) + ": " + e.getMessage());
+                previewData.add(errorDto);
+            }
+        }
+
+        long validRows = previewData.stream().filter(CreditCardTransactionUploadDTO::isValid).count();
+        long cabMatches = previewData.stream().filter(CreditCardTransactionUploadDTO::isCabLookupSuccess).count();
+        long driverMatches = previewData.stream().filter(CreditCardTransactionUploadDTO::isDriverLookupSuccess).count();
+
+        CsvUploadPreviewDTO preview = new CsvUploadPreviewDTO();
+        preview.setFilename(filename);
+        preview.setTotalRows(dataRows.size());
+        preview.setColumnMappings(columnMappings);
+        preview.setPreviewData(previewData);
+
+        Map<String, Object> stats = new HashMap<>();
+        stats.put("validRows", validRows);
+        stats.put("invalidRows", dataRows.size() - validRows);
+        stats.put("cabMatches", cabMatches);
+        stats.put("driverMatches", driverMatches);
+        preview.setStatistics(stats);
+
+        log.info("Custom mapping preview: {} valid, {} invalid, {} cab matches, {} driver matches",
+                validRows, dataRows.size() - validRows, cabMatches, driverMatches);
+
+        return preview;
+    }
+
     @Transactional
     public Map<String, Object> importTransactions(
             List<CreditCardTransactionUploadDTO> transactions,
@@ -427,11 +480,14 @@ public class CreditCardTransactionUploadService {
     
     private void enrichWithCabAndDriver(CreditCardTransactionUploadDTO dto) {
         StringBuilder lookupMsg = new StringBuilder();
-        
-        // Step 1: Lookup cab number from merchant2cab mapping
-        if (dto.getMerchantId() != null && dto.getTransactionDate() != null) {
+
+        // Step 1: Cab number - skip lookup if already provided from input file
+        if (dto.getCabNumber() != null && !dto.getCabNumber().trim().isEmpty()) {
+            dto.setCabLookupSuccess(true);
+            lookupMsg.append("Cab: ").append(dto.getCabNumber()).append(" (from input file). ");
+        } else if (dto.getMerchantId() != null && dto.getTransactionDate() != null) {
             String cabNumber = lookupCabNumber(dto.getMerchantId(), dto.getTransactionDate());
-            
+
             if (cabNumber != null) {
                 dto.setCabNumber(cabNumber);
                 dto.setCabLookupSuccess(true);
@@ -441,18 +497,21 @@ public class CreditCardTransactionUploadService {
                 lookupMsg.append("No cab mapping found for merchant ").append(dto.getMerchantId()).append(". ");
             }
         }
-        
-        // Step 2: Lookup driver from shift based on cab, date, and time
-        if (dto.getCabNumber() != null && 
-            dto.getTransactionDate() != null && 
+
+        // Step 2: Driver - skip lookup if already provided from input file
+        if (dto.getDriverNumber() != null && !dto.getDriverNumber().trim().isEmpty()) {
+            dto.setDriverLookupSuccess(true);
+            lookupMsg.append("Driver: ").append(dto.getDriverNumber()).append(" (from input file). ");
+        } else if (dto.getCabNumber() != null &&
+            dto.getTransactionDate() != null &&
             dto.getTransactionTime() != null) {
-            
+
             DriverInfo driverInfo = lookupDriver(
-                dto.getCabNumber(), 
-                dto.getTransactionDate(), 
+                dto.getCabNumber(),
+                dto.getTransactionDate(),
                 dto.getTransactionTime()
             );
-            
+
             if (driverInfo != null) {
                 dto.setDriverNumber(driverInfo.getDriverNumber());
                 dto.setDriverName(driverInfo.getDriverName());
@@ -463,7 +522,7 @@ public class CreditCardTransactionUploadService {
                 lookupMsg.append("No active shift found for this cab/time. ");
             }
         }
-        
+
         dto.setLookupMessage(lookupMsg.toString().trim());
     }
     
@@ -648,15 +707,43 @@ public class CreditCardTransactionUploadService {
                 }
             }
             
-            // Dates
-            if (mappings.containsKey("transactionDate")) {
-                dto.setTransactionDate(parseDate(getValue(row, mappings.get("transactionDate"))));
+            // Dates - handle combined datetime fields
+            String transactionDateRaw = mappings.containsKey("transactionDate") ? getValue(row, mappings.get("transactionDate")) : null;
+            String transactionTimeRaw = mappings.containsKey("transactionTime") ? getValue(row, mappings.get("transactionTime")) : null;
+
+            // Parse date from its own column first
+            if (transactionDateRaw != null) {
+                dto.setTransactionDate(parseDate(transactionDateRaw));
             }
-            if (mappings.containsKey("transactionTime")) {
-                dto.setTransactionTime(parseTime(getValue(row, mappings.get("transactionTime"))));
+            // Parse time from its own column
+            if (transactionTimeRaw != null) {
+                dto.setTransactionTime(parseTime(transactionTimeRaw));
+                // If date is still null, the time column may contain a full datetime - extract date from it
+                if (dto.getTransactionDate() == null) {
+                    try {
+                        dto.setTransactionDate(parseDate(transactionTimeRaw));
+                    } catch (Exception ignored) {}
+                }
+            }
+            // If time is still null but date column has a full datetime, extract time from it
+            if (dto.getTransactionTime() == null && transactionDateRaw != null) {
+                try {
+                    dto.setTransactionTime(parseTime(transactionDateRaw));
+                } catch (Exception ignored) {}
             }
             if (mappings.containsKey("settlementDate")) {
-                dto.setSettlementDate(parseDate(getValue(row, mappings.get("settlementDate"))));
+                String settlementDateRaw = getValue(row, mappings.get("settlementDate"));
+                dto.setSettlementDate(parseDate(settlementDateRaw));
+                // If transaction date is still null, use settlement date as transaction date
+                if (dto.getTransactionDate() == null && dto.getSettlementDate() != null) {
+                    dto.setTransactionDate(dto.getSettlementDate());
+                }
+                // If transaction time is still null, try extracting from settlement date (if it's a datetime)
+                if (dto.getTransactionTime() == null && settlementDateRaw != null) {
+                    try {
+                        dto.setTransactionTime(parseTime(settlementDateRaw));
+                    } catch (Exception ignored) {}
+                }
             }
             
             // Card info
@@ -698,6 +785,15 @@ public class CreditCardTransactionUploadService {
                 dto.setBatchNumber(getValue(row, mappings.get("batchNumber")));
             }
             
+            // Cab and Driver (from input file, skips lookup if present)
+            if (mappings.containsKey("cabNumber")) {
+                String rawCab = getValue(row, mappings.get("cabNumber"));
+                dto.setCabNumber(sanitizeCabNumber(rawCab));
+            }
+            if (mappings.containsKey("driverNumber")) {
+                dto.setDriverNumber(getValue(row, mappings.get("driverNumber")));
+            }
+
             // Other fields
             if (mappings.containsKey("potCode")) {
                 dto.setPotCode(getValue(row, mappings.get("potCode")));
@@ -901,37 +997,86 @@ public class CreditCardTransactionUploadService {
             System.currentTimeMillis());
     }
     
+    /**
+     * Sanitize cab number: strip alphabetic characters (e.g. "1B" -> "1")
+     */
+    private String sanitizeCabNumber(String cabNumber) {
+        if (cabNumber == null || cabNumber.trim().isEmpty()) return null;
+        String numericOnly = cabNumber.trim().replaceAll("[A-Za-z]", "");
+        return numericOnly.isEmpty() ? cabNumber.trim() : numericOnly;
+    }
+
     private String getValue(String[] row, int index) {
         if (index >= 0 && index < row.length) {
             String value = row[index];
-            return (value != null && !value.trim().isEmpty()) ? value.trim() : null;
+            if (value == null || value.trim().isEmpty()) return null;
+            // Treat literal "NULL" as null
+            if (value.trim().equalsIgnoreCase("NULL")) return null;
+            return value.trim();
         }
         return null;
     }
     
     private LocalDate parseDate(String dateStr) {
         if (dateStr == null || dateStr.trim().isEmpty()) return null;
-        
+        String trimmed = dateStr.trim();
+
+        // If value contains both date and time (e.g. "2026-03-01 18:00:23"), extract the date part
+        if (trimmed.contains(" ") && trimmed.length() > 10) {
+            String datePart = trimmed.split("\\s+")[0];
+            // Also try the full string with datetime formatters
+            try {
+                return java.time.LocalDateTime.parse(trimmed, DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")).toLocalDate();
+            } catch (DateTimeParseException ignored) {}
+            try {
+                return java.time.LocalDateTime.parse(trimmed, DateTimeFormatter.ofPattern("yyyy/MM/dd HH:mm:ss")).toLocalDate();
+            } catch (DateTimeParseException ignored) {}
+            try {
+                return java.time.LocalDateTime.parse(trimmed, DateTimeFormatter.ofPattern("MM/dd/yyyy HH:mm:ss")).toLocalDate();
+            } catch (DateTimeParseException ignored) {}
+            // Fallback: try just the date part
+            trimmed = datePart;
+        }
+
         for (DateTimeFormatter formatter : DATE_FORMATTERS) {
             try {
-                return LocalDate.parse(dateStr.trim(), formatter);
+                return LocalDate.parse(trimmed, formatter);
             } catch (DateTimeParseException ignored) {
             }
         }
-        
+
         throw new IllegalArgumentException("Unable to parse date: " + dateStr);
     }
-    
+
     private LocalTime parseTime(String timeStr) {
         if (timeStr == null || timeStr.trim().isEmpty()) return null;
-        
+        String trimmed = timeStr.trim();
+
+        // If value contains both date and time (e.g. "2026-03-01 18:00:23"), extract the time part
+        if (trimmed.contains(" ") && trimmed.length() > 10) {
+            try {
+                return java.time.LocalDateTime.parse(trimmed, DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")).toLocalTime();
+            } catch (DateTimeParseException ignored) {}
+            try {
+                return java.time.LocalDateTime.parse(trimmed, DateTimeFormatter.ofPattern("yyyy/MM/dd HH:mm:ss")).toLocalTime();
+            } catch (DateTimeParseException ignored) {}
+            try {
+                return java.time.LocalDateTime.parse(trimmed, DateTimeFormatter.ofPattern("MM/dd/yyyy HH:mm:ss")).toLocalTime();
+            } catch (DateTimeParseException ignored) {}
+            // Fallback: try extracting just the time portion after the space
+            String[] parts = trimmed.split("\\s+");
+            if (parts.length >= 2) {
+                trimmed = parts[1];
+            }
+        }
+
         for (DateTimeFormatter formatter : TIME_FORMATTERS) {
             try {
-                return LocalTime.parse(timeStr.trim(), formatter);
+                return LocalTime.parse(trimmed, formatter);
             } catch (DateTimeParseException ignored) {
             }
         }
-        
+
         throw new IllegalArgumentException("Unable to parse time: " + timeStr);
     }
     

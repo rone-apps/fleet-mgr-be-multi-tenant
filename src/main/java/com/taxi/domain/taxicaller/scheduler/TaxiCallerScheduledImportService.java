@@ -5,6 +5,7 @@ import com.taxi.domain.shift.service.TaxiCallerDriverShiftImportService;
 import com.taxi.domain.account.dto.TaxiCallerImportResult;
 import com.taxi.domain.account.service.TaxiCallerAccountChargeImportService;
 import com.taxi.domain.taxicaller.service.TaxiCallerService;
+import com.taxi.infrastructure.multitenancy.TenantContext;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.json.JSONArray;
@@ -62,36 +63,40 @@ public class TaxiCallerScheduledImportService {
      * 
      * Cron format: second minute hour day month weekday
      */
-    @Scheduled(cron = "${taxicaller.scheduler.cron:0 0 2 * * *}")
+    @Scheduled(cron = "${taxicaller.scheduler.cron:0 0 11 * * *}")
     public void scheduledTaxiCallerImport() {
         log.info("═══════════════════════════════════════════════════════════");
-        log.info("🕐 SCHEDULED TASK: TaxiCaller Data Import Started");
+        log.info("SCHEDULED TASK: TaxiCaller Data Import Started");
         log.info("   Timestamp: {}", LocalDateTime.now().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME));
         log.info("═══════════════════════════════════════════════════════════");
-        
+
         try {
+            // Set tenant context for scheduled (non-HTTP) execution
+            TenantContext.setSystemTenant();
+
             // Calculate date range (previous day by default)
             LocalDate endDate = LocalDate.now().minusDays(1);
             LocalDate startDate = endDate.minusDays(importPreviousDays - 1);
-            
-            log.info("📅 Import Parameters:");
+
+            log.info("Import Parameters:");
             log.info("   Start Date: {}", startDate);
             log.info("   End Date: {}", endDate);
             log.info("   Days to Import: {}", importPreviousDays);
-            
+
             // Import both types of data
             importDriverShifts(startDate, endDate);
             importAccountJobs(startDate, endDate);
-            
-            log.info("✅ SCHEDULED IMPORT COMPLETED SUCCESSFULLY");
-            
+
+            log.info("SCHEDULED IMPORT COMPLETED SUCCESSFULLY");
+
         } catch (Exception e) {
-            log.error("❌ SCHEDULED IMPORT FAILED: Error during scheduled TaxiCaller import", e);
+            log.error("SCHEDULED IMPORT FAILED: Error during scheduled TaxiCaller import", e);
             log.error("   Error Message: {}", e.getMessage());
             log.error("   Error Type: {}", e.getClass().getName());
         } finally {
+            TenantContext.clear();
             log.info("═══════════════════════════════════════════════════════════");
-            log.info("🕐 SCHEDULED TASK: TaxiCaller Data Import Ended");
+            log.info("SCHEDULED TASK: TaxiCaller Data Import Ended");
             log.info("   Timestamp: {}", LocalDateTime.now().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME));
             log.info("═══════════════════════════════════════════════════════════");
         }
@@ -236,40 +241,53 @@ public class TaxiCallerScheduledImportService {
      * This method can be called via a test endpoint to verify the scheduler works
      */
     public ImportResults manualTrigger(LocalDate startDate, LocalDate endDate) {
-        log.info("🔧 MANUAL TRIGGER: TaxiCaller Data Import");
+        log.info("MANUAL TRIGGER: TaxiCaller Data Import");
         log.info("   Start Date: {}", startDate);
         log.info("   End Date: {}", endDate);
-        
+
         ImportResults results = new ImportResults();
-        
+
+        // Manual trigger may be called from controller (tenant already set) or directly
+        boolean tenantWasSet = false;
+        try {
+            TenantContext.getCurrentTenant();
+            tenantWasSet = true;
+        } catch (IllegalStateException e) {
+            TenantContext.setSystemTenant();
+        }
+
         try {
             // Import driver shifts
             JSONArray shiftRows = taxiCallerService.generateDriverLogOnOffReports(startDate, endDate);
             if (shiftRows != null && shiftRows.length() > 0) {
                 results.driverShiftResult = driverShiftImportService.importDriverShifts(shiftRows);
-                log.info("✅ Driver shifts: {} success, {} failed", 
-                    results.driverShiftResult.getSuccessCount(), 
+                log.info("Driver shifts: {} success, {} failed",
+                    results.driverShiftResult.getSuccessCount(),
                     results.driverShiftResult.getFailedCount());
             } else {
                 log.warn("No driver shift data found");
             }
-            
+
             // Import account jobs
             JSONArray accountRows = taxiCallerService.generateAccountJobReports(startDate, endDate);
             if (accountRows != null && accountRows.length() > 0) {
                 results.accountJobResult = accountChargeImportService.importAccountJobReports(accountRows);
-                log.info("✅ Account jobs: {} success, {} errors", 
-                    results.accountJobResult.getSuccessCount(), 
+                log.info("Account jobs: {} success, {} errors",
+                    results.accountJobResult.getSuccessCount(),
                     results.accountJobResult.getErrorCount());
             } else {
                 log.warn("No account job data found");
             }
-            
+
             return results;
-            
+
         } catch (Exception e) {
-            log.error("❌ Manual import failed", e);
+            log.error("Manual import failed", e);
             throw e;
+        } finally {
+            if (!tenantWasSet) {
+                TenantContext.clear();
+            }
         }
     }
     

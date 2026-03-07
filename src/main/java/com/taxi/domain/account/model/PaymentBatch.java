@@ -25,6 +25,9 @@ public class PaymentBatch {
     @Column(name = "batch_number", nullable = false, unique = true, length = 50)
     private String batchNumber;
 
+    @Column(name = "batch_name", length = 255)
+    private String batchName;
+
     @Column(name = "batch_date", nullable = false)
     private LocalDate batchDate;
 

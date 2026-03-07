@@ -42,6 +42,9 @@ dependencies {
 
     implementation 'com.opencsv:opencsv:5.9'
 
+    // Excel file support (Apache POI)
+    implementation 'org.apache.poi:poi-ooxml:5.2.5'
+
     // Email Support
     implementation 'org.springframework.boot:spring-boot-starter-mail'
 

@@ -140,14 +140,20 @@ public class PaymentService {
      */
     @Transactional
     public PaymentBatch createPaymentBatch(LocalDate batchDate, LocalDate periodStart,
-                                           LocalDate periodEnd, Long userId) {
-        log.info("Creating payment batch - batchDate: {}, periodStart: {}, periodEnd: {}, userId: {}",
-                 batchDate, periodStart, periodEnd, userId);
+                                           LocalDate periodEnd, String batchName, Long userId) {
+        log.info("Creating payment batch - batchDate: {}, periodStart: {}, periodEnd: {}, name: {}, userId: {}",
+                 batchDate, periodStart, periodEnd, batchName, userId);
 
         String batchNumber = "BATCH-" + LocalDate.now() + "-" + UUID.randomUUID().toString().substring(0, 8);
 
+        // Use provided name or generate a default name
+        String resolvedName = (batchName != null && !batchName.trim().isEmpty())
+                ? batchName.trim()
+                : "default_" + batchNumber;
+
         PaymentBatch batch = PaymentBatch.builder()
                 .batchNumber(batchNumber)
+                .batchName(resolvedName)
                 .batchDate(batchDate)
                 .periodStart(periodStart)
                 .periodEnd(periodEnd)
