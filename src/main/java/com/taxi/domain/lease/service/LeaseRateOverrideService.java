@@ -74,7 +74,7 @@ public class LeaseRateOverrideService {
             .findByOwnerDriverNumberOrderByPriorityDescCreatedAtDesc(ownerDriverNumber);
 
         if (allOwnerOverrides.isEmpty()) {
-            log.warn("No overrides found for owner: '{}'", ownerDriverNumber);
+            log.info("No overrides found for owner: '{}'", ownerDriverNumber);
             return null;
         }
 
