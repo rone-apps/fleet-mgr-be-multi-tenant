@@ -56,7 +56,7 @@ public class CabShift {
     private String endTime;    // e.g., "18:00", "19:00"
 
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "current_owner_id", nullable = false)
+    @JoinColumn(name = "current_owner_id")
     @JsonIgnoreProperties({"hibernateLazyInitializer", "handler"})
     private Driver currentOwner;
 

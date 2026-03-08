@@ -15,7 +15,9 @@ import java.time.LocalDate;
 @Builder
 public class CreateCabRequest {
 
-    @NotBlank(message = "Registration number is required")
+    @Size(max = 20, message = "Cab number must not exceed 20 characters")
+    private String cabNumber;  // User-provided cab number (must be numeric)
+
     @Size(max = 50, message = "Registration number must not exceed 50 characters")
     private String registrationNumber;
 

@@ -119,6 +119,9 @@ public class OwnerReportDTO {
         private String revenueSubType; // "LEASE_INCOME", "OTHER_REVENUE", "ACCOUNT_REVENUE", etc.
         private BigDecimal amount;
 
+        // Cab number for credit card and account charge revenues
+        private String cabNumber;
+
         // Additional fields for account charges and other revenues
         private String accountName;        // For account charges: company name
         private String pickupAddress;      // For account charges: pickup location

@@ -645,6 +645,7 @@ public class FinancialStatementService {
                     .description(cardDesc)
                     .revenueType("CREDIT_CARD")
                     .revenueSubType("CARD_REVENUE")
+                    .cabNumber(transaction.getCabNumber())
                     .amount(transaction.getTotalAmount())
                     .build());
                 log.debug("Added credit card revenue: {}", transaction.getTotalAmount());
@@ -679,6 +680,7 @@ public class FinancialStatementService {
                     .description(accountName)
                     .revenueType("CHARGE_ACCOUNT")
                     .revenueSubType("ACCOUNT_REVENUE")
+                    .cabNumber(charge.getCab() != null ? charge.getCab().getCabNumber() : null)
                     .amount(totalAmount)
                     .pickupAddress(charge.getPickupAddress() != null ? charge.getPickupAddress() : "")
                     .dropoffAddress(charge.getDropoffAddress() != null ? charge.getDropoffAddress() : "")

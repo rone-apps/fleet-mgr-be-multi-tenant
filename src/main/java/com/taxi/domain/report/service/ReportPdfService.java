@@ -90,7 +90,7 @@ public class ReportPdfService {
 
             // 4. Account Charges - sorted by date
             if (!accountRevenues.isEmpty()) {
-                addSimpleRevenueSection(document, "Account Charges", BLUE, accountRevenues, true);
+                addAccountChargesSection(document, accountRevenues);
             }
 
             // 5. Credit Card Revenue
@@ -422,12 +422,12 @@ public class ReportPdfService {
                                           List<OwnerReportDTO.RevenueLineItem> revenues, boolean sortByDate) throws DocumentException {
         addSectionTitle(document, title, color);
 
-        PdfPTable table = new PdfPTable(new float[]{20, 25, 32, 23});
+        PdfPTable table = new PdfPTable(new float[]{18, 22, 10, 28, 22});
         table.setWidthPercentage(100);
         table.setSpacingBefore(5);
         table.setSpacingAfter(10);
 
-        addColoredHeaders(table, new String[]{"Date", "Category", "Description", "Amount"}, color);
+        addColoredHeaders(table, new String[]{"Date", "Category", "Cab #", "Description", "Amount"}, color);
 
         List<OwnerReportDTO.RevenueLineItem> sorted = new ArrayList<>(revenues);
         if (sortByDate) {
@@ -438,12 +438,44 @@ public class ReportPdfService {
         for (OwnerReportDTO.RevenueLineItem rev : sorted) {
             addTableCell(table, rev.getRevenueDate() != null ? rev.getRevenueDate().format(DATE_FORMAT) : "-", cellFont);
             addTableCell(table, rev.getCategoryName() != null ? rev.getCategoryName() : "-", cellFont);
+            addTableCell(table, rev.getCabNumber() != null ? rev.getCabNumber() : "-", cellFont);
             addTableCell(table, rev.getDescription() != null ? rev.getDescription() : "-", cellFont);
             addTableCell(table, CURRENCY_FORMAT.format(rev.getAmount()), cellFont, Element.ALIGN_RIGHT);
             subtotal = subtotal.add(rev.getAmount());
         }
 
-        addSubtotalRow(table, title + " Subtotal:", subtotal, 4, GRAY_BG, new BaseColor(80, 80, 80));
+        addSubtotalRow(table, title + " Subtotal:", subtotal, 5, GRAY_BG, new BaseColor(80, 80, 80));
+
+        document.add(table);
+    }
+
+    // ==================== ACCOUNT CHARGES ====================
+
+    private void addAccountChargesSection(Document document, List<OwnerReportDTO.RevenueLineItem> revenues) throws DocumentException {
+        addSectionTitle(document, "Account Charges", BLUE);
+
+        PdfPTable table = new PdfPTable(new float[]{15, 10, 20, 20, 20, 15});
+        table.setWidthPercentage(100);
+        table.setSpacingBefore(5);
+        table.setSpacingAfter(10);
+
+        addColoredHeaders(table, new String[]{"Date", "Cab #", "Account", "From", "To", "Amount"}, BLUE);
+
+        List<OwnerReportDTO.RevenueLineItem> sorted = new ArrayList<>(revenues);
+        sorted.sort(Comparator.comparing(r -> r.getRevenueDate() != null ? r.getRevenueDate().toString() : ""));
+
+        BigDecimal subtotal = BigDecimal.ZERO;
+        for (OwnerReportDTO.RevenueLineItem rev : sorted) {
+            addTableCell(table, rev.getRevenueDate() != null ? rev.getRevenueDate().format(DATE_FORMAT) : "-", cellFont);
+            addTableCell(table, rev.getCabNumber() != null ? rev.getCabNumber() : "-", cellFont);
+            addTableCell(table, rev.getAccountName() != null ? rev.getAccountName() : (rev.getDescription() != null ? rev.getDescription() : "-"), cellFont);
+            addTableCell(table, rev.getPickupAddress() != null ? rev.getPickupAddress() : "-", cellFont);
+            addTableCell(table, rev.getDropoffAddress() != null ? rev.getDropoffAddress() : "-", cellFont);
+            addTableCell(table, CURRENCY_FORMAT.format(rev.getAmount()), cellFont, Element.ALIGN_RIGHT);
+            subtotal = subtotal.add(rev.getAmount());
+        }
+
+        addSubtotalRow(table, "Account Charges Subtotal:", subtotal, 6, GRAY_BG, new BaseColor(80, 80, 80));
 
         document.add(table);
     }

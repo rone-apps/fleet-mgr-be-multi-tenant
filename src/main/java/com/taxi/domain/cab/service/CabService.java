@@ -144,10 +144,21 @@ public class CabService {
      */
     @Transactional
     public CabDTO createCab(CreateCabRequest request) {
-        log.info("Creating new cab with registration: {}", request.getRegistrationNumber());
+        log.info("Creating new cab with cab number: {}, registration: {}", request.getCabNumber(), request.getRegistrationNumber());
 
-        // Validate registration number doesn't exist
-        if (cabRepository.existsByRegistrationNumber(request.getRegistrationNumber())) {
+        // Validate cab number if provided - must be numeric
+        if (request.getCabNumber() != null && !request.getCabNumber().isBlank()) {
+            if (!request.getCabNumber().matches("\\d+")) {
+                throw new RuntimeException("Cab number must be numeric");
+            }
+            if (cabRepository.existsByCabNumber(request.getCabNumber())) {
+                throw new RuntimeException("Cab number already exists: " + request.getCabNumber());
+            }
+        }
+
+        // Validate registration number doesn't exist (if provided)
+        if (request.getRegistrationNumber() != null && !request.getRegistrationNumber().isBlank()
+                && cabRepository.existsByRegistrationNumber(request.getRegistrationNumber())) {
             throw new RuntimeException("Registration number already exists: " + request.getRegistrationNumber());
         }
 
@@ -183,8 +194,10 @@ public class CabService {
             }
         }
 
-        // Generate cab number
-        String cabNumber = generateCabNumber();
+        // Use provided cab number or auto-generate
+        String cabNumber = (request.getCabNumber() != null && !request.getCabNumber().isBlank())
+                ? request.getCabNumber()
+                : generateCabNumber();
 
         // Create cab (simplified - only vehicle information)
         Cab cab = Cab.builder()
@@ -202,69 +215,68 @@ public class CabService {
         log.info("Cab created with number: {}", cab.getCabNumber());
 
         // ====================================================================
-        // AUTO-CREATE SHIFTS for the new cab (Phase 1 refactoring)
-        // Each cab automatically gets 2 shifts: DAY and NIGHT
-        // Attributes and status are now managed at the shift level
+        // AUTO-CREATE SHIFTS for the new cab (only if owner is specified)
+        // Shifts require an owner - they can be created later when owner is assigned
         // ====================================================================
 
-        // Create DAY shift
-        CabShift dayShift = CabShift.builder()
-                .cab(cab)
-                .shiftType(ShiftType.DAY)
-                .startTime("06:00")
-                .endTime("18:00")
-                .currentOwner(ownerDriver)  // Use cab owner as shift owner (can be transferred independently)
-                .status(CabShift.ShiftStatus.ACTIVE)
-                // Attributes assigned at shift level
-                .cabType(cabType)
-                .shareType(shareType)
-                .hasAirportLicense(request.getHasAirportLicense() != null ? request.getHasAirportLicense() : false)
-                .airportLicenseNumber(request.getAirportLicenseNumber())
-                .airportLicenseExpiry(request.getAirportLicenseExpiry())
-                .build();
-
-        CabShift savedDayShift = cabShiftRepository.save(dayShift);
-        log.info("Auto-created DAY shift for cab {} - shift ID: {}", cab.getCabNumber(), savedDayShift.getId());
-
-        // Create NIGHT shift
-        CabShift nightShift = CabShift.builder()
-                .cab(cab)
-                .shiftType(ShiftType.NIGHT)
-                .startTime("18:00")
-                .endTime("06:00")
-                .currentOwner(ownerDriver)  // Use cab owner as shift owner (can be transferred independently)
-                .status(CabShift.ShiftStatus.ACTIVE)
-                // Attributes assigned at shift level
-                .cabType(cabType)
-                .shareType(shareType)
-                .hasAirportLicense(request.getHasAirportLicense() != null ? request.getHasAirportLicense() : false)
-                .airportLicenseNumber(request.getAirportLicenseNumber())
-                .airportLicenseExpiry(request.getAirportLicenseExpiry())
-                .build();
-
-        CabShift savedNightShift = cabShiftRepository.save(nightShift);
-        log.info("Auto-created NIGHT shift for cab {} - shift ID: {}", cab.getCabNumber(), savedNightShift.getId());
-
-        // Create initial status history for both shifts (active by default)
-        shiftStatusService.activateShift(
-            savedDayShift.getId(),
-            LocalDate.now(),
-            "SYSTEM",
-            "Initial creation with cab"
-        );
-        log.debug("Created initial status history for DAY shift {}", savedDayShift.getId());
-
-        shiftStatusService.activateShift(
-            savedNightShift.getId(),
-            LocalDate.now(),
-            "SYSTEM",
-            "Initial creation with cab"
-        );
-        log.debug("Created initial status history for NIGHT shift {}", savedNightShift.getId());
-
-        // Create owner history record if owner assigned
         if (ownerDriver != null) {
+            // Create DAY shift
+            CabShift dayShift = CabShift.builder()
+                    .cab(cab)
+                    .shiftType(ShiftType.DAY)
+                    .startTime("06:00")
+                    .endTime("18:00")
+                    .currentOwner(ownerDriver)
+                    .status(CabShift.ShiftStatus.ACTIVE)
+                    .cabType(cabType)
+                    .shareType(shareType)
+                    .hasAirportLicense(request.getHasAirportLicense() != null ? request.getHasAirportLicense() : false)
+                    .airportLicenseNumber(request.getAirportLicenseNumber())
+                    .airportLicenseExpiry(request.getAirportLicenseExpiry())
+                    .build();
+
+            CabShift savedDayShift = cabShiftRepository.save(dayShift);
+            log.info("Auto-created DAY shift for cab {} - shift ID: {}", cab.getCabNumber(), savedDayShift.getId());
+
+            // Create NIGHT shift
+            CabShift nightShift = CabShift.builder()
+                    .cab(cab)
+                    .shiftType(ShiftType.NIGHT)
+                    .startTime("18:00")
+                    .endTime("06:00")
+                    .currentOwner(ownerDriver)
+                    .status(CabShift.ShiftStatus.ACTIVE)
+                    .cabType(cabType)
+                    .shareType(shareType)
+                    .hasAirportLicense(request.getHasAirportLicense() != null ? request.getHasAirportLicense() : false)
+                    .airportLicenseNumber(request.getAirportLicenseNumber())
+                    .airportLicenseExpiry(request.getAirportLicenseExpiry())
+                    .build();
+
+            CabShift savedNightShift = cabShiftRepository.save(nightShift);
+            log.info("Auto-created NIGHT shift for cab {} - shift ID: {}", cab.getCabNumber(), savedNightShift.getId());
+
+            // Create initial status history for both shifts (active by default)
+            shiftStatusService.activateShift(
+                savedDayShift.getId(),
+                LocalDate.now(),
+                "SYSTEM",
+                "Initial creation with cab"
+            );
+            log.debug("Created initial status history for DAY shift {}", savedDayShift.getId());
+
+            shiftStatusService.activateShift(
+                savedNightShift.getId(),
+                LocalDate.now(),
+                "SYSTEM",
+                "Initial creation with cab"
+            );
+            log.debug("Created initial status history for NIGHT shift {}", savedNightShift.getId());
+
+            // Create owner history record
             createOwnerHistoryRecord(cab, ownerDriver, LocalDate.now(), "Initial owner assignment");
+        } else {
+            log.info("No owner specified for cab {} - shifts will be created when owner is assigned", cab.getCabNumber());
         }
 
         return CabDTO.fromEntity(cab);
