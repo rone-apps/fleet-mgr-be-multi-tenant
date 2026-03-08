@@ -84,8 +84,8 @@ public class RecurringExpense {
     private Long attributeTypeId;
 
     // New application type system - simplified criteria for recurring expenses
-    @Enumerated(EnumType.STRING)
-    @Column(name = "application_type", length = 30)
+    @Column(name = "application_type_enum", length = 30)
+    @Convert(converter = ApplicationTypeConverter.class)
     private ApplicationType applicationTypeEnum;
 
     @Column(name = "shift_profile_id")

@@ -322,7 +322,48 @@ public class FinancialStatementService {
                     .build());
             }
         }  // End: for each shift
-        }  // End: SHIFT_PROFILE and SPECIFIC_SHIFT expenses (owners only)
+
+            // SHIFTS_WITH_ATTRIBUTE: Find recurring expenses that apply to shifts with a specific attribute
+            List<RecurringExpense> attributeExpenses = recurringExpenseRepository.findEffectiveBetweenForApplicationType(
+                ApplicationType.SHIFTS_WITH_ATTRIBUTE, from, to);
+
+            if (!attributeExpenses.isEmpty()) {
+                log.info("Found {} SHIFTS_WITH_ATTRIBUTE recurring expenses to check against {} shifts",
+                    attributeExpenses.size(), relevantShifts.size());
+
+                for (RecurringExpense expense : attributeExpenses) {
+                    if (expense.getAttributeTypeId() == null) continue;
+
+                    for (CabShift shift : relevantShifts) {
+                        var shiftAttributes = cabAttributeValueRepository.findCurrentAttributesByShiftId(shift.getId());
+                        boolean hasAttribute = shiftAttributes.stream()
+                                .anyMatch(attr -> attr.getAttributeType().getId().equals(expense.getAttributeTypeId()));
+
+                        if (hasAttribute) {
+                            BigDecimal proratedAmount = expense.calculateAmountForDateRange(from, to);
+                            log.info("  Adding SHIFTS_WITH_ATTRIBUTE expense {} for Cab {} - {} (prorated: {})",
+                                expense.getExpenseCategory().getCategoryName(),
+                                shift.getCab().getCabNumber(), shift.getShiftType(), proratedAmount);
+
+                            report.getRecurringExpenses().add(StatementLineItem.builder()
+                                .categoryCode(expense.getExpenseCategory().getCategoryCode())
+                                .categoryName(expense.getExpenseCategory().getCategoryName())
+                                .applicationType("SHIFTS_WITH_ATTRIBUTE")
+                                .entityDescription("Cab " + shift.getCab().getCabNumber() +
+                                    " - " + shift.getShiftType() + " (with attribute)")
+                                .cabNumber(shift.getCab().getCabNumber())
+                                .shiftType(shift.getShiftType() != null ? shift.getShiftType().toString() : "-")
+                                .billingMethod(expense.getBillingMethod())
+                                .effectiveFrom(expense.getEffectiveFrom())
+                                .effectiveTo(expense.getEffectiveTo())
+                                .amount(proratedAmount)
+                                .isRecurring(true)
+                                .build());
+                        }
+                    }
+                }
+            }
+        }  // End: SHIFT_PROFILE, SPECIFIC_SHIFT, and SHIFTS_WITH_ATTRIBUTE expenses (owners only)
 
         // ═══════════════════════════════════════════════════════════════════════
         // USE NEW CONSOLIDATED EXPENSE CALCULATION SERVICE
