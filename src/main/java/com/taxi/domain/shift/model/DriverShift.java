@@ -83,6 +83,12 @@ public class DriverShift {
     @Column(name = "notes", columnDefinition = "TEXT")
     private String notes;
 
+    @Column(name = "session_count")
+    private Integer sessionCount = 1;
+
+    @Column(name = "session_history", columnDefinition = "JSON")
+    private String sessionHistory;
+
     @Column(name = "created_by")
     private Long createdBy;
 

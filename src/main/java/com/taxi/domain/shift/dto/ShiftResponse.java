@@ -34,6 +34,10 @@ public class ShiftResponse {
     private BigDecimal totalRevenue;
     private BigDecimal totalDistance;
     private String notes;
+    private String driverFirstName;
+    private String driverLastName;
+    private Integer sessionCount;
+    private String sessionHistory;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
 }

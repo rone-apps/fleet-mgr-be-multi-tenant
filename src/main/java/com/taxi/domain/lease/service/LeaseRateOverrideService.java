@@ -181,7 +181,7 @@ public class LeaseRateOverrideService {
             return override.getLeaseRate();
         }
 
-        log.warn("✗✗✗ NO MATCHING OVERRIDE FOUND after filtering all {} overrides for owner='{}', cab='{}', shift='{}', day='{}'",
+        log.info("✗✗✗ NO MATCHING OVERRIDE FOUND after filtering all {} overrides for owner='{}', cab='{}', shift='{}', day='{}'",
             allOwnerOverrides.size(), ownerDriverNumber, cabNumber, shiftType, dayOfWeekStr);
         log.info("=== LEASE RATE LOOKUP END (NOT FOUND) ===");
         return null;

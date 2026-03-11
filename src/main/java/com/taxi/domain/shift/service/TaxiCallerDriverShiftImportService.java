@@ -506,8 +506,8 @@ public class TaxiCallerDriverShiftImportService {
     }
 
     /**
-     * ✅ AUDIT TRAIL: Initialize session history in JSON format
-     * Stores individual logon/logoff pairs for record keeping
+     * Initialize session history JSON for a new shift.
+     * Stores individual logon/logoff pairs in the dedicated session_history column.
      */
     private void initializeSessionHistory(DriverShift shift, LocalDateTime logonTime, LocalDateTime logoffTime, BigDecimal hours) {
         try {
@@ -518,44 +518,32 @@ public class TaxiCallerDriverShiftImportService {
             session.put("hours", hours != null ? hours.doubleValue() : 0);
             sessions.put(session);
 
-            // Store as JSON in notes field
-            shift.setNotes("SESSIONS: " + sessions.toString());
-            log.debug("Initialized session history: {}", sessions.toString());
+            shift.setSessionHistory(sessions.toString());
+            shift.setSessionCount(1);
         } catch (Exception e) {
             log.warn("Failed to initialize session history: {}", e.getMessage());
-            shift.setNotes("SESSIONS: [session tracking failed]");
         }
     }
 
     /**
-     * ✅ AUDIT TRAIL: Append session to existing history in JSON format
+     * Append a session to an existing shift's session history JSON.
      */
     private void appendSessionToHistory(DriverShift shift, LocalDateTime logonTime, LocalDateTime logoffTime, BigDecimal hours) {
         try {
-            String existingNotes = shift.getNotes() != null ? shift.getNotes() : "";
+            String existing = shift.getSessionHistory();
+            JSONArray sessions = (existing != null && !existing.isEmpty()) ? new JSONArray(existing) : new JSONArray();
 
-            JSONArray sessions;
-            if (existingNotes.startsWith("SESSIONS: ")) {
-                // Parse existing sessions
-                String jsonStr = existingNotes.substring(10); // Remove "SESSIONS: " prefix
-                sessions = new JSONArray(jsonStr);
-            } else {
-                sessions = new JSONArray();
-            }
-
-            // Add new session
             JSONObject newSession = new JSONObject();
             newSession.put("logon", logonTime.toString());
             newSession.put("logoff", logoffTime.toString());
             newSession.put("hours", hours != null ? hours.doubleValue() : 0);
             sessions.put(newSession);
 
-            // Update notes with appended session
-            shift.setNotes("SESSIONS: " + sessions.toString());
+            shift.setSessionHistory(sessions.toString());
+            shift.setSessionCount(sessions.length());
             log.debug("Appended session to history. Total sessions: {}", sessions.length());
         } catch (Exception e) {
             log.warn("Failed to append session history: {}", e.getMessage());
-            // Gracefully fall back - don't fail the entire import
         }
     }
 

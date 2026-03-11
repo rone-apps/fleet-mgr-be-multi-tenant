@@ -22,7 +22,7 @@ import java.util.Map;
 import java.util.Optional;
 
 @RestController
-@RequestMapping("/api/shifts")
+@RequestMapping("/driver-shifts")
 @RequiredArgsConstructor
 @Slf4j
 @CrossOrigin(origins = "*") // Configure appropriately for production

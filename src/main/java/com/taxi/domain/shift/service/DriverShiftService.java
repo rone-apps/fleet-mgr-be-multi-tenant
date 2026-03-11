@@ -267,6 +267,10 @@ public class DriverShiftService {
         response.setTotalRevenue(shift.getTotalRevenue());
         response.setTotalDistance(shift.getTotalDistance());
         response.setNotes(shift.getNotes());
+        response.setDriverFirstName(shift.getDriverFirstName());
+        response.setDriverLastName(shift.getDriverLastName());
+        response.setSessionCount(shift.getSessionCount());
+        response.setSessionHistory(shift.getSessionHistory());
         response.setCreatedAt(shift.getCreatedAt());
         response.setUpdatedAt(shift.getUpdatedAt());
         return response;
