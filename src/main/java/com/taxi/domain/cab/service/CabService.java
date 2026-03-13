@@ -1,6 +1,7 @@
 package com.taxi.domain.cab.service;
 
 import com.taxi.domain.cab.model.Cab;
+import com.taxi.domain.cab.model.CabStatus;
 import com.taxi.domain.cab.model.CabType;
 import com.taxi.domain.cab.model.ShareType;
 import com.taxi.domain.cab.model.CabShiftType;
@@ -42,43 +43,25 @@ public class CabService {
     private final ShiftStatusService shiftStatusService;
 
     /**
-     * Get all cabs
+     * Get all cabs with shift-derived attributes
      */
     @Transactional(readOnly = true)
     public List<CabDTO> getAllCabs() {
         log.info("Getting all cabs");
-        return cabRepository.findAll().stream()
+        return cabRepository.findAllWithShifts().stream()
                 .map(CabDTO::fromEntity)
                 .collect(Collectors.toList());
     }
 
     /**
-     * DEPRECATED: Get active cabs only
-     *
-     * Status is now managed at shift level, not cab level.
-     * This method is kept for backward compatibility but will return all cabs.
-     * Consider using shift-level queries instead.
+     * Get active cabs only
      */
-    @Deprecated(since = "2.0.0", forRemoval = true)
     @Transactional(readOnly = true)
     public List<CabDTO> getActiveCabs() {
-        log.warn("DEPRECATED: getActiveCabs() is deprecated. Status is now managed at shift level.");
-        // Return all cabs since status filtering no longer applies at cab level
-        return getAllCabs();
-    }
-
-    /**
-     * DEPRECATED: Get cabs by status
-     *
-     * Status is now managed at shift level, not cab level.
-     * This method is kept for backward compatibility but will return all cabs.
-     */
-    @Deprecated(since = "2.0.0", forRemoval = true)
-    @Transactional(readOnly = true)
-    public List<CabDTO> getCabsByStatus(Object status) {
-        log.warn("DEPRECATED: getCabsByStatus() is deprecated. Status is now managed at shift level.");
-        // Return all cabs since status filtering no longer applies at cab level
-        return getAllCabs();
+        return cabRepository.findAllWithShifts().stream()
+                .filter(c -> c.getStatus() == CabStatus.ACTIVE)
+                .map(CabDTO::fromEntity)
+                .collect(Collectors.toList());
     }
 
     /**
@@ -114,24 +97,28 @@ public class CabService {
     }
 
     /**
-     * Get cab by ID
+     * Get cab by ID (shifts loaded eagerly via @Transactional)
      */
     @Transactional(readOnly = true)
     public CabDTO getCabById(Long id) {
         log.info("Getting cab by ID: {}", id);
         Cab cab = cabRepository.findById(id)
                 .orElseThrow(() -> new RuntimeException("Cab not found with ID: " + id));
+        // Force initialization of shifts within transaction
+        if (cab.getShifts() != null) cab.getShifts().size();
         return CabDTO.fromEntity(cab);
     }
 
     /**
-     * Get cab by cab number
+     * Get cab by cab number (shifts loaded eagerly via @Transactional)
      */
     @Transactional(readOnly = true)
     public CabDTO getCabByCabNumber(String cabNumber) {
         log.info("Getting cab by cab number: {}", cabNumber);
         Cab cab = cabRepository.findByCabNumber(cabNumber)
                 .orElseThrow(() -> new RuntimeException("Cab not found with number: " + cabNumber));
+        // Force initialization of shifts within transaction
+        if (cab.getShifts() != null) cab.getShifts().size();
         return CabDTO.fromEntity(cab);
     }
 
@@ -403,81 +390,65 @@ public class CabService {
     }
 
     /**
-     * DEPRECATED: Cab-level status management has been replaced with shift-level status tracking
-     *
-     * Status is now managed per shift (DAY/NIGHT) via ShiftStatusService.
-     * Use ShiftStatusController endpoints to activate/deactivate individual shifts.
-     *
-     * This method is kept for backward compatibility but will log a deprecation warning.
-     *
-     * @param id The cab ID
-     * @return The cab DTO (status field will be ignored)
+     * Activate a cab and all its shifts
+     */
+    @Transactional
+    public CabDTO activate(Long id) {
+        Cab cab = cabRepository.findById(id)
+                .orElseThrow(() -> new RuntimeException("Cab not found with ID: " + id));
+
+        cab.setStatus(CabStatus.ACTIVE);
+        List<CabShift> shifts = cabShiftRepository.findByCabId(cab.getId());
+        for (CabShift shift : shifts) {
+            shift.setStatus(CabShift.ShiftStatus.ACTIVE);
+            cabShiftRepository.save(shift);
+        }
+
+        cab = cabRepository.save(cab);
+        // Force reload shifts for DTO
+        if (cab.getShifts() != null) cab.getShifts().size();
+        log.info("Cab {} activated with {} shifts", cab.getCabNumber(), shifts.size());
+        return CabDTO.fromEntity(cab);
+    }
+
+    /**
+     * Deactivate a cab and all its shifts
+     */
+    @Transactional
+    public CabDTO deactivate(Long id) {
+        Cab cab = cabRepository.findById(id)
+                .orElseThrow(() -> new RuntimeException("Cab not found with ID: " + id));
+
+        cab.setStatus(CabStatus.INACTIVE);
+        List<CabShift> shifts = cabShiftRepository.findByCabId(cab.getId());
+        for (CabShift shift : shifts) {
+            shift.setStatus(CabShift.ShiftStatus.INACTIVE);
+            cabShiftRepository.save(shift);
+        }
+
+        cab = cabRepository.save(cab);
+        // Force reload shifts for DTO
+        if (cab.getShifts() != null) cab.getShifts().size();
+        log.info("Cab {} deactivated with {} shifts", cab.getCabNumber(), shifts.size());
+        return CabDTO.fromEntity(cab);
+    }
+
+    /**
+     * @deprecated Use deactivate() instead
      */
     @Deprecated(since = "2.0.0", forRemoval = true)
     @Transactional
     public CabDTO setMaintenance(Long id) {
-        log.warn("DEPRECATED: setMaintenance() is deprecated. Status is now managed at shift level. " +
-                "Use ShiftStatusService to manage shift status.");
-
-        Cab cab = cabRepository.findById(id)
-                .orElseThrow(() -> new RuntimeException("Cab not found with ID: " + id));
-
-        // No-op since cab status has been removed
-        log.info("Cab {} status management requested but is deprecated", cab.getCabNumber());
-
-        return CabDTO.fromEntity(cab);
+        return deactivate(id);
     }
 
     /**
-     * DEPRECATED: Cab-level status management has been replaced with shift-level status tracking
-     *
-     * Status is now managed per shift (DAY/NIGHT) via ShiftStatusService.
-     * Use ShiftStatusController endpoints to activate/deactivate individual shifts.
-     *
-     * This method is kept for backward compatibility but will log a deprecation warning.
-     *
-     * @param id The cab ID
-     * @return The cab DTO (status field will be ignored)
-     */
-    @Deprecated(since = "2.0.0", forRemoval = true)
-    @Transactional
-    public CabDTO activate(Long id) {
-        log.warn("DEPRECATED: activate() is deprecated. Status is now managed at shift level. " +
-                "Use ShiftStatusService to manage shift status.");
-
-        Cab cab = cabRepository.findById(id)
-                .orElseThrow(() -> new RuntimeException("Cab not found with ID: " + id));
-
-        // No-op since cab status has been removed
-        log.info("Cab {} activation requested but is deprecated", cab.getCabNumber());
-
-        return CabDTO.fromEntity(cab);
-    }
-
-    /**
-     * DEPRECATED: Cab-level status management has been replaced with shift-level status tracking
-     *
-     * Status is now managed per shift (DAY/NIGHT) via ShiftStatusService.
-     * Use ShiftStatusController endpoints to activate/deactivate individual shifts.
-     *
-     * This method is kept for backward compatibility but will log a deprecation warning.
-     *
-     * @param id The cab ID
-     * @return The cab DTO (status field will be ignored)
+     * @deprecated Use deactivate() instead
      */
     @Deprecated(since = "2.0.0", forRemoval = true)
     @Transactional
     public CabDTO retire(Long id) {
-        log.warn("DEPRECATED: retire() is deprecated. Status is now managed at shift level. " +
-                "Use ShiftStatusService to manage shift status.");
-
-        Cab cab = cabRepository.findById(id)
-                .orElseThrow(() -> new RuntimeException("Cab not found with ID: " + id));
-
-        // No-op since cab status has been removed
-        log.info("Cab {} retirement requested but is deprecated", cab.getCabNumber());
-
-        return CabDTO.fromEntity(cab);
+        return deactivate(id);
     }
 
     /**

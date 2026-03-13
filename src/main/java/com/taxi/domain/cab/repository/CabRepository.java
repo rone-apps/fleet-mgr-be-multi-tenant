@@ -35,7 +35,10 @@ public interface CabRepository extends JpaRepository<Cab, Long> {
     @Query("SELECT c FROM Cab c WHERE c.ownerDriver.driverNumber = :driverNumber")
     List<Cab> findByOwnerDriverNumber(@Param("driverNumber") String driverNumber);
 
-    // Get all cabs (filtering by shift status should be done via CabShiftRepository)
+    // Get all cabs with shifts eagerly loaded
+    @Query("SELECT DISTINCT c FROM Cab c LEFT JOIN FETCH c.shifts ORDER BY c.cabNumber")
+    List<Cab> findAllWithShifts();
+
     @Query("SELECT DISTINCT c FROM Cab c ORDER BY c.cabNumber")
     List<Cab> findAllOrderByNumber();
 

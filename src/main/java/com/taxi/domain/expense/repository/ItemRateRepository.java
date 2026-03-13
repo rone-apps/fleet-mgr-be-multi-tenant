@@ -19,14 +19,14 @@ public interface ItemRateRepository extends JpaRepository<ItemRate, Long> {
     List<ItemRate> findByIsActiveTrueOrderByName();
 
     /**
-     * Find rate by name
+     * Find active rate by name
      */
-    Optional<ItemRate> findByName(String name);
+    Optional<ItemRate> findByNameAndIsActiveTrue(String name);
 
     /**
-     * Find rate by name (case-insensitive)
+     * Find active rate by name (case-insensitive)
      */
-    @Query("SELECT r FROM ItemRate r WHERE UPPER(r.name) = UPPER(:name)")
+    @Query("SELECT r FROM ItemRate r WHERE UPPER(r.name) = UPPER(:name) AND r.isActive = true")
     Optional<ItemRate> findByNameIgnoreCase(@Param("name") String name);
 
     /**

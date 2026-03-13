@@ -1,6 +1,7 @@
 package com.taxi.domain.shift.service;
 
 import com.taxi.domain.cab.model.Cab;
+import com.taxi.domain.cab.model.CabStatus;
 import com.taxi.domain.shift.model.CabShift;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -14,9 +15,9 @@ import org.springframework.stereotype.Service;
  * Centralized service for determining if a cab or shift is "active"
  *
  * BUSINESS RULES:
- * - A cab is active if it has at least one active shift
+ * - A cab is active if its status is ACTIVE and it has at least one active shift
  * - A shift is active if its status is ACTIVE
- * - A cab+shift combination is active only if BOTH are active
+ * - A cab+shift combination is active only if BOTH the cab status AND shift status are ACTIVE
  *
  * All financial calculations use these methods to filter active entities
  */
@@ -26,10 +27,17 @@ import org.springframework.stereotype.Service;
 public class ShiftValidationService {
 
     /**
-     * Determines if a cab is active (has at least one active shift)
+     * Determines if a cab is active (cab-level status is ACTIVE and has at least one active shift)
      */
     public boolean isCabActive(Cab cab) {
-        if (cab == null || cab.getShifts() == null) {
+        if (cab == null) {
+            return false;
+        }
+        // Check cab-level status first
+        if (cab.getStatus() != null && cab.getStatus() != CabStatus.ACTIVE) {
+            return false;
+        }
+        if (cab.getShifts() == null) {
             return false;
         }
         return cab.getShifts().stream()

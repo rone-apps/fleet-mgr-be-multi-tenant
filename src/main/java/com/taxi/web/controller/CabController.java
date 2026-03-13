@@ -191,31 +191,7 @@ public class CabController {
     }
 
     /**
-     * Set cab to maintenance
-     * PUT /api/cabs/{id}/maintenance
-     */
-    @PutMapping("/{id}/maintenance")
-    @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER')")
-    public ResponseEntity<?> setMaintenance(@PathVariable Long id) {
-        log.info("PUT /api/cabs/{}/maintenance - Set cab to maintenance", id);
-        try {
-            CabDTO cab = cabService.setMaintenance(id);
-
-            Map<String, Object> response = new HashMap<>();
-            response.put("message", "Cab set to maintenance");
-            response.put("cab", cab);
-
-            return ResponseEntity.ok(response);
-        } catch (RuntimeException e) {
-            log.error("Failed to set maintenance: {}", id, e);
-            Map<String, String> error = new HashMap<>();
-            error.put("error", e.getMessage());
-            return ResponseEntity.badRequest().body(error);
-        }
-    }
-
-    /**
-     * Activate cab
+     * Activate cab (and all its shifts)
      * PUT /api/cabs/{id}/activate
      */
     @PutMapping("/{id}/activate")
@@ -239,23 +215,23 @@ public class CabController {
     }
 
     /**
-     * Retire cab
-     * PUT /api/cabs/{id}/retire
+     * Deactivate cab (and all its shifts)
+     * PUT /api/cabs/{id}/deactivate
      */
-    @PutMapping("/{id}/retire")
-    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN')")
-    public ResponseEntity<?> retire(@PathVariable Long id) {
-        log.info("PUT /api/cabs/{}/retire - Retire cab", id);
+    @PutMapping("/{id}/deactivate")
+    @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER')")
+    public ResponseEntity<?> deactivate(@PathVariable Long id) {
+        log.info("PUT /api/cabs/{}/deactivate - Deactivate cab", id);
         try {
-            CabDTO cab = cabService.retire(id);
+            CabDTO cab = cabService.deactivate(id);
 
             Map<String, Object> response = new HashMap<>();
-            response.put("message", "Cab retired successfully");
+            response.put("message", "Cab deactivated successfully");
             response.put("cab", cab);
 
             return ResponseEntity.ok(response);
         } catch (RuntimeException e) {
-            log.error("Failed to retire cab: {}", id, e);
+            log.error("Failed to deactivate cab: {}", id, e);
             Map<String, String> error = new HashMap<>();
             error.put("error", e.getMessage());
             return ResponseEntity.badRequest().body(error);

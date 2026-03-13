@@ -39,7 +39,7 @@ public class ItemRate {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @Column(name = "name", nullable = false, unique = true, length = 100)
+    @Column(name = "name", nullable = false, length = 100)
     private String name;  // e.g., "Per Mile Insurance", "Airport Trip Fee"
 
     @Enumerated(EnumType.STRING)

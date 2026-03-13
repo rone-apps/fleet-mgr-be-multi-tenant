@@ -78,6 +78,7 @@ public class FinancialStatementService {
     // ═══════════════════════════════════════════════════════════════════════
     private final ExpenseCalculationService expenseCalculationService;
     private final AirportChargeService airportChargeService;
+    private final com.taxi.domain.shift.service.ShiftValidationService shiftValidationService;
     /**
      * Generate a financial statement for a driver for a date period
      * Shows all applicable recurring (prorated) and one-time charges
@@ -216,14 +217,15 @@ public class FinancialStatementService {
             List<ShiftOwnership> ownerships = shiftOwnershipRepository.findOwnershipsInRange(personId, from, to);
             log.info("Owner {} has {} shift ownerships in period {} to {}", personId, ownerships.size(), from, to);
 
-            // Extract the shifts from the ownerships
+            // Extract the shifts from the ownerships, excluding inactive cabs/shifts
             relevantShifts = ownerships.stream()
                 .map(ShiftOwnership::getShift)
                 .filter(shift -> shift != null)
+                .filter(shiftValidationService::isCabShiftActive)
                 .distinct()
                 .toList();
 
-            log.info("Owner {} has {} unique shifts in period", personId, relevantShifts.size());
+            log.info("Owner {} has {} active shifts in period (excluded inactive cabs/shifts)", personId, relevantShifts.size());
         } else {
             // For drivers: DO NOT fetch shifts
             // ✅ Drivers should NOT receive shift-based charges (those go to the owner)
@@ -542,7 +544,7 @@ public class FinancialStatementService {
         // 3.6. Add insurance expense (based on mileage records - applies to everyone)
         try {
             // Get insurance rate first
-            java.util.Optional<ItemRate> insuranceRateOpt = itemRateRepository.findByName("INSURANCE_RATE");
+            java.util.Optional<ItemRate> insuranceRateOpt = itemRateRepository.findByNameAndIsActiveTrue("INSURANCE_RATE");
             if (!insuranceRateOpt.isPresent()) {
                 log.debug("INSURANCE_RATE not found in item_rate table, skipping insurance expense");
             } else {
@@ -1134,7 +1136,7 @@ public class FinancialStatementService {
             // ═══════════════════════════════════════════════════════════════════════
             // GET MILEAGE LEASE RATE
             // ═══════════════════════════════════════════════════════════════════════
-            java.util.Optional<ItemRate> mileageRateOpt = itemRateRepository.findByName("MILEAGE_RATE");
+            java.util.Optional<ItemRate> mileageRateOpt = itemRateRepository.findByNameAndIsActiveTrue("MILEAGE_RATE");
 
             if (mileageRateOpt.isPresent()) {
                 ItemRate baseMileageRate = mileageRateOpt.get();

@@ -1,6 +1,7 @@
 package com.taxi.domain.report.service;
 
 import com.taxi.domain.cab.model.Cab;
+import com.taxi.domain.cab.model.CabStatus;
 import com.taxi.domain.cab.repository.CabRepository;
 import com.taxi.domain.driver.model.Driver;
 import com.taxi.domain.driver.repository.DriverRepository;
@@ -112,6 +113,9 @@ public class LeaseDebugReportService {
                 if (cabOpt.isEmpty()) continue;
 
                 Cab cab = cabOpt.get();
+
+                // Skip inactive cabs
+                if (cab.getStatus() != null && cab.getStatus() != CabStatus.ACTIVE) continue;
 
                 // Find CabShift
                 com.taxi.domain.shift.model.ShiftType cabShiftType =

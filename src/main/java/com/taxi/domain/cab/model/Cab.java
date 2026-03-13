@@ -66,6 +66,11 @@ public class Cab {
     @OneToMany(mappedBy = "cab", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.LAZY)
     private List<CabShift> shifts;
 
+    @Enumerated(EnumType.STRING)
+    @Column(name = "status", nullable = false, length = 20)
+    @Builder.Default
+    private CabStatus status = CabStatus.ACTIVE;
+
     @Column(name = "notes", length = 1000)
     private String notes;
 

@@ -64,7 +64,7 @@ public class ItemRateService {
     }
 
     /**
-     * Update an item rate (creates new version)
+     * Update an item rate by closing old version and creating new one for non-overlapping period
      */
     @Transactional
     public ItemRateDTO updateRate(Long rateId, CreateItemRateRequest request) {
@@ -84,7 +84,7 @@ public class ItemRateService {
                 .name(oldRate.getName())
                 .unitType(oldRate.getUnitType())
                 .rate(request.getRate())
-                .chargedTo(request.getChargedTo())
+                .chargedTo(request.getChargedTo() != null ? request.getChargedTo() : oldRate.getChargedTo())
                 .effectiveFrom(request.getEffectiveFrom())
                 .isActive(true)
                 .notes(request.getNotes())
