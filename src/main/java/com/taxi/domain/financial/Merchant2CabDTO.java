@@ -21,7 +21,9 @@ public class Merchant2CabDTO {
     
     @NotBlank(message = "Merchant number is required")
     private String merchantNumber;
-    
+
+    private String shift = "BOTH";
+
     @NotNull(message = "Start date is required")
     @JsonFormat(pattern = "yyyy-MM-dd")
     private LocalDate startDate;

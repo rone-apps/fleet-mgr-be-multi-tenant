@@ -13,15 +13,16 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 
 @Entity
-@Table(name = "merchant2cab", 
+@Table(name = "merchant2cab",
        uniqueConstraints = {
-           @UniqueConstraint(name = "uk_cab_merchant_active", 
-                           columnNames = {"cab_number", "merchant_number", "start_date"})
+           @UniqueConstraint(name = "uk_cab_merchant_active",
+                           columnNames = {"cab_number", "merchant_number", "start_date", "shift"})
        },
        indexes = {
            @Index(name = "idx_cab_number", columnList = "cab_number"),
            @Index(name = "idx_merchant_number", columnList = "merchant_number"),
-           @Index(name = "idx_active_mappings", columnList = "cab_number, end_date")
+           @Index(name = "idx_active_mappings", columnList = "cab_number, end_date"),
+           @Index(name = "idx_cab_shift", columnList = "cab_number, shift")
        })
 @Data
 @NoArgsConstructor
@@ -40,6 +41,14 @@ public class Merchant2Cab {
     @Column(name = "merchant_number", nullable = false, length = 100)
     private String merchantNumber;
     
+    /**
+     * Shift this merchant mapping applies to: BOTH, DAY, or NIGHT.
+     * BOTH means the machine is shared by both drivers (single entry).
+     * DAY/NIGHT means each shift has its own merchant number.
+     */
+    @Column(name = "shift", nullable = false, length = 10)
+    private String shift = "BOTH";
+
     @NotNull(message = "Start date is required")
     @Column(name = "start_date", nullable = false)
     private LocalDate startDate;

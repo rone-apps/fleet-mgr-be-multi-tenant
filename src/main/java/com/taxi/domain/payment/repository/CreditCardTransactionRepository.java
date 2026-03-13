@@ -45,6 +45,17 @@ public interface CreditCardTransactionRepository extends JpaRepository<CreditCar
     Page<CreditCardTransaction> findByTransactionDateBetweenAndCabNumberAndDriverNumber(
         LocalDate startDate, LocalDate endDate, String cabNumber, String driverNumber, Pageable pageable);
 
+    @Query("SELECT t FROM CreditCardTransaction t WHERE t.transactionDate BETWEEN :startDate AND :endDate " +
+           "AND (t.driverNumber IS NULL OR t.driverNumber = '')")
+    Page<CreditCardTransaction> findByTransactionDateBetweenAndDriverNumberIsNull(
+        @Param("startDate") LocalDate startDate, @Param("endDate") LocalDate endDate, Pageable pageable);
+
+    @Query("SELECT t FROM CreditCardTransaction t WHERE t.transactionDate BETWEEN :startDate AND :endDate " +
+           "AND t.cabNumber = :cabNumber AND (t.driverNumber IS NULL OR t.driverNumber = '')")
+    Page<CreditCardTransaction> findByTransactionDateBetweenAndCabNumberAndDriverNumberIsNull(
+        @Param("startDate") LocalDate startDate, @Param("endDate") LocalDate endDate,
+        @Param("cabNumber") String cabNumber, Pageable pageable);
+
     /**
      * Check if transaction exists by primary unique key
      */

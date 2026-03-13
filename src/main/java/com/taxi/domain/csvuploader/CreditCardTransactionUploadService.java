@@ -216,8 +216,10 @@ public class CreditCardTransactionUploadService {
         LocalDateTime uploadDate = LocalDateTime.now();
         final int BATCH_SIZE = 100;
         
+        List<String> skippedRecords = new ArrayList<>();
+
         log.info("Starting import of {} transactions", transactions.size());
-        
+
         // Pre-load existing transaction keys for duplicate checking
         Set<String> existingKeys = preloadExistingTransactionKeys(transactions);
         log.info("Loaded {} existing transaction keys for duplicate checking", existingKeys.size());
@@ -245,8 +247,13 @@ public class CreditCardTransactionUploadService {
                 // Check for duplicates using cached keys
                 String key = buildTransactionKey(dto);
                 if (existingKeys.contains(key) || newKeys.contains(key)) {
-                    log.debug("Skipping duplicate transaction at row {}: Auth={}, Amount={}", 
+                    log.debug("Skipping duplicate transaction at row {}: Auth={}, Amount={}",
                              rowNumber, dto.getAuthorizationCode(), dto.getAmount());
+                    if (skippedRecords.size() < 100) {
+                        skippedRecords.add("Row " + rowNumber + ": Duplicate - Cab " + dto.getCabNumber()
+                            + ", Auth " + dto.getAuthorizationCode() + ", $" + dto.getAmount()
+                            + " on " + dto.getTransactionDate());
+                    }
                     skipCount++;
                     continue;
                 }
@@ -287,11 +294,12 @@ public class CreditCardTransactionUploadService {
         result.put("successCount", successCount);
         result.put("skipCount", skipCount);
         result.put("errorCount", errorCount);
-        result.put("errors", errors.size() > 50 ? errors.subList(0, 50) : errors); // Limit errors returned
+        result.put("errors", errors.size() > 50 ? errors.subList(0, 50) : errors);
+        result.put("skippedRecords", skippedRecords.size() > 50 ? skippedRecords.subList(0, 50) : skippedRecords);
         result.put("uploadBatchId", uploadBatchId);
         result.put("totalProcessed", transactions.size());
-        
-        log.info("Import completed: {} success, {} skipped, {} errors out of {} total", 
+
+        log.info("Import completed: {} success, {} skipped, {} errors out of {} total",
                  successCount, skipCount, errorCount, transactions.size());
         
         return result;

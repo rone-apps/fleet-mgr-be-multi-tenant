@@ -38,12 +38,14 @@ public interface Merchant2CabRepository extends JpaRepository<Merchant2Cab, Long
            "ORDER BY m.cabNumber")
     List<Merchant2Cab> findAllActiveMappings();
     
-    // Check for overlapping mappings
+    // Check for overlapping mappings (same cab + same shift)
     @Query("SELECT COUNT(m) > 0 FROM Merchant2Cab m WHERE m.cabNumber = :cabNumber " +
+           "AND m.shift = :shift " +
            "AND m.id != :excludeId " +
            "AND m.startDate <= :endDate " +
            "AND (m.endDate IS NULL OR m.endDate >= :startDate)")
     boolean hasOverlappingMapping(@Param("cabNumber") String cabNumber,
+                                   @Param("shift") String shift,
                                    @Param("startDate") LocalDate startDate,
                                    @Param("endDate") LocalDate endDate,
                                    @Param("excludeId") Long excludeId);

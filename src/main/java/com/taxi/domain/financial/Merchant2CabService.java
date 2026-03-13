@@ -68,10 +68,11 @@ public class Merchant2CabService {
             throw new IllegalArgumentException("End date cannot be before start date");
         }
         
-        // Check for overlapping mappings
+        // Check for overlapping mappings (same cab + same shift)
+        String shift = dto.getShift() != null ? dto.getShift() : "BOTH";
         LocalDate endDate = dto.getEndDate() != null ? dto.getEndDate() : LocalDate.of(9999, 12, 31);
-        if (merchant2CabRepository.hasOverlappingMapping(dto.getCabNumber(), dto.getStartDate(), endDate, 0L)) {
-            throw new IllegalArgumentException("Overlapping mapping exists for this cab in the given date range");
+        if (merchant2CabRepository.hasOverlappingMapping(dto.getCabNumber(), shift, dto.getStartDate(), endDate, 0L)) {
+            throw new IllegalArgumentException("Overlapping mapping exists for this cab and shift in the given date range");
         }
         
         // Auto-end current mapping if creating a new one starting today
@@ -114,13 +115,15 @@ public class Merchant2CabService {
             throw new IllegalArgumentException("End date cannot be before start date");
         }
         
-        // Check for overlapping mappings (excluding current)
+        // Check for overlapping mappings (excluding current, same shift)
+        String shift = dto.getShift() != null ? dto.getShift() : "BOTH";
         LocalDate endDate = dto.getEndDate() != null ? dto.getEndDate() : LocalDate.of(9999, 12, 31);
-        if (merchant2CabRepository.hasOverlappingMapping(dto.getCabNumber(), dto.getStartDate(), endDate, id)) {
-            throw new IllegalArgumentException("Overlapping mapping exists for this cab in the given date range");
+        if (merchant2CabRepository.hasOverlappingMapping(dto.getCabNumber(), shift, dto.getStartDate(), endDate, id)) {
+            throw new IllegalArgumentException("Overlapping mapping exists for this cab and shift in the given date range");
         }
         
         existing.setMerchantNumber(dto.getMerchantNumber());
+        existing.setShift(dto.getShift() != null ? dto.getShift() : "BOTH");
         existing.setStartDate(dto.getStartDate());
         existing.setEndDate(dto.getEndDate());
         existing.setNotes(dto.getNotes());
@@ -163,6 +166,7 @@ public class Merchant2CabService {
         dto.setId(entity.getId());
         dto.setCabNumber(entity.getCabNumber());
         dto.setMerchantNumber(entity.getMerchantNumber());
+        dto.setShift(entity.getShift());
         dto.setStartDate(entity.getStartDate());
         dto.setEndDate(entity.getEndDate());
         dto.setNotes(entity.getNotes());
@@ -196,6 +200,7 @@ public class Merchant2CabService {
         entity.setId(dto.getId());
         entity.setCabNumber(dto.getCabNumber());
         entity.setMerchantNumber(dto.getMerchantNumber());
+        entity.setShift(dto.getShift() != null ? dto.getShift() : "BOTH");
         entity.setStartDate(dto.getStartDate());
         entity.setEndDate(dto.getEndDate());
         entity.setNotes(dto.getNotes());

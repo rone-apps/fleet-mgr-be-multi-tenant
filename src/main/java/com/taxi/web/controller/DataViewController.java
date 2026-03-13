@@ -49,14 +49,23 @@ public class DataViewController {
         Pageable pageable = PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "transactionDate", "transactionTime"));
         
         Page<CreditCardTransaction> result;
-        
-        if (cabNumber != null && !cabNumber.isEmpty() && driverNumber != null && !driverNumber.isEmpty()) {
+        boolean hasCab = cabNumber != null && !cabNumber.isEmpty();
+        boolean hasDriver = driverNumber != null && !driverNumber.isEmpty();
+        boolean isUnassigned = "N/A".equalsIgnoreCase(driverNumber);
+
+        if (hasCab && hasDriver && !isUnassigned) {
             result = creditCardRepository.findByTransactionDateBetweenAndCabNumberAndDriverNumber(
                 startDate, endDate, cabNumber, driverNumber, pageable);
-        } else if (cabNumber != null && !cabNumber.isEmpty()) {
+        } else if (hasCab && isUnassigned) {
+            result = creditCardRepository.findByTransactionDateBetweenAndCabNumberAndDriverNumberIsNull(
+                startDate, endDate, cabNumber, pageable);
+        } else if (hasCab) {
             result = creditCardRepository.findByTransactionDateBetweenAndCabNumber(
                 startDate, endDate, cabNumber, pageable);
-        } else if (driverNumber != null && !driverNumber.isEmpty()) {
+        } else if (isUnassigned) {
+            result = creditCardRepository.findByTransactionDateBetweenAndDriverNumberIsNull(
+                startDate, endDate, pageable);
+        } else if (hasDriver) {
             result = creditCardRepository.findByTransactionDateBetweenAndDriverNumber(
                 startDate, endDate, driverNumber, pageable);
         } else {
@@ -107,14 +116,23 @@ public class DataViewController {
         Pageable pageable = PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "logonTime"));
         
         Page<MileageRecord> result;
-        
-        if (cabNumber != null && !cabNumber.isEmpty() && driverNumber != null && !driverNumber.isEmpty()) {
+        boolean hasCab = cabNumber != null && !cabNumber.isEmpty();
+        boolean hasDriver = driverNumber != null && !driverNumber.isEmpty();
+        boolean isUnassigned = "N/A".equalsIgnoreCase(driverNumber);
+
+        if (hasCab && hasDriver && !isUnassigned) {
             result = mileageRepository.findByLogonDateBetweenAndCabNumberAndDriverNumber(
                 startDate, endDate, cabNumber, driverNumber, pageable);
-        } else if (cabNumber != null && !cabNumber.isEmpty()) {
+        } else if (hasCab && isUnassigned) {
+            result = mileageRepository.findByLogonDateBetweenAndCabNumberAndDriverNumberIsNull(
+                startDate, endDate, cabNumber, pageable);
+        } else if (hasCab) {
             result = mileageRepository.findByLogonDateBetweenAndCabNumber(
                 startDate, endDate, cabNumber, pageable);
-        } else if (driverNumber != null && !driverNumber.isEmpty()) {
+        } else if (isUnassigned) {
+            result = mileageRepository.findByLogonDateBetweenAndDriverNumberIsNull(
+                startDate, endDate, pageable);
+        } else if (hasDriver) {
             result = mileageRepository.findByLogonDateBetweenAndDriverNumber(
                 startDate, endDate, driverNumber, pageable);
         } else {

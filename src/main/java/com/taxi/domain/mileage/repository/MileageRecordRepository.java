@@ -56,6 +56,21 @@ public interface MileageRecordRepository extends JpaRepository<MileageRecord, Lo
         @Param("driverNumber") String driverNumber,
         Pageable pageable);
 
+    @Query("SELECT m FROM MileageRecord m WHERE DATE(CONVERT_TZ(m.logonTime, '+00:00', '-08:00')) BETWEEN :startDate AND :endDate " +
+           "AND (m.driverNumber IS NULL OR m.driverNumber = '')")
+    Page<MileageRecord> findByLogonDateBetweenAndDriverNumberIsNull(
+        @Param("startDate") LocalDate startDate,
+        @Param("endDate") LocalDate endDate,
+        Pageable pageable);
+
+    @Query("SELECT m FROM MileageRecord m WHERE DATE(CONVERT_TZ(m.logonTime, '+00:00', '-08:00')) BETWEEN :startDate AND :endDate " +
+           "AND m.cabNumber = :cabNumber AND (m.driverNumber IS NULL OR m.driverNumber = '')")
+    Page<MileageRecord> findByLogonDateBetweenAndCabNumberAndDriverNumberIsNull(
+        @Param("startDate") LocalDate startDate,
+        @Param("endDate") LocalDate endDate,
+        @Param("cabNumber") String cabNumber,
+        Pageable pageable);
+
     @Query("SELECT m FROM MileageRecord m WHERE m.cabNumber = :cabNumber " +
            "AND DATE(CONVERT_TZ(m.logonTime, '+00:00', '-08:00')) BETWEEN :startDate AND :endDate ORDER BY m.logonTime DESC")
     List<MileageRecord> findByCabNumberAndDateRange(

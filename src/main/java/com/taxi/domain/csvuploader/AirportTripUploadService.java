@@ -128,6 +128,7 @@ public class AirportTripUploadService {
 
         int successCount = 0, skipCount = 0, updateCount = 0, errorCount = 0;
         List<String> errors = new ArrayList<>();
+        List<String> skippedRecords = new ArrayList<>();
         LocalDateTime uploadDate = LocalDateTime.now();
 
         for (int i = 0; i < records.size(); i++) {
@@ -157,6 +158,10 @@ public class AirportTripUploadService {
                         airportTripRepository.save(record);
                         updateCount++;
                     } else {
+                        if (skippedRecords.size() < 100) {
+                            skippedRecords.add("Row " + rowNumber + ": Duplicate - Cab " + dto.getCabNumber()
+                                + ", Date " + dto.getTripDate() + ", Trips " + dto.getGrandTotal());
+                        }
                         skipCount++;
                     }
                     continue;
@@ -185,6 +190,7 @@ public class AirportTripUploadService {
         result.put("errorCount", errorCount);
         result.put("totalProcessed", records.size());
         result.put("errors", errors);
+        result.put("skippedRecords", skippedRecords.size() > 50 ? skippedRecords.subList(0, 50) : skippedRecords);
 
         return result;
     }

@@ -144,6 +144,7 @@ public class MileageUploadService {
 
         int successCount = 0, skipCount = 0, errorCount = 0;
         List<String> errors = new ArrayList<>();
+        List<String> skippedRecords = new ArrayList<>();
         LocalDateTime uploadDate = LocalDateTime.now();
 
         for (int i = 0; i < records.size(); i++) {
@@ -160,6 +161,10 @@ public class MileageUploadService {
 
                 // Check for duplicates
                 if (isDuplicate(dto)) {
+                    if (skippedRecords.size() < 100) {
+                        skippedRecords.add("Row " + rowNumber + ": Duplicate - Cab " + dto.getCabNumber()
+                            + ", Logon " + dto.getLogonTime());
+                    }
                     skipCount++;
                     continue;
                 }
@@ -186,6 +191,7 @@ public class MileageUploadService {
         result.put("errorCount", errorCount);
         result.put("totalProcessed", records.size());
         result.put("errors", errors);
+        result.put("skippedRecords", skippedRecords.size() > 50 ? skippedRecords.subList(0, 50) : skippedRecords);
 
         return result;
     }
