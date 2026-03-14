@@ -90,16 +90,17 @@ public class TaxiCallerDriverShiftImportService {
                     log.info("Row {}: RAW DATA = {}", i, row.toString());
                 }
                 
-                // Validate required fields
-                if (driverUsername.isEmpty() || vehicleCallsign.isEmpty() || 
-                    trackStart.isEmpty() || trackEnd.isEmpty()) {
-                    String reason = "Missing required fields";
+                // Validate required fields (logon is required, logoff can be empty for in-progress shifts)
+                if (driverUsername.isEmpty() || vehicleCallsign.isEmpty() || trackStart.isEmpty()) {
+                    String reason = "Missing required fields (driver/vehicle/logon)";
                     skippedReasons.put(reason, skippedReasons.getOrDefault(reason, 0) + 1);
                     result.incrementSkipped();
                     log.warn("Row {}: Skipping - {}", i, reason);
                     continue;
                 }
-                
+
+                boolean isInProgress = trackEnd.isEmpty();
+
                 // Parse dates with precision preservation
                 // ✅ Try to capture seconds (or milliseconds) for accuracy
                 LocalDateTime logonTime;
@@ -110,21 +111,25 @@ public class TaxiCallerDriverShiftImportService {
 
                     // ✅ Try multiple date formats in order of precision (highest first)
                     logonTime = parseDateTimeWithPrecision(trackStart);
-                    logoffTime = parseDateTimeWithPrecision(trackEnd);
+                    logoffTime = isInProgress ? null : parseDateTimeWithPrecision(trackEnd);
 
-                    log.info("Row {}: Date conversion - TaxiCaller trackStart: '{}' → parsed logonTime: '{}' (nanoseconds: {}), TaxiCaller trackEnd: '{}' → parsed logoffTime: '{}' (nanoseconds: {})",
-                        i, trackStart, logonTime, logonTime.getNano(), trackEnd, logoffTime, logoffTime.getNano());
+                    if (isInProgress) {
+                        log.info("Row {}: IN-PROGRESS shift - logonTime: '{}', no logoff yet", i, logonTime);
+                    } else {
+                        log.info("Row {}: Date conversion - trackStart: '{}' → logonTime: '{}', trackEnd: '{}' → logoffTime: '{}'",
+                            i, trackStart, logonTime, trackEnd, logoffTime);
 
-                    // Validate that logoff is after logon
-                    if (logoffTime.isBefore(logonTime)) {
-                        log.warn("Row {}: logoffTime ({}) is before logonTime ({}), this may indicate a date parsing issue", 
-                            i, logoffTime, logonTime);
+                        // Validate that logoff is after logon
+                        if (logoffTime.isBefore(logonTime)) {
+                            log.warn("Row {}: logoffTime ({}) is before logonTime ({}), this may indicate a date parsing issue",
+                                i, logoffTime, logonTime);
+                        }
                     }
                 } catch (Exception e) {
                     String reason = "Invalid date format";
                     skippedReasons.put(reason, skippedReasons.getOrDefault(reason, 0) + 1);
                     result.incrementSkipped();
-                    errors.add(String.format("Row %d: Invalid date format - trackStart: '%s', trackEnd: '%s', error: %s", 
+                    errors.add(String.format("Row %d: Invalid date format - trackStart: '%s', trackEnd: '%s', error: %s",
                         i, trackStart, trackEnd, e.getMessage()));
                     log.warn("Row {}: Skipping - Invalid date format - trackStart: '{}', trackEnd: '{}'", i, trackStart, trackEnd);
                     continue;
@@ -226,14 +231,14 @@ public class TaxiCallerDriverShiftImportService {
                 shift.setDriverLastName(driverLastName);
                 shift.setLogonTime(logonTime);
                 shift.setLogoffTime(logoffTime);
-                
+
                 // Parse total hours from duration string (e.g., "08:30" -> 8.5)
                 BigDecimal totalHours = parseDurationToHours(hosDuration);
                 shift.setTotalHours(totalHours);
 
-                // ✅ Shift type will be determined in consolidation logic based on FIRST logon time
-                shift.setStatus("COMPLETED");
-                
+                // ✅ Set status based on whether shift is complete or still in-progress
+                shift.setStatus(isInProgress ? "IN_PROGRESS" : "COMPLETED");
+
                 // ✅ CONSOLIDATION: Determine shift window based on FIRST logon time
                 // DAY Shift Window: 1:00 AM - 12:59 PM (1 AM start)
                 // NIGHT Shift Window: 1:00 PM - 12:59 AM (1 PM start, spans to next calendar day)
@@ -252,9 +257,14 @@ public class TaxiCallerDriverShiftImportService {
                         existing.setLogonTime(logonTime);
                     }
 
-                    // Take the latest logoff time
-                    if (logoffTime.isAfter(existing.getLogoffTime())) {
+                    // Take the latest logoff time (only if new logoff is not null)
+                    if (logoffTime != null && (existing.getLogoffTime() == null || logoffTime.isAfter(existing.getLogoffTime()))) {
                         existing.setLogoffTime(logoffTime);
+                    }
+
+                    // If either record is completed, mark the consolidated shift as completed
+                    if (!isInProgress) {
+                        existing.setStatus("COMPLETED");
                     }
 
                     // Check if total hours exceed 12 hour window - if so, this should be a new shift
@@ -292,12 +302,28 @@ public class TaxiCallerDriverShiftImportService {
                     shift.setPrimaryShiftType(shiftType);
                     shift.setSecondaryShiftType("DAY".equals(shiftType) ? "NIGHT" : "DAY");
 
+                    // Calculate initial shift counts (skip if in-progress with no hours yet)
+                    if (totalHours != null) {
+                        shift.setPrimaryShiftCount(BigDecimal.ONE);
+                        double hours = totalHours.doubleValue();
+                        if (hours > 18) {
+                            shift.setSecondaryShiftCount(BigDecimal.ONE);
+                        } else if (hours > 15) {
+                            shift.setSecondaryShiftCount(new BigDecimal("0.50"));
+                        } else if (hours > 12) {
+                            shift.setSecondaryShiftCount(new BigDecimal("0.25"));
+                        } else {
+                            shift.setSecondaryShiftCount(BigDecimal.ZERO);
+                        }
+                    }
+
                     // ✅ AUDIT TRAIL: Initialize session history in notes field
                     initializeSessionHistory(shift, logonTime, logoffTime, totalHours);
 
                     shiftsToProcess.put(consolidationKey, shift);
-                    log.debug("Row {}: New {} shift for driver {} cab {} (record date: {}) - first logon at {}:00",
-                            i, shiftType, driverNumber, cabNumber, shiftRecordDate, logonHour);
+                    log.debug("Row {}: New {} shift for driver {} cab {} (record date: {}) - logon at {}, status: {}",
+                            i, shiftType, driverNumber, cabNumber, shiftRecordDate, logonTime,
+                            isInProgress ? "IN_PROGRESS" : "COMPLETED");
                 }
                 
             } catch (Exception e) {
@@ -316,23 +342,64 @@ public class TaxiCallerDriverShiftImportService {
             String key = entry.getKey();
 
             try {
-                // Check for existing duplicate before saving
-                boolean isDuplicate = driverShiftRepository.existsByDriverNumberAndCabNumberAndLogonTimeAndLogoffTime(
-                    shiftToSave.getDriverNumber(), shiftToSave.getCabNumber(),
-                    shiftToSave.getLogonTime(), shiftToSave.getLogoffTime());
+                // ✅ SMART DUPLICATE DETECTION: Look for existing shift by driver + cab + logonTime
+                // This handles the case where a shift was partially imported (in-progress) in a previous batch
+                // and now we have the complete record with updated logoff time and hours
+                Optional<DriverShift> existingOpt = driverShiftRepository.findByDriverNumberAndCabNumberAndLogonTime(
+                    shiftToSave.getDriverNumber(), shiftToSave.getCabNumber(), shiftToSave.getLogonTime());
 
-                if (isDuplicate) {
-                    result.incrementDuplicate();
-                    log.debug("Skipping duplicate shift: {}", key);
+                if (existingOpt.isPresent()) {
+                    DriverShift existing = existingOpt.get();
+
+                    // Check if the data has actually changed (logoff time or hours differ)
+                    boolean logoffChanged = shiftToSave.getLogoffTime() != null && !shiftToSave.getLogoffTime().equals(existing.getLogoffTime());
+                    boolean hoursChanged = shiftToSave.getTotalHours() != null && existing.getTotalHours() != null
+                            && shiftToSave.getTotalHours().compareTo(existing.getTotalHours()) != 0;
+
+                    if (logoffChanged || hoursChanged) {
+                        // ✅ UPDATE: Shift was previously imported incomplete — update with complete data
+                        log.info("Updating existing shift {} — logoff: {} → {}, hours: {} → {}",
+                                key, existing.getLogoffTime(), shiftToSave.getLogoffTime(),
+                                existing.getTotalHours(), shiftToSave.getTotalHours());
+
+                        existing.setLogoffTime(shiftToSave.getLogoffTime());
+                        existing.setTotalHours(shiftToSave.getTotalHours());
+                        existing.setSessionHistory(shiftToSave.getSessionHistory());
+                        existing.setSessionCount(shiftToSave.getSessionCount());
+
+                        // Recalculate shift counts based on updated total hours
+                        existing.setPrimaryShiftCount(BigDecimal.ONE);
+                        double hours = shiftToSave.getTotalHours().doubleValue();
+                        if (hours > 18) {
+                            existing.setSecondaryShiftCount(BigDecimal.ONE);
+                        } else if (hours > 15) {
+                            existing.setSecondaryShiftCount(new BigDecimal("0.50"));
+                        } else if (hours > 12) {
+                            existing.setSecondaryShiftCount(new BigDecimal("0.25"));
+                        } else {
+                            existing.setSecondaryShiftCount(BigDecimal.ZERO);
+                        }
+
+                        transactionTemplate.executeWithoutResult(status -> {
+                            driverShiftRepository.save(existing);
+                        });
+                        result.incrementSuccess();
+                        log.info("✅ Updated shift: {} (logoff: {}, hours: {})",
+                                key, existing.getLogoffTime(), existing.getTotalHours());
+                    } else {
+                        // Exact duplicate — no changes needed
+                        result.incrementDuplicate();
+                        log.debug("Skipping unchanged duplicate shift: {}", key);
+                    }
                     continue;
                 }
 
-                // Save in isolated transaction
+                // No existing record — save as new
                 transactionTemplate.executeWithoutResult(status -> {
                     driverShiftRepository.save(shiftToSave);
                 });
                 result.incrementSuccess();
-                log.debug("Saved consolidated shift: {} (logon: {}, logoff: {}, hours: {})",
+                log.debug("Saved new consolidated shift: {} (logon: {}, logoff: {}, hours: {})",
                         key, shiftToSave.getLogonTime(), shiftToSave.getLogoffTime(), shiftToSave.getTotalHours());
 
             } catch (Exception saveEx) {

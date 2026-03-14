@@ -119,6 +119,13 @@ public interface DriverShiftRepository extends JpaRepository<DriverShift, Long> 
      */
     boolean existsByDriverNumberAndCabNumberAndLogonTimeAndLogoffTime(
         String driverNumber, String cabNumber, LocalDateTime logonTime, LocalDateTime logoffTime);
+
+    /**
+     * Find existing shift by driver, cab, and logon time (ignoring logoff time).
+     * Used to detect and update in-progress shifts that were partially imported in a previous batch.
+     */
+    Optional<DriverShift> findByDriverNumberAndCabNumberAndLogonTime(
+        String driverNumber, String cabNumber, LocalDateTime logonTime);
     
     /**
      * Find shifts by cab number and logon time range (for lease revenue reports)
