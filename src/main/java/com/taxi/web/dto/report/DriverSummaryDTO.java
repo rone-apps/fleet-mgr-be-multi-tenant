@@ -42,6 +42,10 @@ public class DriverSummaryDTO {
     private Integer airportTripCount;            // Total airport trips during period
     private BigDecimal airportTripCost;          // Total cost of airport trips (tripCount × rate)
 
+    // Tax and Commission
+    private BigDecimal taxExpense;               // Total tax on expenses
+    private BigDecimal commissionExpense;        // Total commission on revenues
+
     // Financial totals
     private BigDecimal totalRevenue;           // Sum of all revenues
     private BigDecimal totalExpense;           // Sum of all expenses
@@ -89,7 +93,7 @@ public class DriverSummaryDTO {
      */
     public void calculateTotalExpense() {
         this.totalExpense = safeAdd(fixedExpense, leaseExpense, variableExpense, otherExpense,
-                                    insuranceMileageExpense, airportTripCost);
+                                    insuranceMileageExpense, airportTripCost, taxExpense, commissionExpense);
     }
     
     /**

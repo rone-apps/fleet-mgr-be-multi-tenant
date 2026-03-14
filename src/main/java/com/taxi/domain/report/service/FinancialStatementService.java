@@ -79,6 +79,10 @@ public class FinancialStatementService {
     private final ExpenseCalculationService expenseCalculationService;
     private final AirportChargeService airportChargeService;
     private final com.taxi.domain.shift.service.ShiftValidationService shiftValidationService;
+    private final com.taxi.domain.tax.repository.TaxCategoryAssignmentRepository taxCategoryAssignmentRepository;
+    private final com.taxi.domain.tax.repository.TaxRateRepository taxRateRepository;
+    private final com.taxi.domain.tax.repository.CommissionCategoryAssignmentRepository commissionCategoryAssignmentRepository;
+    private final com.taxi.domain.tax.repository.CommissionRateRepository commissionRateRepository;
     /**
      * Generate a financial statement for a driver for a date period
      * Shows all applicable recurring (prorated) and one-time charges
@@ -911,6 +915,107 @@ public class FinancialStatementService {
                 relevantPerUnitExpenses.size(), relevantKey, totalPerUnit);
         } else {
             report.setTotalPerUnitExpenses(BigDecimal.ZERO);
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // TAXES ON EXPENSES
+        // For each active tax-category assignment, calculate tax on matching expenses
+        // ═══════════════════════════════════════════════════════════════════════
+        try {
+            List<com.taxi.domain.tax.model.TaxCategoryAssignment> taxAssignments =
+                    taxCategoryAssignmentRepository.findAllActiveWithDetails();
+
+            log.info("Tax calculation: found {} active tax-category assignments, period end={}", taxAssignments.size(), to);
+
+            // Log all recurring expense category codes for debugging
+            log.info("Tax calculation: recurring expense codes = {}",
+                    report.getRecurringExpenses().stream().map(e -> e.getCategoryCode()).distinct().collect(java.util.stream.Collectors.toList()));
+
+            for (com.taxi.domain.tax.model.TaxCategoryAssignment assignment : taxAssignments) {
+                String targetCategoryCode = assignment.getExpenseCategory().getCategoryCode();
+
+                // Sum expenses matching this category from recurring + one-time expenses
+                final java.math.BigDecimal taxBaseAmount = report.getRecurringExpenses().stream()
+                        .filter(e -> targetCategoryCode.equals(e.getCategoryCode()))
+                        .map(e -> e.getAmount() != null ? e.getAmount() : BigDecimal.ZERO)
+                        .reduce(BigDecimal.ZERO, BigDecimal::add)
+                        .add(report.getOneTimeExpenses().stream()
+                                .filter(e -> targetCategoryCode.equals(e.getCategoryCode()))
+                                .map(e -> e.getAmount() != null ? e.getAmount() : BigDecimal.ZERO)
+                                .reduce(BigDecimal.ZERO, BigDecimal::add));
+
+                log.info("Tax calculation: checking tax {} on category '{}', base amount = ${}",
+                        assignment.getTaxType().getCode(), targetCategoryCode, taxBaseAmount);
+
+                if (taxBaseAmount.compareTo(BigDecimal.ZERO) > 0) {
+                    var rateOpt = taxRateRepository.findActiveRateOnDate(assignment.getTaxType().getId(), to);
+                    log.info("Tax calculation: rate lookup for type {} on date {}: present={}",
+                            assignment.getTaxType().getCode(), to, rateOpt.isPresent());
+                    rateOpt.ifPresent(rate -> {
+                        java.math.BigDecimal taxAmount = taxBaseAmount.multiply(rate.getRate())
+                                .divide(new java.math.BigDecimal("100"), 2, java.math.RoundingMode.HALF_UP);
+
+                        if (taxAmount.compareTo(BigDecimal.ZERO) > 0) {
+                            report.getTaxExpenses().add(OwnerReportDTO.TaxLineItem.builder()
+                                    .taxTypeCode(assignment.getTaxType().getCode())
+                                    .taxTypeName(assignment.getTaxType().getName())
+                                    .taxRate(rate.getRate())
+                                    .expenseCategoryName(assignment.getExpenseCategory().getCategoryName())
+                                    .baseAmount(taxBaseAmount)
+                                    .amount(taxAmount)
+                                    .build());
+
+                            log.debug("Tax {} @ {}% on {} (${}) = ${}",
+                                    assignment.getTaxType().getCode(), rate.getRate(),
+                                    targetCategoryCode, taxBaseAmount, taxAmount);
+                        }
+                    });
+                }
+            }
+        } catch (Exception e) {
+            log.error("Error calculating tax expenses: {}", e.getMessage(), e);
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // COMMISSIONS ON REVENUE
+        // Credit card commission: 2% on each credit card revenue item + total
+        // ═══════════════════════════════════════════════════════════════════════
+        try {
+            BigDecimal ccCommissionRate = new BigDecimal("2");
+            BigDecimal totalCreditCardRevenue = BigDecimal.ZERO;
+            BigDecimal totalCommission = BigDecimal.ZERO;
+
+            // Calculate per-item commission on each credit card revenue
+            for (OwnerReportDTO.RevenueLineItem rev : report.getRevenues()) {
+                if ("CREDIT_CARD".equals(rev.getRevenueType())) {
+                    BigDecimal amt = rev.getAmount() != null ? rev.getAmount() : BigDecimal.ZERO;
+                    BigDecimal itemCommission = amt.multiply(ccCommissionRate)
+                            .divide(new BigDecimal("100"), 2, java.math.RoundingMode.HALF_UP);
+                    BigDecimal netAmt = amt.subtract(itemCommission);
+
+                    rev.setCommissionRate(ccCommissionRate);
+                    rev.setCommissionAmount(itemCommission);
+                    rev.setNetAmount(netAmt);
+
+                    totalCreditCardRevenue = totalCreditCardRevenue.add(amt);
+                    totalCommission = totalCommission.add(itemCommission);
+                }
+            }
+
+            log.info("Commission calculation: total CC revenue = ${}, total commission = ${}", totalCreditCardRevenue, totalCommission);
+
+            if (totalCommission.compareTo(BigDecimal.ZERO) > 0) {
+                report.getCommissionExpenses().add(OwnerReportDTO.CommissionLineItem.builder()
+                        .commissionTypeCode("CC_COMMISSION")
+                        .commissionTypeName("Credit Card Commission")
+                        .commissionRate(ccCommissionRate)
+                        .revenueCategoryName("Credit Card Revenue")
+                        .baseAmount(totalCreditCardRevenue)
+                        .amount(totalCommission)
+                        .build());
+            }
+        } catch (Exception e) {
+            log.error("Error calculating commission expenses: {}", e.getMessage(), e);
         }
 
         report.calculateTotals();

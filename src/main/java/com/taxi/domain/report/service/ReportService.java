@@ -307,12 +307,20 @@ public class ReportService {
             summary.setVariableExpense(BigDecimal.ZERO);
             summary.setOtherExpense(otherExpenseTotal);
 
+            // Tax and Commission from fullReport
+            BigDecimal taxExpenseTotal = safeBigDecimal(fullReport.getTotalTaxExpenses());
+            BigDecimal commissionExpenseTotal = safeBigDecimal(fullReport.getTotalCommissionExpenses());
+            summary.setTaxExpense(taxExpenseTotal);
+            summary.setCommissionExpense(commissionExpenseTotal);
+
             // Total expense = sum of all categories (matches fullReport.totalExpenses)
             BigDecimal recalculatedTotalExpense = safeBigDecimal(fullReport.getTotalRecurringExpenses())
                     .add(leaseExpenseTotal)
                     .add(otherExpenseTotal)
                     .add(insuranceExpenseTotal)
-                    .add(airportExpenseTotal);
+                    .add(airportExpenseTotal)
+                    .add(taxExpenseTotal)
+                    .add(commissionExpenseTotal);
 
             log.debug("   Expense Breakdown for {}: Fixed=${}, Lease=${}, Other=${}, Insurance=${}, Airport=${} (trips={}) → Total=${}",
                     driver.getDriverNumber(),
@@ -471,6 +479,30 @@ public class ReportService {
             if (expenseMap.containsKey("AIRPORT") && airportTripCount > 0) {
                 expenseMap.get("AIRPORT").setDisplayName(
                         String.format("Airport Trips (%d trips)", airportTripCount));
+            }
+
+            // Tax expenses breakdown
+            if (fullReport.getTaxExpenses() != null) {
+                for (OwnerReportDTO.TaxLineItem tax : fullReport.getTaxExpenses()) {
+                    String key = "TAX:" + tax.getTaxTypeCode() + ":" + tax.getExpenseCategoryName();
+                    expenseMap.put(key, DriverSummaryDTO.ItemizedBreakdown.builder()
+                            .key(key)
+                            .displayName(tax.getTaxTypeName() + " on " + tax.getExpenseCategoryName())
+                            .amount(safeBigDecimal(tax.getAmount()))
+                            .build());
+                }
+            }
+
+            // Commission expenses breakdown
+            if (fullReport.getCommissionExpenses() != null) {
+                for (OwnerReportDTO.CommissionLineItem comm : fullReport.getCommissionExpenses()) {
+                    String key = "COMM:" + comm.getCommissionTypeCode() + ":" + comm.getRevenueCategoryName();
+                    expenseMap.put(key, DriverSummaryDTO.ItemizedBreakdown.builder()
+                            .key(key)
+                            .displayName(comm.getCommissionTypeName() + " on " + comm.getRevenueCategoryName())
+                            .amount(safeBigDecimal(comm.getAmount()))
+                            .build());
+                }
             }
 
             // ✅ ALWAYS populate breakdown items - needed for table columns

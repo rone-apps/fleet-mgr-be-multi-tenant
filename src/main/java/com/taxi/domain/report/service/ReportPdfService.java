@@ -80,7 +80,7 @@ public class ReportPdfService {
             // Partition revenues
             List<OwnerReportDTO.RevenueLineItem> leaseRevenues = filterRevenues(report, "LEASE_INCOME");
             List<OwnerReportDTO.RevenueLineItem> accountRevenues = filterRevenues(report, "ACCOUNT_REVENUE");
-            List<OwnerReportDTO.RevenueLineItem> creditCardRevenues = filterRevenues(report, "CREDIT_CARD_REVENUE");
+            List<OwnerReportDTO.RevenueLineItem> creditCardRevenues = filterRevenues(report, "CARD_REVENUE");
             List<OwnerReportDTO.RevenueLineItem> otherRevenues = filterRevenues(report, "OTHER_REVENUE");
 
             // 3. Lease Revenue - grouped by cab
@@ -93,9 +93,9 @@ public class ReportPdfService {
                 addAccountChargesSection(document, accountRevenues);
             }
 
-            // 5. Credit Card Revenue
+            // 5. Credit Card Revenue (with commission & net amount columns)
             if (!creditCardRevenues.isEmpty()) {
-                addSimpleRevenueSection(document, "Credit Card Revenue", RED, creditCardRevenues, false);
+                addCreditCardRevenueSection(document, creditCardRevenues);
             }
 
             // 6. Other Revenues
@@ -152,7 +152,17 @@ public class ReportPdfService {
                 addInsuranceMileageExpensesSection(document, report.getInsuranceMileageExpenses());
             }
 
-            // 13. Totals Footer (matching modal exactly)
+            // 13. Tax Expenses
+            if (report.getTaxExpenses() != null && !report.getTaxExpenses().isEmpty()) {
+                addTaxExpensesSection(document, report.getTaxExpenses());
+            }
+
+            // 14. Commission Expenses
+            if (report.getCommissionExpenses() != null && !report.getCommissionExpenses().isEmpty()) {
+                addCommissionExpensesSection(document, report.getCommissionExpenses());
+            }
+
+            // 15. Totals Footer (matching modal exactly)
             addTotalsFooter(document, report);
 
             // 14. Footer
@@ -255,7 +265,7 @@ public class ReportPdfService {
             addSummaryRow(summaryTable, "  Account Charges", CURRENCY_FORMAT.format(accountTotal), labelFont, valueFont);
         }
 
-        List<OwnerReportDTO.RevenueLineItem> ccRevs = filterRevenues(report, "CREDIT_CARD_REVENUE");
+        List<OwnerReportDTO.RevenueLineItem> ccRevs = filterRevenues(report, "CARD_REVENUE");
         if (!ccRevs.isEmpty()) {
             BigDecimal ccTotal = ccRevs.stream().map(OwnerReportDTO.RevenueLineItem::getAmount).reduce(BigDecimal.ZERO, BigDecimal::add);
             addSummaryRow(summaryTable, "  Credit Card Revenue", CURRENCY_FORMAT.format(ccTotal), labelFont, valueFont);
@@ -277,8 +287,24 @@ public class ReportPdfService {
         // Expense breakdown
         addSummaryHeader(summaryTable, "EXPENSES", RED);
 
+        Font subItemFont = new Font(Font.FontFamily.HELVETICA, 8, Font.NORMAL, new BaseColor(100, 100, 100));
+
+        // Recurring Expenses with per-category breakdown
         if (report.getTotalRecurringExpenses() != null && report.getTotalRecurringExpenses().compareTo(BigDecimal.ZERO) != 0) {
             addSummaryRow(summaryTable, "  Recurring Expenses", CURRENCY_FORMAT.format(report.getTotalRecurringExpenses()), labelFont, valueFont);
+            // Sub-items grouped by category
+            if (report.getRecurringExpenses() != null) {
+                Map<String, BigDecimal> recurringByCategory = new LinkedHashMap<>();
+                for (StatementLineItem exp : report.getRecurringExpenses()) {
+                    String cat = exp.getCategoryName() != null ? exp.getCategoryName() : "Other";
+                    recurringByCategory.merge(cat, exp.getAmount() != null ? exp.getAmount() : BigDecimal.ZERO, BigDecimal::add);
+                }
+                for (Map.Entry<String, BigDecimal> entry : recurringByCategory.entrySet()) {
+                    if (entry.getValue().compareTo(BigDecimal.ZERO) != 0) {
+                        addSummaryRow(summaryTable, "      " + entry.getKey(), CURRENCY_FORMAT.format(entry.getValue()), subItemFont, subItemFont);
+                    }
+                }
+            }
         }
 
         // Lease expenses subtotal
@@ -315,6 +341,32 @@ public class ReportPdfService {
 
         if (report.getTotalInsuranceMileageExpenses() != null && report.getTotalInsuranceMileageExpenses().compareTo(BigDecimal.ZERO) != 0) {
             addSummaryRow(summaryTable, "  Insurance Mileage", CURRENCY_FORMAT.format(report.getTotalInsuranceMileageExpenses()), labelFont, valueFont);
+        }
+
+        // Taxes with per-item breakdown
+        if (report.getTotalTaxExpenses() != null && report.getTotalTaxExpenses().compareTo(BigDecimal.ZERO) != 0) {
+            addSummaryRow(summaryTable, "  Taxes", CURRENCY_FORMAT.format(report.getTotalTaxExpenses()), labelFont, valueFont);
+            if (report.getTaxExpenses() != null) {
+                for (OwnerReportDTO.TaxLineItem tax : report.getTaxExpenses()) {
+                    String taxLabel = tax.getTaxTypeName() + " on " + tax.getExpenseCategoryName()
+                            + " (" + tax.getTaxRate().stripTrailingZeros().toPlainString() + "%)";
+                    addSummaryRow(summaryTable, "      " + taxLabel,
+                            CURRENCY_FORMAT.format(tax.getAmount() != null ? tax.getAmount() : BigDecimal.ZERO), subItemFont, subItemFont);
+                }
+            }
+        }
+
+        // Commissions with per-item breakdown
+        if (report.getTotalCommissionExpenses() != null && report.getTotalCommissionExpenses().compareTo(BigDecimal.ZERO) != 0) {
+            addSummaryRow(summaryTable, "  Commissions", CURRENCY_FORMAT.format(report.getTotalCommissionExpenses()), labelFont, valueFont);
+            if (report.getCommissionExpenses() != null) {
+                for (OwnerReportDTO.CommissionLineItem comm : report.getCommissionExpenses()) {
+                    String commLabel = comm.getCommissionTypeName() + " on " + comm.getRevenueCategoryName()
+                            + " (" + comm.getCommissionRate().stripTrailingZeros().toPlainString() + "%)";
+                    addSummaryRow(summaryTable, "      " + commLabel,
+                            CURRENCY_FORMAT.format(comm.getAmount() != null ? comm.getAmount() : BigDecimal.ZERO), subItemFont, subItemFont);
+                }
+            }
         }
 
         addSummaryRow(summaryTable, "Total Expenses",
@@ -416,7 +468,82 @@ public class ReportPdfService {
         document.add(table);
     }
 
-    // ==================== SIMPLE REVENUE SECTIONS (Account, CC, Other) ====================
+    // ==================== CREDIT CARD REVENUE (with Commission & Net Amount) ====================
+
+    private void addCreditCardRevenueSection(Document document, List<OwnerReportDTO.RevenueLineItem> revenues) throws DocumentException {
+        addSectionTitle(document, "Credit Card Revenue", RED);
+
+        PdfPTable table = new PdfPTable(new float[]{14, 10, 24, 16, 12, 12, 12});
+        table.setWidthPercentage(100);
+        table.setSpacingBefore(5);
+        table.setSpacingAfter(10);
+
+        addColoredHeaders(table, new String[]{"Date", "Cab #", "Description", "Amount", "Comm %", "Commission", "Net Amount"}, RED);
+
+        BigDecimal subtotalAmount = BigDecimal.ZERO;
+        BigDecimal subtotalCommission = BigDecimal.ZERO;
+        BigDecimal subtotalNet = BigDecimal.ZERO;
+
+        Font greenBold = new Font(Font.FontFamily.HELVETICA, 8, Font.BOLD, GREEN);
+        Font redBold = new Font(Font.FontFamily.HELVETICA, 8, Font.BOLD, RED);
+
+        for (OwnerReportDTO.RevenueLineItem rev : revenues) {
+            BigDecimal amt = rev.getAmount() != null ? rev.getAmount() : BigDecimal.ZERO;
+            BigDecimal comm = rev.getCommissionAmount() != null ? rev.getCommissionAmount() : BigDecimal.ZERO;
+            BigDecimal net = rev.getNetAmount() != null ? rev.getNetAmount() : amt;
+            BigDecimal rate = rev.getCommissionRate() != null ? rev.getCommissionRate() : BigDecimal.ZERO;
+
+            addTableCell(table, rev.getRevenueDate() != null ? rev.getRevenueDate().format(DATE_FORMAT) : "-", cellFont);
+            addTableCell(table, rev.getCabNumber() != null ? rev.getCabNumber() : "-", cellFont);
+            addTableCell(table, rev.getDescription() != null ? rev.getDescription() : "-", cellFont);
+            addTableCell(table, CURRENCY_FORMAT.format(amt), cellFont, Element.ALIGN_RIGHT);
+            addTableCell(table, rate.compareTo(BigDecimal.ZERO) > 0 ? rate.stripTrailingZeros().toPlainString() + "%" : "-", cellFont, Element.ALIGN_RIGHT);
+            addTableCell(table, CURRENCY_FORMAT.format(comm), redBold, Element.ALIGN_RIGHT);
+            addTableCell(table, CURRENCY_FORMAT.format(net), greenBold, Element.ALIGN_RIGHT);
+
+            subtotalAmount = subtotalAmount.add(amt);
+            subtotalCommission = subtotalCommission.add(comm);
+            subtotalNet = subtotalNet.add(net);
+        }
+
+        // Subtotal row
+        Font boldFont = new Font(Font.FontFamily.HELVETICA, 8, Font.BOLD, new BaseColor(80, 80, 80));
+        PdfPCell labelCell = new PdfPCell(new Phrase("Credit Card Revenue Total:", boldFont));
+        labelCell.setColspan(3);
+        labelCell.setHorizontalAlignment(Element.ALIGN_RIGHT);
+        labelCell.setBackgroundColor(GRAY_BG);
+        labelCell.setPadding(5);
+        table.addCell(labelCell);
+
+        PdfPCell amtCell = new PdfPCell(new Phrase(CURRENCY_FORMAT.format(subtotalAmount), boldFont));
+        amtCell.setHorizontalAlignment(Element.ALIGN_RIGHT);
+        amtCell.setBackgroundColor(GRAY_BG);
+        amtCell.setPadding(5);
+        table.addCell(amtCell);
+
+        PdfPCell emptyCell = new PdfPCell(new Phrase("", boldFont));
+        emptyCell.setBackgroundColor(GRAY_BG);
+        emptyCell.setPadding(5);
+        table.addCell(emptyCell);
+
+        Font redTotalFont = new Font(Font.FontFamily.HELVETICA, 8, Font.BOLD, RED);
+        PdfPCell commCell = new PdfPCell(new Phrase(CURRENCY_FORMAT.format(subtotalCommission), redTotalFont));
+        commCell.setHorizontalAlignment(Element.ALIGN_RIGHT);
+        commCell.setBackgroundColor(GRAY_BG);
+        commCell.setPadding(5);
+        table.addCell(commCell);
+
+        Font greenTotalFont = new Font(Font.FontFamily.HELVETICA, 8, Font.BOLD, GREEN);
+        PdfPCell netCell = new PdfPCell(new Phrase(CURRENCY_FORMAT.format(subtotalNet), greenTotalFont));
+        netCell.setHorizontalAlignment(Element.ALIGN_RIGHT);
+        netCell.setBackgroundColor(GRAY_BG);
+        netCell.setPadding(5);
+        table.addCell(netCell);
+
+        document.add(table);
+    }
+
+    // ==================== SIMPLE REVENUE SECTIONS (Account, Other) ====================
 
     private void addSimpleRevenueSection(Document document, String title, BaseColor color,
                                           List<OwnerReportDTO.RevenueLineItem> revenues, boolean sortByDate) throws DocumentException {
@@ -760,6 +887,60 @@ public class ReportPdfService {
         subValueCell.setBackgroundColor(GRAY_BG);
         table.addCell(subValueCell);
 
+        document.add(table);
+    }
+
+    // ==================== TAX EXPENSES ====================
+
+    private void addTaxExpensesSection(Document document, List<OwnerReportDTO.TaxLineItem> taxes) throws DocumentException {
+        addSectionTitle(document, "Tax Charges", new BaseColor(106, 27, 154)); // purple
+
+        PdfPTable table = new PdfPTable(new float[]{25, 25, 20, 10, 20});
+        table.setWidthPercentage(100);
+        table.setSpacingBefore(5);
+        table.setSpacingAfter(10);
+
+        BaseColor purple = new BaseColor(106, 27, 154);
+        addColoredHeaders(table, new String[]{"Tax", "On Expense", "Base Amount", "Rate", "Tax Amount"}, purple);
+
+        BigDecimal subtotal = BigDecimal.ZERO;
+        for (OwnerReportDTO.TaxLineItem tax : taxes) {
+            addTableCell(table, tax.getTaxTypeName() != null ? tax.getTaxTypeName() : "-", cellFont);
+            addTableCell(table, tax.getExpenseCategoryName() != null ? tax.getExpenseCategoryName() : "-", cellFont);
+            addTableCell(table, CURRENCY_FORMAT.format(tax.getBaseAmount() != null ? tax.getBaseAmount() : BigDecimal.ZERO), cellFont, Element.ALIGN_RIGHT);
+            addTableCell(table, (tax.getTaxRate() != null ? tax.getTaxRate().stripTrailingZeros().toPlainString() : "0") + "%", cellFont, Element.ALIGN_RIGHT);
+            addTableCell(table, CURRENCY_FORMAT.format(tax.getAmount() != null ? tax.getAmount() : BigDecimal.ZERO), cellFont, Element.ALIGN_RIGHT);
+            subtotal = subtotal.add(tax.getAmount() != null ? tax.getAmount() : BigDecimal.ZERO);
+        }
+
+        addSubtotalRow(table, "Tax Charges Subtotal:", subtotal, 5, GRAY_BG, new BaseColor(80, 80, 80));
+        document.add(table);
+    }
+
+    // ==================== COMMISSION EXPENSES ====================
+
+    private void addCommissionExpensesSection(Document document, List<OwnerReportDTO.CommissionLineItem> commissions) throws DocumentException {
+        addSectionTitle(document, "Commission Charges", new BaseColor(0, 105, 92)); // teal
+
+        PdfPTable table = new PdfPTable(new float[]{25, 25, 20, 10, 20});
+        table.setWidthPercentage(100);
+        table.setSpacingBefore(5);
+        table.setSpacingAfter(10);
+
+        BaseColor teal = new BaseColor(0, 105, 92);
+        addColoredHeaders(table, new String[]{"Commission", "On Revenue", "Base Amount", "Rate", "Commission Amount"}, teal);
+
+        BigDecimal subtotal = BigDecimal.ZERO;
+        for (OwnerReportDTO.CommissionLineItem comm : commissions) {
+            addTableCell(table, comm.getCommissionTypeName() != null ? comm.getCommissionTypeName() : "-", cellFont);
+            addTableCell(table, comm.getRevenueCategoryName() != null ? comm.getRevenueCategoryName() : "-", cellFont);
+            addTableCell(table, CURRENCY_FORMAT.format(comm.getBaseAmount() != null ? comm.getBaseAmount() : BigDecimal.ZERO), cellFont, Element.ALIGN_RIGHT);
+            addTableCell(table, (comm.getCommissionRate() != null ? comm.getCommissionRate().stripTrailingZeros().toPlainString() : "0") + "%", cellFont, Element.ALIGN_RIGHT);
+            addTableCell(table, CURRENCY_FORMAT.format(comm.getAmount() != null ? comm.getAmount() : BigDecimal.ZERO), cellFont, Element.ALIGN_RIGHT);
+            subtotal = subtotal.add(comm.getAmount() != null ? comm.getAmount() : BigDecimal.ZERO);
+        }
+
+        addSubtotalRow(table, "Commission Charges Subtotal:", subtotal, 5, GRAY_BG, new BaseColor(80, 80, 80));
         document.add(table);
     }
 

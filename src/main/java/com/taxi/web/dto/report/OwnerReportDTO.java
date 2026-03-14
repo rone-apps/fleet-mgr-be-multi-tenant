@@ -63,6 +63,16 @@ public class OwnerReportDTO {
     private List<StatementLineItem> airportTripExpenses = new ArrayList<>();
     private BigDecimal totalAirportTripExpenses;
 
+    // Tax on Expenses (calculated from tax assignments)
+    @Builder.Default
+    private List<TaxLineItem> taxExpenses = new ArrayList<>();
+    private BigDecimal totalTaxExpenses;
+
+    // Commission on Revenue (calculated from commission assignments)
+    @Builder.Default
+    private List<CommissionLineItem> commissionExpenses = new ArrayList<>();
+    private BigDecimal totalCommissionExpenses;
+
     // Totals
     private BigDecimal totalExpenses;
     private BigDecimal netAmount;  // Revenues - Expenses
@@ -96,8 +106,18 @@ public class OwnerReportDTO {
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
         totalAirportTripExpenses = airportTripExp;
 
+        BigDecimal taxExp = taxExpenses.stream()
+                .map(TaxLineItem::getAmount)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        totalTaxExpenses = taxExp;
+
+        BigDecimal commissionExp = commissionExpenses.stream()
+                .map(CommissionLineItem::getAmount)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        totalCommissionExpenses = commissionExp;
+
         totalExpenses = totalRecurringExpenses.add(totalOneTimeExpenses).add(totalPerUnitExpenses)
-                .add(insuranceMileageExp).add(airportTripExp);
+                .add(insuranceMileageExp).add(airportTripExp).add(taxExp).add(commissionExp);
         netAmount = totalRevenues.subtract(totalExpenses);
 
         // Calculate netDue: previousBalance + revenues - expenses - paidAmount
@@ -137,6 +157,11 @@ public class OwnerReportDTO {
 
         // For lease revenue breakdown: Fixed Lease | Mileage Lease | Total Lease
         private StatementLineItem.LeaseBreakdown leaseBreakdown;
+
+        // Commission fields for credit card revenues
+        private BigDecimal commissionRate;     // e.g., 2.00 for 2%
+        private BigDecimal commissionAmount;   // amount × rate / 100
+        private BigDecimal netAmount;          // amount - commissionAmount
     }
 
     @Data
@@ -151,5 +176,31 @@ public class OwnerReportDTO {
         private BigDecimal rate;                // Rate per unit
         private BigDecimal amount;              // totalUnits × rate
         private String chargedTo;               // "DRIVER" or "OWNER"
+    }
+
+    @Data
+    @NoArgsConstructor
+    @AllArgsConstructor
+    @Builder
+    public static class TaxLineItem {
+        private String taxTypeCode;             // e.g., "HST"
+        private String taxTypeName;             // e.g., "Harmonized Sales Tax"
+        private BigDecimal taxRate;             // e.g., 13.00 (%)
+        private String expenseCategoryName;     // e.g., "Dispatch Fee"
+        private BigDecimal baseAmount;          // amount before tax
+        private BigDecimal amount;              // tax amount = baseAmount × rate / 100
+    }
+
+    @Data
+    @NoArgsConstructor
+    @AllArgsConstructor
+    @Builder
+    public static class CommissionLineItem {
+        private String commissionTypeCode;      // e.g., "CC_COMMISSION"
+        private String commissionTypeName;      // e.g., "Credit Card Commission"
+        private BigDecimal commissionRate;       // e.g., 2.00 (%)
+        private String revenueCategoryName;     // e.g., "Credit Card Revenue"
+        private BigDecimal baseAmount;          // revenue amount
+        private BigDecimal amount;              // commission = baseAmount × rate / 100
     }
 }

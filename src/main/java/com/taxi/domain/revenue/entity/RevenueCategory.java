@@ -143,6 +143,8 @@ public class RevenueCategory {
                 break;
             case ALL_OWNERS:
             case ALL_DRIVERS:
+            case ALL_ACTIVE_SHIFTS:
+            case SHIFTS_WITH_ATTRIBUTE:
                 // No additional validation needed
                 break;
         }

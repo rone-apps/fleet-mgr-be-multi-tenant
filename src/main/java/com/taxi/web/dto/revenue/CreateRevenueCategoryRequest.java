@@ -65,9 +65,11 @@ public class CreateRevenueCategoryRequest {
                 return specificPersonId != null;
             case ALL_OWNERS:
             case ALL_DRIVERS:
+            case ALL_ACTIVE_SHIFTS:
+            case SHIFTS_WITH_ATTRIBUTE:
                 return true;
             default:
-                return false;
+                return true;
         }
     }
 }
