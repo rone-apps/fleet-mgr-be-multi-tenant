@@ -213,6 +213,7 @@ public class FinancialStatementService {
             .build();
 
         List<CabShift> relevantShifts = new ArrayList<>();
+        boolean isActiveOwner = false;
 
         // ✅ KEY BUSINESS RULE: Shift-based charges (ALL_OWNERS, SHIFT_PROFILE, SPECIFIC_SHIFT, SHIFTS_WITH_ATTRIBUTE)
         // are ALWAYS charged to the OWNER of the shift, NEVER to drivers driving those shifts
@@ -229,7 +230,8 @@ public class FinancialStatementService {
                 .distinct()
                 .toList();
 
-            log.info("Owner {} has {} active shifts in period (excluded inactive cabs/shifts)", personId, relevantShifts.size());
+            isActiveOwner = !relevantShifts.isEmpty();
+            log.info("Owner {} has {} active shifts in period (excluded inactive cabs/shifts), isActiveOwner={}", personId, relevantShifts.size(), isActiveOwner);
         } else {
             // For drivers: DO NOT fetch shifts
             // ✅ Drivers should NOT receive shift-based charges (those go to the owner)
@@ -677,10 +679,21 @@ public class FinancialStatementService {
         }
 
         // 5. Add credit card transaction revenues
+        // ✅ BUSINESS RULE: For active owners, credit card revenues and account charges use the PREVIOUS month.
+        // The company holds one month of credit card/charge revenues before settling with the owner.
+        // For drivers (non-owners), the report period is used as-is.
+        LocalDate ccFrom = from;
+        LocalDate ccTo = to;
+        if (isActiveOwner) {
+            ccFrom = from.minusMonths(1);
+            ccTo = to.minusMonths(1);
+            log.info("Active owner {} — using previous month for CC revenues and account charges: {} to {}", personId, ccFrom, ccTo);
+        }
+
         if (person.getDriverNumber() != null) {
             List<com.taxi.domain.payment.model.CreditCardTransaction> creditCardTransactions =
-                creditCardTransactionRepository.findByDriverNumberAndDateRange(person.getDriverNumber(), from, to);
-            log.info("Found {} credit card transactions for person {}", creditCardTransactions.size(), personId);
+                creditCardTransactionRepository.findByDriverNumberAndDateRange(person.getDriverNumber(), ccFrom, ccTo);
+            log.info("Found {} credit card transactions for person {} (period: {} to {})", creditCardTransactions.size(), personId, ccFrom, ccTo);
 
             for (com.taxi.domain.payment.model.CreditCardTransaction transaction : creditCardTransactions) {
                 String cardDesc = (transaction.getCardLastFour() != null ? "Card ending in " + transaction.getCardLastFour() : "Credit Card") +
@@ -699,12 +712,12 @@ public class FinancialStatementService {
             }
         }
 
-        // 6. Add account charge revenues
+        // 6. Add account charge revenues (uses same previous-month logic as credit cards for active owners)
         try {
             List<com.taxi.domain.account.model.AccountCharge> accountCharges =
-                accountChargeRepository.findByDriverIdAndDateRange(personId, from, to);
+                accountChargeRepository.findByDriverIdAndDateRange(personId, ccFrom, ccTo);
             log.info("Found {} account charges for person {} between {} and {}",
-                accountCharges.size(), personId, from, to);
+                accountCharges.size(), personId, ccFrom, ccTo);
 
             for (com.taxi.domain.account.model.AccountCharge charge : accountCharges) {
                 if (charge == null) continue;
