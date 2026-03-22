@@ -4,6 +4,8 @@ import com.taxi.domain.taxicaller.service.TaxiCallerService;
 import com.taxi.domain.tenant.exception.TenantConfigurationException;
 import com.taxi.domain.account.service.TaxiCallerAccountChargeImportService;
 import com.taxi.domain.account.dto.TaxiCallerImportResult;
+import com.taxi.domain.drivertrip.dto.DriverTripImportResult;
+import com.taxi.domain.drivertrip.service.TaxiCallerDriverTripImportService;
 import com.taxi.domain.shift.dto.DriverShiftImportResult;
 import com.taxi.domain.shift.service.TaxiCallerDriverShiftImportService;
 import org.json.JSONArray;
@@ -35,6 +37,9 @@ public class TaxiCallerController {
 
     @Autowired
     private TaxiCallerDriverShiftImportService taxiCallerDriverShiftImportService;
+
+    @Autowired
+    private TaxiCallerDriverTripImportService taxiCallerDriverTripImportService;
 
     /**
      * Test endpoint to verify TaxiCaller integration
@@ -557,11 +562,83 @@ public class TaxiCallerController {
     }
 
     /**
+     * Load driver job reports into the database as driver trips.
+     * GET /api/taxicaller/reports/load-driver-jobs?startDate=2025-01-01&endDate=2025-01-31
+     *
+     * Fetches driver job data from TaxiCaller API and saves to driver_trips table.
+     */
+    @GetMapping("/reports/load-driver-jobs")
+    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN')")
+    public ResponseEntity<Map<String, Object>> loadDriverJobReports(
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate startDate,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate endDate) {
+
+        Map<String, Object> response = new HashMap<>();
+        try {
+            JSONArray rows = taxiCallerService.generateDriverJobReports(startDate, endDate);
+
+            if (rows == null || rows.length() == 0) {
+                response.put("success", true);
+                response.put("message", "No driver job data found for the specified date range");
+                response.put("totalRecords", 0);
+                response.put("successCount", 0);
+                response.put("duplicateCount", 0);
+                response.put("errorCount", 0);
+                return ResponseEntity.ok(response);
+            }
+
+            DriverTripImportResult result = taxiCallerDriverTripImportService.importDriverJobReports(rows);
+
+            String formattedMessage = buildDriverTripImportMessage(result);
+            response.put("success", true);
+            response.put("message", formattedMessage);
+            response.put("totalRecords", result.getTotalRecords());
+            response.put("successCount", result.getSuccessCount());
+            response.put("duplicateCount", result.getDuplicateCount());
+            response.put("errorCount", result.getErrorCount());
+            response.put("data", result);
+
+            if (result.getSuccessCount() == 0 && result.getErrorCount() > 0) {
+                response.put("success", false);
+                response.put("message", "All driver job records failed to import");
+                return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(response);
+            }
+
+            return ResponseEntity.ok(response);
+        } catch (TenantConfigurationException e) {
+            throw e;
+        } catch (Exception e) {
+            response.put("success", false);
+            response.put("message", "Error importing driver job reports");
+            response.put("error", e.getMessage());
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(response);
+        }
+    }
+
+    /**
      * Build a formatted message for account job import results
      */
     private String buildAccountJobImportMessage(TaxiCallerImportResult result) {
         StringBuilder message = new StringBuilder();
         message.append("Loaded ").append(result.getSuccessCount()).append(" account jobs");
+
+        if (result.getDuplicateCount() > 0) {
+            message.append(", ").append(result.getDuplicateCount()).append(" duplicates skipped");
+        }
+
+        if (result.getErrorCount() > 0) {
+            message.append(", ").append(result.getErrorCount()).append(" errors");
+        }
+
+        return message.toString();
+    }
+
+    /**
+     * Build a formatted message for driver trip import results
+     */
+    private String buildDriverTripImportMessage(DriverTripImportResult result) {
+        StringBuilder message = new StringBuilder();
+        message.append("Loaded ").append(result.getSuccessCount()).append(" driver trips");
 
         if (result.getDuplicateCount() > 0) {
             message.append(", ").append(result.getDuplicateCount()).append(" duplicates skipped");

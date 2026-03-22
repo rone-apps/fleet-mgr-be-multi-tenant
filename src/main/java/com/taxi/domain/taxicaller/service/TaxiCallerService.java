@@ -334,7 +334,9 @@ public class TaxiCallerService {
 
             String response = readResponse(conn);
             JSONObject jsonObject = new JSONObject(response);
-            return jsonObject.getJSONArray("rows");
+            JSONArray jsonArray = jsonObject.getJSONArray("rows");
+          //  System.out.println("JSON Array: " + jsonArray);
+            return jsonArray;
 
         } catch (TenantConfigurationException e) {
             throw e;

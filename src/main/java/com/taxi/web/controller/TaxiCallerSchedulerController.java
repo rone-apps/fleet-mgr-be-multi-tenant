@@ -2,6 +2,7 @@ package com.taxi.web.controller;
 
 import com.taxi.domain.shift.dto.DriverShiftImportResult;
 import com.taxi.domain.account.dto.TaxiCallerImportResult;
+import com.taxi.domain.drivertrip.dto.DriverTripImportResult;
 import com.taxi.domain.taxicaller.scheduler.TaxiCallerScheduledImportService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -76,18 +77,33 @@ public class TaxiCallerSchedulerController {
                 accountJobData.put("message", "No account job data found");
             }
             
+            // Driver jobs results
+            Map<String, Object> driverJobData = new HashMap<>();
+            if (results.driverJobResult != null) {
+                hasData = true;
+                driverJobData.put("totalRecords", results.driverJobResult.getTotalRecords());
+                driverJobData.put("successCount", results.driverJobResult.getSuccessCount());
+                driverJobData.put("duplicateCount", results.driverJobResult.getDuplicateCount());
+                driverJobData.put("errorCount", results.driverJobResult.getErrorCount());
+                driverJobData.put("errors", results.driverJobResult.getErrors());
+                driverJobData.put("duplicateJobIds", results.driverJobResult.getDuplicateJobIds());
+            } else {
+                driverJobData.put("message", "No driver job data found");
+            }
+
             if (!hasData) {
                 response.put("success", false);
                 response.put("message", "No data found for the specified date range");
                 return ResponseEntity.ok(response);
             }
-            
+
             response.put("success", true);
             response.put("message", "Manual import completed successfully");
             response.put("startDate", startDate.toString());
             response.put("endDate", endDate.toString());
             response.put("driverShifts", driverShiftData);
             response.put("accountJobs", accountJobData);
+            response.put("driverJobs", driverJobData);
             
             return ResponseEntity.ok(response);
             
@@ -133,7 +149,7 @@ public class TaxiCallerSchedulerController {
             
             if (isEnabled) {
                 response.put("info", "Scheduler runs daily at configured time (default: 2:00 AM)");
-                response.put("imports", "Driver Shifts & Account Jobs");
+                response.put("imports", "Driver Shifts, Account Jobs & Driver Jobs");
                 response.put("note", "Check application.properties for taxicaller.scheduler.cron");
             }
             

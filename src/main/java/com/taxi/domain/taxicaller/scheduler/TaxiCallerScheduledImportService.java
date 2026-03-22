@@ -4,6 +4,8 @@ import com.taxi.domain.shift.dto.DriverShiftImportResult;
 import com.taxi.domain.shift.service.TaxiCallerDriverShiftImportService;
 import com.taxi.domain.account.dto.TaxiCallerImportResult;
 import com.taxi.domain.account.service.TaxiCallerAccountChargeImportService;
+import com.taxi.domain.drivertrip.dto.DriverTripImportResult;
+import com.taxi.domain.drivertrip.service.TaxiCallerDriverTripImportService;
 import com.taxi.domain.taxicaller.service.TaxiCallerService;
 import com.taxi.infrastructure.multitenancy.TenantContext;
 import lombok.RequiredArgsConstructor;
@@ -46,6 +48,7 @@ public class TaxiCallerScheduledImportService {
     private final TaxiCallerService taxiCallerService;
     private final TaxiCallerDriverShiftImportService driverShiftImportService;
     private final TaxiCallerAccountChargeImportService accountChargeImportService;
+    private final TaxiCallerDriverTripImportService driverTripImportService;
     
     @Value("${taxicaller.scheduler.import-previous-days:2}")
     private int importPreviousDays;
@@ -83,9 +86,10 @@ public class TaxiCallerScheduledImportService {
             log.info("   End Date: {}", endDate);
             log.info("   Days to Import: {}", importPreviousDays);
 
-            // Import both types of data
+            // Import all types of data
             importDriverShifts(startDate, endDate);
             importAccountJobs(startDate, endDate);
+            importDriverJobs(startDate, endDate);
 
             log.info("SCHEDULED IMPORT COMPLETED SUCCESSFULLY");
 
@@ -237,6 +241,61 @@ public class TaxiCallerScheduledImportService {
     }
     
     /**
+     * Import driver jobs from TaxiCaller
+     */
+    private void importDriverJobs(LocalDate startDate, LocalDate endDate) {
+        log.info("");
+        log.info("🚕 ═══════════════════════════════════════════════════════════");
+        log.info("   PART 3: Driver Jobs Import");
+        log.info("   ═══════════════════════════════════════════════════════════");
+
+        try {
+            log.info("📡 Step 1/3: Fetching driver job data from TaxiCaller API...");
+            JSONArray rows = taxiCallerService.generateDriverJobReports(startDate, endDate);
+
+            if (rows == null || rows.length() == 0) {
+                log.warn("⚠️  No driver job data found for {} to {}", startDate, endDate);
+                log.info("✅ Driver jobs import completed - No data to import");
+                return;
+            }
+
+            log.info("✅ Retrieved {} driver job records from TaxiCaller", rows.length());
+
+            log.info("💾 Step 2/3: Importing driver jobs into database...");
+            DriverTripImportResult result = driverTripImportService.importDriverJobReports(rows);
+
+            log.info("📊 Step 3/3: Driver Jobs Import Summary:");
+            log.info("   Total Records: {}", result.getTotalRecords());
+            log.info("   ✅ Successfully Imported: {}", result.getSuccessCount());
+            log.info("   🔄 Duplicates Skipped: {}", result.getDuplicateCount());
+            log.info("   ❌ Errors: {}", result.getErrorCount());
+
+            if (result.getErrorCount() > 0 && result.getErrors() != null && !result.getErrors().isEmpty()) {
+                log.warn("   ⚠️  Errors encountered during import:");
+                int errorCount = Math.min(result.getErrors().size(), 10);
+                for (int i = 0; i < errorCount; i++) {
+                    log.warn("      - {}", result.getErrors().get(i));
+                }
+                if (result.getErrors().size() > 10) {
+                    log.warn("      ... and {} more errors", result.getErrors().size() - 10);
+                }
+            }
+
+            if (result.getSuccessCount() == 0 && result.getErrorCount() > 0) {
+                log.error("❌ Driver Jobs Import FAILED: All records failed to import");
+            } else if (result.getErrorCount() > 0) {
+                log.warn("⚠️  Driver Jobs Import COMPLETED WITH WARNINGS: Some records failed");
+            } else {
+                log.info("✅ Driver Jobs Import COMPLETED SUCCESSFULLY");
+            }
+
+        } catch (Exception e) {
+            log.error("❌ Driver Jobs Import FAILED: Error during import", e);
+            log.error("   Error Message: {}", e.getMessage());
+        }
+    }
+
+    /**
      * Manual trigger for testing the scheduled import (both types)
      * This method can be called via a test endpoint to verify the scheduler works
      */
@@ -279,6 +338,17 @@ public class TaxiCallerScheduledImportService {
                 log.warn("No account job data found");
             }
 
+            // Import driver jobs
+            JSONArray driverJobRows = taxiCallerService.generateDriverJobReports(startDate, endDate);
+            if (driverJobRows != null && driverJobRows.length() > 0) {
+                results.driverJobResult = driverTripImportService.importDriverJobReports(driverJobRows);
+                log.info("Driver jobs: {} success, {} errors",
+                    results.driverJobResult.getSuccessCount(),
+                    results.driverJobResult.getErrorCount());
+            } else {
+                log.warn("No driver job data found");
+            }
+
             return results;
 
         } catch (Exception e) {
@@ -297,5 +367,6 @@ public class TaxiCallerScheduledImportService {
     public static class ImportResults {
         public DriverShiftImportResult driverShiftResult;
         public TaxiCallerImportResult accountJobResult;
+        public DriverTripImportResult driverJobResult;
     }
 }
