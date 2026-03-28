@@ -110,6 +110,11 @@ public class TaxCommissionService {
 
     @Transactional
     public TaxCategoryAssignmentDTO assignTaxToCategory(Long taxTypeId, Long categoryId, String notes) {
+        return assignTaxToCategory(taxTypeId, categoryId, notes, null);
+    }
+
+    @Transactional
+    public TaxCategoryAssignmentDTO assignTaxToCategory(Long taxTypeId, Long categoryId, String notes, LocalDate effectiveFrom) {
         // Check not already assigned
         taxCategoryAssignmentRepository.findActiveAssignment(taxTypeId, categoryId).ifPresent(a -> {
             throw new RuntimeException("This tax is already assigned to this category");
@@ -120,12 +125,13 @@ public class TaxCommissionService {
         ExpenseCategory cat = expenseCategoryRepository.findById(categoryId)
                 .orElseThrow(() -> new RuntimeException("Expense category not found"));
 
-        log.info("Assigning tax {} to expense category {}", type.getCode(), cat.getCategoryCode());
+        LocalDate startDate = effectiveFrom != null ? effectiveFrom : LocalDate.now();
+        log.info("Assigning tax {} to expense category {} effective from {}", type.getCode(), cat.getCategoryCode(), startDate);
 
         TaxCategoryAssignment a = TaxCategoryAssignment.builder()
                 .taxType(type)
                 .expenseCategory(cat)
-                .assignedAt(LocalDate.now())
+                .assignedAt(startDate)
                 .isActive(true)
                 .notes(notes)
                 .build();

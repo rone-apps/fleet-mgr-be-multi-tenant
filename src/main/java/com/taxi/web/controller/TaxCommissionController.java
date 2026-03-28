@@ -6,6 +6,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
 
@@ -69,7 +70,9 @@ public class TaxCommissionController {
             Long taxTypeId = Long.valueOf(body.get("taxTypeId").toString());
             Long categoryId = Long.valueOf(body.get("expenseCategoryId").toString());
             String notes = body.get("notes") != null ? body.get("notes").toString() : null;
-            return ResponseEntity.ok(service.assignTaxToCategory(taxTypeId, categoryId, notes));
+            LocalDate effectiveFrom = body.get("effectiveFrom") != null
+                    ? LocalDate.parse(body.get("effectiveFrom").toString()) : null;
+            return ResponseEntity.ok(service.assignTaxToCategory(taxTypeId, categoryId, notes, effectiveFrom));
         } catch (RuntimeException e) {
             return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
         }

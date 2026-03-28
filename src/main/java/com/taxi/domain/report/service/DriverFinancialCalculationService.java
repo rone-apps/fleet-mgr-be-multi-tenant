@@ -3,6 +3,10 @@ package com.taxi.domain.report.service;
 import com.taxi.domain.account.model.AccountCharge;
 import com.taxi.domain.account.repository.AccountChargeRepository;
 import com.taxi.domain.cab.model.Cab;
+import com.taxi.domain.cab.model.CabAttributeType;
+import com.taxi.domain.cab.model.CabAttributeValue;
+import com.taxi.domain.cab.repository.CabAttributeTypeRepository;
+import com.taxi.domain.cab.repository.CabAttributeValueRepository;
 import com.taxi.domain.driver.model.Driver;
 import com.taxi.domain.driver.repository.DriverRepository;
 import com.taxi.domain.expense.model.ItemRate;
@@ -13,6 +17,9 @@ import com.taxi.domain.lease.model.LeaseRate;
 import com.taxi.domain.lease.repository.LeaseRateRepository;
 import com.taxi.domain.lease.service.LeaseCalculationService;
 import com.taxi.domain.lease.service.LeaseRateOverrideService;
+import com.taxi.domain.airport.model.AirportTrip;
+import com.taxi.domain.airport.repository.AirportTripDriverRepository;
+import com.taxi.domain.airport.repository.AirportTripRepository;
 import com.taxi.domain.mileage.repository.MileageRecordRepository;
 import com.taxi.domain.payment.model.CreditCardTransaction;
 import com.taxi.domain.payment.repository.CreditCardTransactionRepository;
@@ -36,6 +43,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
@@ -88,6 +96,16 @@ public class DriverFinancialCalculationService {
 
     // ✅ NEW: Mileage record repository for looking up actual miles when DriverShift.TotalDistance is missing
     private final MileageRecordRepository mileageRecordRepository;
+
+    // Attribute repositories for resolving airport trip rates per attribute
+    private final CabAttributeTypeRepository cabAttributeTypeRepository;
+    private final CabAttributeValueRepository cabAttributeValueRepository;
+
+    // Pre-computed driver trip assignments
+    private final AirportTripDriverRepository airportTripDriverRepository;
+
+    // Direct airport trips table (fallback for legacy data without driver assignments)
+    private final AirportTripRepository airportTripRepository;
 
     /**
      * ═══════════════════════════════════════════════════════════════════════
@@ -791,6 +809,45 @@ public class DriverFinancialCalculationService {
         }
     }
 
+    /**
+     * Resolve the airport-related attribute type ID for a cab shift.
+     * Checks for AIRPORT_PLATE first, then TRANSPONDER.
+     * Returns null if the shift has neither attribute.
+     */
+    private Long resolveAirportAttributeTypeId(String cabNumber, LocalDate date) {
+        try {
+            // Check all shifts for this cab (DAY and NIGHT)
+            List<CabShift> cabShifts = cabShiftRepository.findByCabNumber(cabNumber);
+            if (cabShifts.isEmpty()) return null;
+
+            CabAttributeType airportPlateType = cabAttributeTypeRepository.findByAttributeCode("AIRPORT_PLATE").orElse(null);
+            CabAttributeType transponderType = cabAttributeTypeRepository.findByAttributeCode("TRANSPONDER").orElse(null);
+
+            // Check AIRPORT_PLATE first (takes priority)
+            for (CabShift cabShift : cabShifts) {
+                if (airportPlateType != null) {
+                    Optional<CabAttributeValue> ap = cabAttributeValueRepository.findAttributeOnDateByShift(
+                        cabShift, airportPlateType, date);
+                    if (ap.isPresent()) return airportPlateType.getId();
+                }
+            }
+
+            // Then TRANSPONDER
+            for (CabShift cabShift : cabShifts) {
+                if (transponderType != null) {
+                    Optional<CabAttributeValue> tr = cabAttributeValueRepository.findAttributeOnDateByShift(
+                        cabShift, transponderType, date);
+                    if (tr.isPresent()) return transponderType.getId();
+                }
+            }
+
+            return null;
+        } catch (Exception e) {
+            log.debug("Error resolving airport attribute for cab {}: {}", cabNumber, e.getMessage());
+            return null;
+        }
+    }
+
     private CabShift findCabShiftForDriverShift(DriverShift driverShift) {
         try {
             String cabNumber = driverShift.getCabNumber();
@@ -944,117 +1001,174 @@ public class DriverFinancialCalculationService {
             return 0;
         }
 
-        log.info("   Counting airport trips for {} from {} to {}", driverNumber, startDate, endDate);
-
-        // ✅ CHANGED: Use MileageRecord instead of DriverShift for consistency with detail modal
-        List<com.taxi.domain.mileage.model.MileageRecord> mileageRecords =
-            mileageRecordRepository.findByDriverNumberAndDateRange(driverNumber, startDate, endDate);
-
-        log.info("   Found {} mileage records for {} (using MileageRecord for accuracy)",
-            mileageRecords.size(), driverNumber);
-
         int totalTrips = 0;
 
-        for (com.taxi.domain.mileage.model.MileageRecord mileageRecord : mileageRecords) {
-            if (mileageRecord.getLogonTime() == null || mileageRecord.getLogoffTime() == null ||
-                mileageRecord.getCabNumber() == null) {
-                continue;
-            }
+        // PRIMARY: Use pre-computed driver assignments from airport_trip_driver table
+        // Track which cabs are handled so fallback only covers remaining cabs
+        java.util.Set<String> cabsHandled = new java.util.HashSet<>();
+        List<com.taxi.domain.airport.model.AirportTripDriver> assignments =
+                airportTripDriverRepository.findByDriverNumberAndTripDateBetweenOrderByTripDateAscHourAsc(
+                        driverNumber, startDate, endDate);
 
-            // ✅ FIX: Use calculateAirportChargeForShiftDetailed() which returns trip count + charge
-            // This ensures trip count matches the charge calculation exactly
-            com.taxi.domain.airport.service.AirportChargeService.AirportChargeResult result =
-                airportChargeService.calculateAirportChargeForShiftDetailed(
-                    mileageRecord.getCabNumber(),
-                    mileageRecord.getLogonTime(),
-                    mileageRecord.getLogoffTime(),
-                    mileageRecord.getLogonTime().toLocalDate()
-                );
-
-            if (result != null) {
-                totalTrips += result.getTripCount();
-
-                if (result.getTripCount() > 0) {
-                    log.debug("   Mileage record for cab {}: {} airport trips",
-                        mileageRecord.getCabNumber(), result.getTripCount());
-                }
-            }
+        for (com.taxi.domain.airport.model.AirportTripDriver atd : assignments) {
+            totalTrips += atd.getTripCount();
+            cabsHandled.add(atd.getCabNumber());
         }
 
-        log.info("   Total airport trips for {}: {}", driverNumber, totalTrips);
+        if (!cabsHandled.isEmpty()) {
+            log.debug("Airport trips for driver {} ({} to {}): {} from airport_trip_driver for cabs {}",
+                    driverNumber, startDate, endDate, totalTrips, cabsHandled);
+        }
+
+        // FALLBACK: For owned cabs NOT handled by airport_trip_driver, use airport_trips directly
+        int fallbackTrips = countAirportTripsFallback(driverNumber, startDate, endDate, cabsHandled);
+        totalTrips += fallbackTrips;
+
+        if (fallbackTrips > 0) {
+            log.debug("Airport trips fallback for driver {} ({} to {}): {} additional trips from airport_trips",
+                    driverNumber, startDate, endDate, fallbackTrips);
+        }
+
         return totalTrips;
     }
 
     /**
-     * ✅ Calculate total airport trip charges for a driver over a date range.
-     *
-     * ✅ UPDATED: Now uses MileageRecord (actual driving activity) instead of DriverShift
-     * This ensures consistency with the detail modal calculation and avoids discrepancies.
-     * Uses calculateAirportChargeForShiftDetailed() - SAME method as countTotalAirportTrips()
-     * to ensure charge and trip count are always in sync.
-     *
-     * For each mileage record in the period:
-     * 1. Count airport trips during logon/logoff hours
-     * 2. Apply ItemRate (AIRPORT_TRIP unit type) to calculate charge
-     * 3. Sum all charges
-     *
-     * @param driverNumber The driver number
-     * @param startDate Start date (inclusive)
-     * @param endDate End date (inclusive)
-     * @return Total airport charges for the period
+     * Fallback: count airport trips from airport_trips table directly for driver's owned cabs
+     * that are NOT already handled by airport_trip_driver.
+     */
+    private int countAirportTripsFallback(String driverNumber, LocalDate startDate, LocalDate endDate,
+                                           java.util.Set<String> cabsAlreadyHandled) {
+        try {
+            Optional<Driver> driverOpt = driverRepository.findByDriverNumber(driverNumber);
+            if (driverOpt.isEmpty()) return 0;
+
+            List<ShiftOwnership> ownerships = shiftOwnershipRepository.findOwnershipsInRange(
+                    driverOpt.get().getId(), startDate, endDate);
+            if (ownerships.isEmpty()) return 0;
+
+            java.util.Set<String> processedCabs = new java.util.HashSet<>();
+            int total = 0;
+
+            for (ShiftOwnership ownership : ownerships) {
+                String cabNumber = ownership.getShift().getCab().getCabNumber();
+                if (cabNumber == null || !processedCabs.add(cabNumber)) continue;
+                if (cabsAlreadyHandled.contains(cabNumber)) continue;
+
+                List<AirportTrip> trips = airportTripRepository.findByCabNumberAndTripDateBetweenOrderByTripDateDesc(
+                        cabNumber, startDate, endDate);
+                for (AirportTrip trip : trips) {
+                    if (trip.getGrandTotal() != null) {
+                        total += trip.getGrandTotal();
+                    }
+                }
+            }
+            return total;
+        } catch (Exception e) {
+            log.warn("Error in airport trips fallback for driver {}: {}", driverNumber, e.getMessage());
+            return 0;
+        }
+    }
+
+    /**
+     * Calculate total airport trip charges for a driver over a date range.
+     * Uses pre-computed airport_trip_driver assignments to determine which trips
+     * belong to this driver, then applies the attribute-specific rate per cab.
      */
     public BigDecimal calculateAirportExpense(String driverNumber, LocalDate startDate, LocalDate endDate) {
         if (driverNumber == null || startDate == null || endDate == null) {
-            log.warn("calculateAirportExpense: null parameters - driverNumber={}, startDate={}, endDate={}",
-                driverNumber, startDate, endDate);
             return BigDecimal.ZERO;
         }
 
-        log.debug("🛫 Calculating airport expenses for driver {} from {} to {}", driverNumber, startDate, endDate);
+        // PRIMARY: Use pre-computed airport_trip_driver assignments, track handled cabs
+        List<com.taxi.domain.airport.model.AirportTripDriver> assignments =
+                airportTripDriverRepository.findByDriverNumberAndTripDateBetweenOrderByTripDateAscHourAsc(
+                        driverNumber, startDate, endDate);
 
-        // ✅ CHANGED: Use MileageRecord instead of DriverShift for consistency with detail modal
-        List<com.taxi.domain.mileage.model.MileageRecord> mileageRecords =
-            mileageRecordRepository.findByDriverNumberAndDateRange(driverNumber, startDate, endDate);
-        log.debug("   Found {} mileage records for {} for expense calculation",
-            mileageRecords.size(), driverNumber);
+        java.util.Map<String, Integer> tripsByCab = new java.util.HashMap<>();
+        java.util.Set<String> cabsHandled = new java.util.HashSet<>();
+
+        for (com.taxi.domain.airport.model.AirportTripDriver atd : assignments) {
+            tripsByCab.merge(atd.getCabNumber(), atd.getTripCount(), Integer::sum);
+            cabsHandled.add(atd.getCabNumber());
+        }
 
         BigDecimal totalExpense = BigDecimal.ZERO;
+        for (java.util.Map.Entry<String, Integer> entry : tripsByCab.entrySet()) {
+            String cabNumber = entry.getKey();
+            int trips = entry.getValue();
 
-        for (com.taxi.domain.mileage.model.MileageRecord mileageRecord : mileageRecords) {
-            if (mileageRecord.getLogonTime() == null || mileageRecord.getLogoffTime() == null ||
-                mileageRecord.getCabNumber() == null) {
-                log.debug("   Skipping mileage record with null times: id={}", mileageRecord.getId());
-                continue;
-            }
+            Long attributeTypeId = resolveAirportAttributeTypeId(cabNumber, startDate);
+            ItemRate rate = airportChargeService.getAirportTripRateForAttribute(attributeTypeId, startDate);
 
-            // ✅ Use calculateAirportChargeForShiftDetailed() - SAME method as countTotalAirportTrips()
-            // This ensures trip count and charge are calculated with the exact same logic
-            LocalDate recordDate = mileageRecord.getLogonTime().toLocalDate();
-            log.debug("   Processing mileage record on {} - cab {} - logon {} logoff {}",
-                recordDate, mileageRecord.getCabNumber(), mileageRecord.getLogonTime(), mileageRecord.getLogoffTime());
-
-            com.taxi.domain.airport.service.AirportChargeService.AirportChargeResult result =
-                airportChargeService.calculateAirportChargeForShiftDetailed(
-                    mileageRecord.getCabNumber(),
-                    mileageRecord.getLogonTime(),
-                    mileageRecord.getLogoffTime(),
-                    recordDate
-                );
-
-            if (result != null && result.getTotalCharge().compareTo(BigDecimal.ZERO) > 0) {
-                log.debug("      Cab {}: {} trips × ${} = ${}",
-                    mileageRecord.getCabNumber(), result.getTripCount(),
-                    result.getRatePerTrip(), result.getTotalCharge());
-                totalExpense = totalExpense.add(result.getTotalCharge());
+            if (rate != null) {
+                totalExpense = totalExpense.add(rate.getRate().multiply(BigDecimal.valueOf(trips)));
             }
         }
 
-        log.debug("🛫 Total airport expense for {}: ${}", driverNumber, totalExpense);
+        // FALLBACK: For owned cabs NOT handled by airport_trip_driver, use airport_trips directly
+        BigDecimal fallbackExpense = calculateAirportExpenseFallback(driverNumber, startDate, endDate, cabsHandled);
+        totalExpense = totalExpense.add(fallbackExpense);
+
+        if (totalExpense.compareTo(BigDecimal.ZERO) > 0) {
+            log.debug("Airport expense for driver {} ({} to {}): ${} (primary) + ${} (fallback)",
+                    driverNumber, startDate, endDate,
+                    totalExpense.subtract(fallbackExpense), fallbackExpense);
+        }
         return totalExpense;
     }
 
     /**
-     * ✅ Wrapper for countTotalAirportTrips for clarity
+     * Fallback: calculate airport expense from airport_trips table directly for driver's owned cabs
+     * that are NOT already handled by airport_trip_driver.
+     */
+    private BigDecimal calculateAirportExpenseFallback(String driverNumber, LocalDate startDate, LocalDate endDate,
+                                                        java.util.Set<String> cabsAlreadyHandled) {
+        try {
+            Optional<Driver> driverOpt = driverRepository.findByDriverNumber(driverNumber);
+            if (driverOpt.isEmpty()) return BigDecimal.ZERO;
+
+            List<ShiftOwnership> ownerships = shiftOwnershipRepository.findOwnershipsInRange(
+                    driverOpt.get().getId(), startDate, endDate);
+            if (ownerships.isEmpty()) return BigDecimal.ZERO;
+
+            java.util.Set<String> processedCabs = new java.util.HashSet<>();
+            BigDecimal totalExpense = BigDecimal.ZERO;
+
+            for (ShiftOwnership ownership : ownerships) {
+                String cabNumber = ownership.getShift().getCab().getCabNumber();
+                if (cabNumber == null || !processedCabs.add(cabNumber)) continue;
+                if (cabsAlreadyHandled.contains(cabNumber)) continue;
+
+                List<AirportTrip> trips = airportTripRepository.findByCabNumberAndTripDateBetweenOrderByTripDateDesc(
+                        cabNumber, startDate, endDate);
+                if (trips.isEmpty()) continue;
+
+                Long attributeTypeId = resolveAirportAttributeTypeId(cabNumber, startDate);
+                ItemRate rate = airportChargeService.getAirportTripRateForAttribute(attributeTypeId, startDate);
+
+                if (rate == null) {
+                    log.warn("No AIRPORT_TRIP rate found for cab {} on {} (fallback)", cabNumber, startDate);
+                    continue;
+                }
+
+                BigDecimal ratePerTrip = rate.getRate();
+                for (AirportTrip trip : trips) {
+                    int dayTrips = trip.getGrandTotal() != null ? trip.getGrandTotal() : 0;
+                    if (dayTrips == 0) continue;
+                    totalExpense = totalExpense.add(ratePerTrip.multiply(BigDecimal.valueOf(dayTrips)));
+                }
+
+                log.info("Airport expense (fallback): Cab {} for driver {} using airport_trips directly", cabNumber, driverNumber);
+            }
+            return totalExpense;
+        } catch (Exception e) {
+            log.warn("Error in airport expense fallback for driver {}: {}", driverNumber, e.getMessage());
+            return BigDecimal.ZERO;
+        }
+    }
+
+    /**
+     * Wrapper for countTotalAirportTrips for clarity
      */
     public int countAirportTrips(String driverNumber, LocalDate startDate, LocalDate endDate) {
         return countTotalAirportTrips(driverNumber, startDate, endDate);

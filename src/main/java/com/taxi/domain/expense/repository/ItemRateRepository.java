@@ -50,6 +50,35 @@ public interface ItemRateRepository extends JpaRepository<ItemRate, Long> {
     List<ItemRate> findByUnitTypeAndChargedToAndIsActiveTrueOrderByName(ItemRateUnitType unitType, ItemRateChargedTo chargedTo);
 
     /**
+     * Find active rates by unit type and attribute type on a given date
+     */
+    @Query("SELECT r FROM ItemRate r " +
+           "WHERE r.isActive = true " +
+           "AND r.unitType = :unitType " +
+           "AND r.attributeType.id = :attributeTypeId " +
+           "AND r.effectiveFrom <= :date " +
+           "AND (r.effectiveTo IS NULL OR r.effectiveTo >= :date) " +
+           "ORDER BY r.effectiveFrom DESC")
+    List<ItemRate> findActiveByUnitTypeAndAttributeType(
+        @Param("unitType") ItemRateUnitType unitType,
+        @Param("attributeTypeId") Long attributeTypeId,
+        @Param("date") LocalDate date);
+
+    /**
+     * Find active rates by unit type (no attribute) on a given date
+     */
+    @Query("SELECT r FROM ItemRate r " +
+           "WHERE r.isActive = true " +
+           "AND r.unitType = :unitType " +
+           "AND r.attributeType IS NULL " +
+           "AND r.effectiveFrom <= :date " +
+           "AND (r.effectiveTo IS NULL OR r.effectiveTo >= :date) " +
+           "ORDER BY r.effectiveFrom DESC")
+    List<ItemRate> findActiveByUnitTypeNoAttribute(
+        @Param("unitType") ItemRateUnitType unitType,
+        @Param("date") LocalDate date);
+
+    /**
      * Count active rates
      */
     long countByIsActiveTrue();

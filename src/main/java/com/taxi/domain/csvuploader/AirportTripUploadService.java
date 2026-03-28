@@ -3,7 +3,9 @@ package com.taxi.domain.csvuploader;
 import com.opencsv.CSVReader;
 import com.opencsv.exceptions.CsvException;
 import com.taxi.domain.airport.model.AirportTrip;
+import com.taxi.domain.airport.model.AirportTripDriver;
 import com.taxi.domain.airport.repository.AirportTripRepository;
+import com.taxi.domain.airport.service.AirportTripDriverAssignmentService;
 import com.taxi.domain.cab.model.Cab;
 import com.taxi.domain.cab.repository.CabRepository;
 import lombok.RequiredArgsConstructor;
@@ -28,6 +30,7 @@ public class AirportTripUploadService {
 
     private final AirportTripRepository airportTripRepository;
     private final CabRepository cabRepository;
+    private final AirportTripDriverAssignmentService driverAssignmentService;
 
     private static final Pattern CAB_NUMBER_PATTERN = Pattern.compile(
         "(?:MACLURES?\\s*)(\\d+[A-Za-z]?)", Pattern.CASE_INSENSITIVE);
@@ -127,6 +130,7 @@ public class AirportTripUploadService {
             boolean overwriteExisting) {
 
         int successCount = 0, skipCount = 0, updateCount = 0, errorCount = 0;
+        int driverAssignmentCount = 0, driverAssignmentErrors = 0;
         List<String> errors = new ArrayList<>();
         List<String> skippedRecords = new ArrayList<>();
         LocalDateTime uploadDate = LocalDateTime.now();
@@ -147,6 +151,8 @@ public class AirportTripUploadService {
                 Optional<AirportTrip> existing = airportTripRepository
                     .findByCabNumberAndTripDate(dto.getCabNumber(), dto.getTripDate());
 
+                AirportTrip savedRecord = null;
+
                 if (existing.isPresent()) {
                     if (overwriteExisting) {
                         AirportTrip record = existing.get();
@@ -155,7 +161,7 @@ public class AirportTripUploadService {
                         record.setUploadFilename(filename);
                         record.setUploadDate(uploadDate);
                         record.setUploadedBy(username);
-                        airportTripRepository.save(record);
+                        savedRecord = airportTripRepository.save(record);
                         updateCount++;
                     } else {
                         if (skippedRecords.size() < 100) {
@@ -163,17 +169,29 @@ public class AirportTripUploadService {
                                 + ", Date " + dto.getTripDate() + ", Trips " + dto.getGrandTotal());
                         }
                         skipCount++;
+                        continue;
                     }
-                    continue;
+                } else {
+                    AirportTrip record = convertToEntity(dto);
+                    record.setUploadBatchId(uploadBatchId);
+                    record.setUploadFilename(filename);
+                    record.setUploadDate(uploadDate);
+                    record.setUploadedBy(username);
+                    savedRecord = airportTripRepository.save(record);
+                    successCount++;
                 }
 
-                AirportTrip record = convertToEntity(dto);
-                record.setUploadBatchId(uploadBatchId);
-                record.setUploadFilename(filename);
-                record.setUploadDate(uploadDate);
-                record.setUploadedBy(username);
-                airportTripRepository.save(record);
-                successCount++;
+                // Assign hourly trips to drivers
+                if (savedRecord != null) {
+                    try {
+                        List<AirportTripDriver> assignments = driverAssignmentService.assignDrivers(savedRecord);
+                        driverAssignmentCount += assignments.size();
+                    } catch (Exception e) {
+                        log.warn("Driver assignment failed for cab {} date {}: {}",
+                                dto.getCabNumber(), dto.getTripDate(), e.getMessage());
+                        driverAssignmentErrors++;
+                    }
+                }
 
             } catch (Exception e) {
                 log.error("Error importing row {}: {}", rowNumber, e.getMessage());
@@ -189,6 +207,8 @@ public class AirportTripUploadService {
         result.put("skipCount", skipCount);
         result.put("errorCount", errorCount);
         result.put("totalProcessed", records.size());
+        result.put("driverAssignments", driverAssignmentCount);
+        result.put("driverAssignmentErrors", driverAssignmentErrors);
         result.put("errors", errors);
         result.put("skippedRecords", skippedRecords.size() > 50 ? skippedRecords.subList(0, 50) : skippedRecords);
 

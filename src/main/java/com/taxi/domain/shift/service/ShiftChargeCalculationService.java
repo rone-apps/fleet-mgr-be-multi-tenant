@@ -1,7 +1,9 @@
 package com.taxi.domain.shift.service;
 
 import com.taxi.domain.cab.model.AttributeCost;
+import com.taxi.domain.cab.model.CabAttributeType;
 import com.taxi.domain.cab.model.CabAttributeValue;
+import com.taxi.domain.cab.repository.CabAttributeTypeRepository;
 import com.taxi.domain.cab.service.AttributeCostService;
 import com.taxi.domain.cab.service.CabAttributeValueService;
 import com.taxi.domain.shift.model.CabShift;
@@ -30,6 +32,7 @@ public class ShiftChargeCalculationService {
     private final CabShiftRepository cabShiftRepository;
     private final CabAttributeValueService attributeValueService;
     private final AttributeCostService attributeCostService;
+    private final CabAttributeTypeRepository cabAttributeTypeRepository;
 
     /**
      * Calculate total charges for a shift over a date range
@@ -71,6 +74,13 @@ public class ShiftChargeCalculationService {
                         attrStart,
                         attrEnd
                 );
+
+                // SSPV multiplier: single-shift cabs absorb both shifts' costs (×2)
+                boolean isSSPV = isShiftSSPV(shift, attrStart);
+                if (isSSPV) {
+                    lineItemCharge = lineItemCharge.multiply(new BigDecimal(2));
+                    log.info("SSPV shift {} — doubled {} charge: ${}", shiftId, attr.getAttributeType().getAttributeCode(), lineItemCharge);
+                }
 
                 lineItems.add(ChargeLineItem.builder()
                         .attributeCode(attr.getAttributeType().getAttributeCode())
@@ -117,6 +127,24 @@ public class ShiftChargeCalculationService {
 
         // Get all shifts and filter those that have the attribute
         return new ArrayList<>(); // Placeholder - will implement via repository query
+    }
+
+    /**
+     * Check if the shift has the SSPV attribute on a given date.
+     * SSPV cabs have only one shift (day) and absorb both shifts' attribute costs.
+     */
+    private boolean isShiftSSPV(CabShift shift, LocalDate date) {
+        try {
+            CabAttributeType sspvType = cabAttributeTypeRepository.findByAttributeCode("SSPV").orElse(null);
+            if (sspvType == null) {
+                return false;
+            }
+            List<CabAttributeValue> attrs = attributeValueService.getAttributesOnDateByShift(shift.getId(), date);
+            return attrs.stream().anyMatch(a -> "SSPV".equals(a.getAttributeType().getAttributeCode()));
+        } catch (Exception e) {
+            log.debug("Error checking SSPV for shift {}: {}", shift.getId(), e.getMessage());
+            return false;
+        }
     }
 
     /**

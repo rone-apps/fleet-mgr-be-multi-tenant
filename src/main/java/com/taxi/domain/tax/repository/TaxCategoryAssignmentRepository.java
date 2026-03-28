@@ -5,6 +5,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import java.time.LocalDate;
 import java.util.List;
 import java.util.Optional;
 
@@ -13,6 +14,15 @@ public interface TaxCategoryAssignmentRepository extends JpaRepository<TaxCatego
     @Query("SELECT a FROM TaxCategoryAssignment a JOIN FETCH a.taxType JOIN FETCH a.expenseCategory " +
            "WHERE a.isActive = true ORDER BY a.taxType.name, a.expenseCategory.categoryName")
     List<TaxCategoryAssignment> findAllActiveWithDetails();
+
+    /**
+     * Find assignments that were active on a specific date.
+     * Checks: assignedAt <= date AND (unassignedAt IS NULL OR unassignedAt >= date)
+     */
+    @Query("SELECT a FROM TaxCategoryAssignment a JOIN FETCH a.taxType JOIN FETCH a.expenseCategory " +
+           "WHERE a.assignedAt <= :date AND (a.unassignedAt IS NULL OR a.unassignedAt >= :date) " +
+           "ORDER BY a.taxType.name, a.expenseCategory.categoryName")
+    List<TaxCategoryAssignment> findAssignmentsActiveOnDate(@Param("date") LocalDate date);
 
     @Query("SELECT a FROM TaxCategoryAssignment a JOIN FETCH a.taxType JOIN FETCH a.expenseCategory " +
            "ORDER BY a.taxType.name, a.assignedAt DESC")

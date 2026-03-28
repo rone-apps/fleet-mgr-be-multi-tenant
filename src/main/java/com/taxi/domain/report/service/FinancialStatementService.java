@@ -2,6 +2,9 @@ package com.taxi.domain.report.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 
+import com.taxi.domain.cab.model.CabAttributeType;
+import com.taxi.domain.cab.model.CabAttributeValue;
+import com.taxi.domain.cab.repository.CabAttributeTypeRepository;
 import com.taxi.domain.cab.repository.CabRepository;
 import com.taxi.domain.driver.model.Driver;
 import com.taxi.domain.driver.repository.DriverRepository;
@@ -14,6 +17,10 @@ import com.taxi.domain.expense.repository.ItemRateRepository;
 import com.taxi.domain.expense.repository.ItemRateOverrideRepository;
 import com.taxi.domain.mileage.model.MileageRecord;
 import com.taxi.domain.mileage.repository.MileageRecordRepository;
+import com.taxi.domain.airport.model.AirportTrip;
+import com.taxi.domain.airport.model.AirportTripDriver;
+import com.taxi.domain.airport.repository.AirportTripDriverRepository;
+import com.taxi.domain.airport.repository.AirportTripRepository;
 import com.taxi.domain.airport.service.AirportChargeService;
 import com.taxi.domain.expense.service.ExpenseCalculationService;
 import com.taxi.domain.profile.model.ItemRateChargedTo;
@@ -83,6 +90,9 @@ public class FinancialStatementService {
     private final com.taxi.domain.tax.repository.TaxRateRepository taxRateRepository;
     private final com.taxi.domain.tax.repository.CommissionCategoryAssignmentRepository commissionCategoryAssignmentRepository;
     private final com.taxi.domain.tax.repository.CommissionRateRepository commissionRateRepository;
+    private final CabAttributeTypeRepository cabAttributeTypeRepository;
+    private final AirportTripRepository airportTripRepository;
+    private final AirportTripDriverRepository airportTripDriverRepository;
     /**
      * Generate a financial statement for a driver for a date period
      * Shows all applicable recurring (prorated) and one-time charges
@@ -349,7 +359,16 @@ public class FinancialStatementService {
 
                         if (hasAttribute) {
                             BigDecimal proratedAmount = expense.calculateAmountForDateRange(from, to);
-                            log.info("  Adding SHIFTS_WITH_ATTRIBUTE expense {} for Cab {} - {} (prorated: {})",
+
+                            // SSPV multiplier: single-shift cabs absorb both shifts' attribute costs (×2)
+                            boolean isSSPV = shiftAttributes.stream()
+                                    .anyMatch(attr -> "SSPV".equals(attr.getAttributeType().getAttributeCode()));
+                            if (isSSPV) {
+                                proratedAmount = proratedAmount.multiply(BigDecimal.valueOf(2));
+                                log.info("  SSPV shift — doubled {} to ${}", expense.getExpenseCategory().getCategoryCode(), proratedAmount);
+                            }
+
+                            log.info("  Adding SHIFTS_WITH_ATTRIBUTE expense {} for Cab {} - {} (amount: {})",
                                 expense.getExpenseCategory().getCategoryName(),
                                 shift.getCab().getCabNumber(), shift.getShiftType(), proratedAmount);
 
@@ -597,54 +616,121 @@ public class FinancialStatementService {
             // Don't fail the whole report if insurance calculation fails
         }
 
-        // 3.7. Add airport trip expenses (based on mileage records - applies to everyone who drove)
-        // Airport trips are charged per trip based on the AIRPORT_TRIP rate
+        // 3.7. Add airport trip expenses
+        // Primary: use airport_trip_driver table (pre-computed driver assignments from upload)
+        // Fallback: if no driver assignments exist, use airport_trips table directly for owned cabs
+        // Per-trip rate differs by attribute: AIRPORT_PLATE=$6.50, TRANSPONDER=$7.00
         try {
-            List<MileageRecord> mileageRecordsForAirport = mileageRecordRepository.findByDriverNumberAndDateRange(
-                    person.getDriverNumber(), from, to);
+            Set<String> cabsHandledByDriverAssignments = new HashSet<>();
+            String driverNumber = person.getDriverNumber();
 
-            log.info("Calculating airport trip expenses for {} mileage records for person {}",
-                    mileageRecordsForAirport.size(), personId);
+            // PRIMARY PATH: use pre-computed airport_trip_driver assignments
+            if (driverNumber != null && !driverNumber.isEmpty()) {
+                List<AirportTripDriver> driverTrips = airportTripDriverRepository
+                        .findByDriverNumberAndTripDateBetweenOrderByTripDateAscHourAsc(driverNumber, from, to);
 
-            for (MileageRecord mileageRecord : mileageRecordsForAirport) {
-                if (mileageRecord.getLogonTime() != null && mileageRecord.getLogoffTime() != null 
-                        && mileageRecord.getCabNumber() != null) {
-                    
-                    // Use AirportChargeService to calculate airport trips for this shift
-                    AirportChargeService.AirportChargeResult airportResult = 
-                        airportChargeService.calculateAirportChargeForShiftDetailed(
-                            mileageRecord.getCabNumber(),
-                            mileageRecord.getLogonTime(),
-                            mileageRecord.getLogoffTime(),
-                            mileageRecord.getLogonTime().toLocalDate());
+                if (!driverTrips.isEmpty()) {
+                    // Group by cab + date → one line item per cab per day
+                    Map<String, Map<LocalDate, Integer>> cabDateTrips = new LinkedHashMap<>();
 
-                    if (airportResult.getTripCount() > 0 && airportResult.getTotalCharge().compareTo(BigDecimal.ZERO) > 0) {
-                        String airportDescription = "Airport Trips - " + airportResult.getTripCount() + 
-                            " trips @ $" + airportResult.getRatePerTrip() + "/trip" +
-                            " (Cab " + mileageRecord.getCabNumber() + ")";
+                    for (AirportTripDriver atd : driverTrips) {
+                        cabDateTrips
+                                .computeIfAbsent(atd.getCabNumber(), k -> new TreeMap<>())
+                                .merge(atd.getTripDate(), atd.getTripCount(), Integer::sum);
+                    }
+
+                    for (Map.Entry<String, Map<LocalDate, Integer>> cabEntry : cabDateTrips.entrySet()) {
+                        String cabNumber = cabEntry.getKey();
+                        cabsHandledByDriverAssignments.add(cabNumber);
+
+                        Long attributeTypeId = resolveAirportAttributeTypeId(cabNumber, from);
+                        ItemRate rate = airportChargeService.getAirportTripRateForAttribute(attributeTypeId, from);
+
+                        if (rate == null) {
+                            log.warn("No AIRPORT_TRIP rate found for cab {} on {}", cabNumber, from);
+                            continue;
+                        }
+
+                        BigDecimal ratePerTrip = rate.getRate();
+
+                        for (Map.Entry<LocalDate, Integer> dateEntry : cabEntry.getValue().entrySet()) {
+                            LocalDate tripDate = dateEntry.getKey();
+                            int dayTrips = dateEntry.getValue();
+                            if (dayTrips == 0) continue;
+
+                            BigDecimal dayCharge = ratePerTrip.multiply(BigDecimal.valueOf(dayTrips));
+
+                            report.getOneTimeExpenses().add(StatementLineItem.builder()
+                                    .categoryCode("AIRPORT_TRIP")
+                                    .categoryName("Airport Trip Expense")
+                                    .applicationType("AIRPORT")
+                                    .date(tripDate)
+                                    .cabNumber(cabNumber)
+                                    .description(dayTrips + " trips @ $" + ratePerTrip + "/trip (Cab " + cabNumber + ")")
+                                    .amount(dayCharge)
+                                    .tripCount(dayTrips)
+                                    .ratePerUnit(ratePerTrip)
+                                    .isRecurring(false)
+                                    .build());
+                        }
+                    }
+
+                    log.info("Airport expense for person {} (driver {}): {} driver assignment records for cabs {}",
+                            personId, driverNumber, driverTrips.size(), cabsHandledByDriverAssignments);
+                }
+            }
+
+            // FALLBACK: for owned cabs that have NO airport_trip_driver data, use airport_trips directly
+            // This handles data uploaded before the driver assignment feature was added
+            // Per-cab check: only fall back for cabs NOT already handled by the primary path
+            if (!relevantShifts.isEmpty()) {
+                Set<String> processedCabs = new HashSet<>();
+                for (CabShift shift : relevantShifts) {
+                    String cabNumber = shift.getCab().getCabNumber();
+                    if (cabNumber == null || !processedCabs.add(cabNumber)) continue;
+
+                    // Skip cabs already handled by airport_trip_driver primary path
+                    if (cabsHandledByDriverAssignments.contains(cabNumber)) continue;
+
+                    List<AirportTrip> trips = airportTripRepository.findByCabNumberAndTripDateBetweenOrderByTripDateDesc(
+                            cabNumber, from, to);
+                    if (trips.isEmpty()) continue;
+
+                    Long attributeTypeId = resolveAirportAttributeTypeId(cabNumber, from);
+                    ItemRate rate = airportChargeService.getAirportTripRateForAttribute(attributeTypeId, from);
+
+                    if (rate == null) {
+                        log.warn("No AIRPORT_TRIP rate found for cab {} on {}", cabNumber, from);
+                        continue;
+                    }
+
+                    BigDecimal ratePerTrip = rate.getRate();
+
+                    for (AirportTrip trip : trips) {
+                        int dayTrips = trip.getGrandTotal() != null ? trip.getGrandTotal() : 0;
+                        if (dayTrips == 0) continue;
+
+                        BigDecimal dayCharge = ratePerTrip.multiply(BigDecimal.valueOf(dayTrips));
 
                         report.getOneTimeExpenses().add(StatementLineItem.builder()
                                 .categoryCode("AIRPORT_TRIP")
                                 .categoryName("Airport Trip Expense")
                                 .applicationType("AIRPORT")
-                                .date(mileageRecord.getLogonTime().toLocalDate())
-                                .cabNumber(mileageRecord.getCabNumber())
-                                .description(airportDescription)
-                                .amount(airportResult.getTotalCharge())
-                                .tripCount(airportResult.getTripCount())
-                                .ratePerUnit(airportResult.getRatePerTrip())
+                                .date(trip.getTripDate())
+                                .cabNumber(cabNumber)
+                                .description(dayTrips + " trips @ $" + ratePerTrip + "/trip (Cab " + cabNumber + ")")
+                                .amount(dayCharge)
+                                .tripCount(dayTrips)
+                                .ratePerUnit(ratePerTrip)
                                 .isRecurring(false)
                                 .build());
-
-                        log.debug("Added airport expense for person {}: {} trips × ${}/trip = ${}",
-                                personId, airportResult.getTripCount(), airportResult.getRatePerTrip(), 
-                                airportResult.getTotalCharge());
                     }
+
+                    log.info("Airport expense (fallback): Cab {} for person {} using airport_trips directly", cabNumber, personId);
                 }
             }
         } catch (Exception e) {
             log.warn("Error calculating airport trip expense for person {}: {}", personId, e.getMessage());
-            // Don't fail the whole report if airport calculation fails
         }
 
         // 4. Add shift-based revenues (trip fares, tips, etc.)
@@ -931,58 +1017,98 @@ public class FinancialStatementService {
         }
 
         // ═══════════════════════════════════════════════════════════════════════
-        // TAXES ON EXPENSES
-        // For each active tax-category assignment, calculate tax on matching expenses
+        // TAXES ON EXPENSES (date-aware per item)
+        // For each expense item, use its own date to:
+        //   1. Check if the tax assignment was active on that date
+        //   2. Look up the correct tax rate for that date
+        // This ensures historical accuracy when rates or assignments change.
         // ═══════════════════════════════════════════════════════════════════════
         try {
-            List<com.taxi.domain.tax.model.TaxCategoryAssignment> taxAssignments =
-                    taxCategoryAssignmentRepository.findAllActiveWithDetails();
+            // Collect all expense line items from every list for per-item tax stamping
+            List<StatementLineItem> allExpenseItems = new java.util.ArrayList<>();
+            allExpenseItems.addAll(report.getRecurringExpenses());
+            allExpenseItems.addAll(report.getOneTimeExpenses());
+            allExpenseItems.addAll(report.getInsuranceMileageExpenses());
 
-            log.info("Tax calculation: found {} active tax-category assignments, period end={}", taxAssignments.size(), to);
+            // Collect unique dates from expense items to batch-query assignments
+            java.util.Set<LocalDate> itemDates = new java.util.HashSet<>();
+            for (StatementLineItem item : allExpenseItems) {
+                itemDates.add(getEffectiveDate(item, to));
+            }
 
-            // Log all recurring expense category codes for debugging
-            log.info("Tax calculation: recurring expense codes = {}",
-                    report.getRecurringExpenses().stream().map(e -> e.getCategoryCode()).distinct().collect(java.util.stream.Collectors.toList()));
+            // Cache: date -> list of active assignments on that date
+            java.util.Map<LocalDate, List<com.taxi.domain.tax.model.TaxCategoryAssignment>> assignmentsByDate = new java.util.HashMap<>();
+            for (LocalDate date : itemDates) {
+                assignmentsByDate.put(date, taxCategoryAssignmentRepository.findAssignmentsActiveOnDate(date));
+            }
 
-            for (com.taxi.domain.tax.model.TaxCategoryAssignment assignment : taxAssignments) {
-                String targetCategoryCode = assignment.getExpenseCategory().getCategoryCode();
+            log.info("Tax calculation: {} unique expense dates across {} items, period {}-{}", itemDates.size(), allExpenseItems.size(), from, to);
 
-                // Sum expenses matching this category from recurring + one-time expenses
-                final java.math.BigDecimal taxBaseAmount = report.getRecurringExpenses().stream()
-                        .filter(e -> targetCategoryCode.equals(e.getCategoryCode()))
-                        .map(e -> e.getAmount() != null ? e.getAmount() : BigDecimal.ZERO)
-                        .reduce(BigDecimal.ZERO, BigDecimal::add)
-                        .add(report.getOneTimeExpenses().stream()
-                                .filter(e -> targetCategoryCode.equals(e.getCategoryCode()))
-                                .map(e -> e.getAmount() != null ? e.getAmount() : BigDecimal.ZERO)
-                                .reduce(BigDecimal.ZERO, BigDecimal::add));
+            // Track aggregate totals per assignment (taxTypeCode + categoryCode) for summary
+            java.util.Map<String, BigDecimal[]> aggregateTax = new java.util.LinkedHashMap<>();
+            // key = taxTypeCode|categoryCode, value = [baseAmount, taxAmount]
+            java.util.Map<String, String[]> aggregateLabels = new java.util.HashMap<>();
+            // key = taxTypeCode|categoryCode, value = [taxTypeCode, taxTypeName, taxRate, categoryName]
 
-                log.info("Tax calculation: checking tax {} on category '{}', base amount = ${}",
-                        assignment.getTaxType().getCode(), targetCategoryCode, taxBaseAmount);
+            for (StatementLineItem item : allExpenseItems) {
+                BigDecimal itemAmount = item.getAmount() != null ? item.getAmount() : BigDecimal.ZERO;
+                if (itemAmount.compareTo(BigDecimal.ZERO) <= 0) continue;
 
-                if (taxBaseAmount.compareTo(BigDecimal.ZERO) > 0) {
-                    var rateOpt = taxRateRepository.findActiveRateOnDate(assignment.getTaxType().getId(), to);
-                    log.info("Tax calculation: rate lookup for type {} on date {}: present={}",
-                            assignment.getTaxType().getCode(), to, rateOpt.isPresent());
-                    rateOpt.ifPresent(rate -> {
-                        java.math.BigDecimal taxAmount = taxBaseAmount.multiply(rate.getRate())
-                                .divide(new java.math.BigDecimal("100"), 2, java.math.RoundingMode.HALF_UP);
+                LocalDate itemDate = getEffectiveDate(item, to);
+                List<com.taxi.domain.tax.model.TaxCategoryAssignment> assignments = assignmentsByDate.get(itemDate);
+                if (assignments == null || assignments.isEmpty()) continue;
 
-                        if (taxAmount.compareTo(BigDecimal.ZERO) > 0) {
-                            report.getTaxExpenses().add(OwnerReportDTO.TaxLineItem.builder()
-                                    .taxTypeCode(assignment.getTaxType().getCode())
-                                    .taxTypeName(assignment.getTaxType().getName())
-                                    .taxRate(rate.getRate())
-                                    .expenseCategoryName(assignment.getExpenseCategory().getCategoryName())
-                                    .baseAmount(taxBaseAmount)
-                                    .amount(taxAmount)
-                                    .build());
+                for (com.taxi.domain.tax.model.TaxCategoryAssignment assignment : assignments) {
+                    String targetCategoryCode = assignment.getExpenseCategory().getCategoryCode();
+                    if (!targetCategoryCode.equals(item.getCategoryCode())) continue;
 
-                            log.debug("Tax {} @ {}% on {} (${}) = ${}",
-                                    assignment.getTaxType().getCode(), rate.getRate(),
-                                    targetCategoryCode, taxBaseAmount, taxAmount);
-                        }
+                    // Look up tax rate active on the item's date
+                    var rateOpt = taxRateRepository.findActiveRateOnDate(assignment.getTaxType().getId(), itemDate);
+                    if (rateOpt.isEmpty()) continue;
+                    var rate = rateOpt.get();
+
+                    BigDecimal itemTax = itemAmount.multiply(rate.getRate())
+                            .divide(new BigDecimal("100"), 2, java.math.RoundingMode.HALF_UP);
+
+                    item.setTaxTypeCode(assignment.getTaxType().getCode());
+                    item.setTaxTypeName(assignment.getTaxType().getName());
+                    item.setTaxRate(rate.getRate());
+                    item.setTaxAmount(itemTax);
+                    item.setAmountWithTax(itemAmount.add(itemTax));
+
+                    // Aggregate for summary
+                    String aggKey = assignment.getTaxType().getCode() + "|" + targetCategoryCode;
+                    aggregateTax.computeIfAbsent(aggKey, k -> new BigDecimal[]{BigDecimal.ZERO, BigDecimal.ZERO});
+                    BigDecimal[] totals = aggregateTax.get(aggKey);
+                    totals[0] = totals[0].add(itemAmount);
+                    totals[1] = totals[1].add(itemTax);
+
+                    aggregateLabels.putIfAbsent(aggKey, new String[]{
+                            assignment.getTaxType().getCode(),
+                            assignment.getTaxType().getName(),
+                            rate.getRate().toPlainString(),
+                            assignment.getExpenseCategory().getCategoryName()
                     });
+                    break; // one tax assignment per item
+                }
+            }
+
+            // Create aggregate TaxLineItems for the summary section
+            for (java.util.Map.Entry<String, BigDecimal[]> entry : aggregateTax.entrySet()) {
+                BigDecimal[] totals = entry.getValue();
+                if (totals[1].compareTo(BigDecimal.ZERO) > 0) {
+                    String[] labels = aggregateLabels.get(entry.getKey());
+                    report.getTaxExpenses().add(OwnerReportDTO.TaxLineItem.builder()
+                            .taxTypeCode(labels[0])
+                            .taxTypeName(labels[1])
+                            .taxRate(new BigDecimal(labels[2]))
+                            .expenseCategoryName(labels[3])
+                            .baseAmount(totals[0])
+                            .amount(totals[1])
+                            .build());
+
+                    log.info("Tax calculation: {} @ {}% on '{}', base=${}, tax=${}",
+                            labels[0], labels[2], labels[3], totals[0], totals[1]);
                 }
             }
         } catch (Exception e) {
@@ -1078,6 +1204,55 @@ public class FinancialStatementService {
         } catch (Exception e) {
             log.error("Error finalizing statement", e);
             throw new RuntimeException("Failed to finalize statement: " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Resolve the airport-related attribute type ID for a cab.
+     * Checks for AIRPORT_PLATE first, then TRANSPONDER.
+     */
+    private Long resolveAirportAttributeTypeId(String cabNumber, LocalDate date) {
+        try {
+            // Check all shifts for this cab (DAY and NIGHT)
+            List<CabShift> cabShifts = cabShiftRepository.findByCabNumber(cabNumber);
+            if (cabShifts.isEmpty()) {
+                log.debug("No cab shifts found for cab {} — cannot resolve attribute", cabNumber);
+                return null;
+            }
+
+            CabAttributeType airportPlateType = cabAttributeTypeRepository.findByAttributeCode("AIRPORT_PLATE").orElse(null);
+            CabAttributeType transponderType = cabAttributeTypeRepository.findByAttributeCode("TRANSPONDER").orElse(null);
+
+            // Check each shift for AIRPORT_PLATE first (takes priority), then TRANSPONDER
+            for (CabShift cabShift : cabShifts) {
+                if (airportPlateType != null) {
+                    Optional<CabAttributeValue> ap = cabAttributeValueRepository.findAttributeOnDateByShift(
+                        cabShift, airportPlateType, date);
+                    if (ap.isPresent()) {
+                        log.debug("Cab {} has AIRPORT_PLATE on shift {} — attributeTypeId={}",
+                                cabNumber, cabShift.getShiftType(), airportPlateType.getId());
+                        return airportPlateType.getId();
+                    }
+                }
+            }
+
+            for (CabShift cabShift : cabShifts) {
+                if (transponderType != null) {
+                    Optional<CabAttributeValue> tr = cabAttributeValueRepository.findAttributeOnDateByShift(
+                        cabShift, transponderType, date);
+                    if (tr.isPresent()) {
+                        log.debug("Cab {} has TRANSPONDER on shift {} — attributeTypeId={}",
+                                cabNumber, cabShift.getShiftType(), transponderType.getId());
+                        return transponderType.getId();
+                    }
+                }
+            }
+
+            log.debug("Cab {} has no airport attribute on {} — will use generic rate", cabNumber, date);
+            return null;
+        } catch (Exception e) {
+            log.debug("Error resolving airport attribute for cab {}: {}", cabNumber, e.getMessage());
+            return null;
         }
     }
 
@@ -1310,6 +1485,21 @@ public class FinancialStatementService {
             this.mileageLease = mileageLease;
             this.insuranceExpense = insuranceExpense;
         }
+    }
+
+    /**
+     * Determine the effective date for a line item's tax calculation.
+     * - One-time expenses: use the item's date
+     * - Recurring/other: use the item's effectiveFrom if available, otherwise fallback to period end date
+     */
+    private LocalDate getEffectiveDate(StatementLineItem item, LocalDate periodEnd) {
+        if (item.getDate() != null) {
+            return item.getDate();
+        }
+        if (item.getEffectiveFrom() != null) {
+            return item.getEffectiveFrom();
+        }
+        return periodEnd;
     }
 
 }

@@ -1,5 +1,6 @@
 package com.taxi.domain.expense.model;
 
+import com.taxi.domain.cab.model.CabAttributeType;
 import com.taxi.domain.profile.model.ItemRateChargedTo;
 import com.taxi.domain.profile.model.ItemRateUnitType;
 import jakarta.persistence.*;
@@ -62,6 +63,10 @@ public class ItemRate {
     @Column(name = "is_active", nullable = false)
     @Builder.Default
     private Boolean isActive = true;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "attribute_type_id")
+    private CabAttributeType attributeType;  // Optional: links rate to a specific attribute (e.g., TRANSPONDER, AIRPORT_PLATE)
 
     @Column(name = "notes", length = 1000)
     private String notes;

@@ -1,6 +1,8 @@
 package com.taxi.web.controller;
 
 import com.taxi.domain.airport.model.AirportTrip;
+import com.taxi.domain.airport.model.AirportTripDriver;
+import com.taxi.domain.airport.repository.AirportTripDriverRepository;
 import com.taxi.domain.airport.repository.AirportTripRepository;
 import com.taxi.domain.payment.model.CreditCardTransaction;
 import com.taxi.domain.payment.repository.CreditCardTransactionRepository;
@@ -31,6 +33,7 @@ public class DataViewController {
     private final CreditCardTransactionRepository creditCardRepository;
     private final MileageRecordRepository mileageRepository;
     private final AirportTripRepository airportTripRepository;
+    private final AirportTripDriverRepository airportTripDriverRepository;
 
     // ==================== Credit Card Transactions ====================
 
@@ -199,6 +202,42 @@ public class DataViewController {
                 startDate, endDate, shift, pageable);
         } else {
             result = airportTripRepository.findByTripDateBetweenOrderByTripDateDesc(startDate, endDate, pageable);
+        }
+
+        return ResponseEntity.ok(result);
+    }
+
+    // ==================== Airport Trips (Driver) ====================
+
+    @GetMapping("/airport-trip-drivers")
+    public ResponseEntity<Page<AirportTripDriver>> getAirportTripDrivers(
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate startDate,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate endDate,
+            @RequestParam(required = false) String cabNumber,
+            @RequestParam(required = false) String driverNumber,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "25") int size) {
+
+        log.info("Fetching airport trip driver assignments: {} to {}, cab={}, driver={}",
+                 startDate, endDate, cabNumber, driverNumber);
+
+        Pageable pageable = PageRequest.of(page, size);
+
+        Page<AirportTripDriver> result;
+        boolean hasCab = cabNumber != null && !cabNumber.isEmpty();
+        boolean hasDriver = driverNumber != null && !driverNumber.isEmpty();
+
+        if (hasCab && hasDriver) {
+            result = airportTripDriverRepository.findByTripDateBetweenAndCabNumberAndDriverNumber(
+                startDate, endDate, cabNumber, driverNumber, pageable);
+        } else if (hasCab) {
+            result = airportTripDriverRepository.findByTripDateBetweenAndCabNumber(
+                startDate, endDate, cabNumber, pageable);
+        } else if (hasDriver) {
+            result = airportTripDriverRepository.findByTripDateBetweenAndDriverNumber(
+                startDate, endDate, driverNumber, pageable);
+        } else {
+            result = airportTripDriverRepository.findByTripDateBetween(startDate, endDate, pageable);
         }
 
         return ResponseEntity.ok(result);

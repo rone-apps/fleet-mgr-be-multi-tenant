@@ -122,12 +122,17 @@ public class AirportChargeService {
     }
 
     /**
-     * Get the active AIRPORT_TRIP rate for a date.
-     *
-     * @param checkDate The date to check
-     * @return The ItemRate if found and active, null otherwise
+     * Get the active generic AIRPORT_TRIP rate for a date (no attribute linkage).
      */
     public ItemRate getAirportTripRate(LocalDate checkDate) {
+        // First try: rate with no attribute_type_id (generic rate)
+        List<ItemRate> genericRates = itemRateRepository.findActiveByUnitTypeNoAttribute(
+                ItemRateUnitType.AIRPORT_TRIP, checkDate);
+        if (!genericRates.isEmpty()) {
+            return genericRates.get(0);
+        }
+
+        // Last resort: any AIRPORT_TRIP rate
         List<ItemRate> allRates = itemRateRepository.findActiveOnDate(checkDate);
         return allRates.stream()
             .filter(r -> r.getUnitType() == ItemRateUnitType.AIRPORT_TRIP)
@@ -136,8 +141,30 @@ public class AirportChargeService {
     }
 
     /**
+     * Get the active AIRPORT_TRIP rate for a specific attribute type on a date.
+     * 1. Try attribute-specific rate (e.g., TRANSPONDER=$7.00, AIRPORT_PLATE=$6.50)
+     * 2. Fall back to generic (no-attribute) AIRPORT_TRIP rate
+     */
+    public ItemRate getAirportTripRateForAttribute(Long attributeTypeId, LocalDate checkDate) {
+        if (attributeTypeId != null) {
+            List<ItemRate> attributeRates = itemRateRepository.findActiveByUnitTypeAndAttributeType(
+                ItemRateUnitType.AIRPORT_TRIP, attributeTypeId, checkDate);
+            if (!attributeRates.isEmpty()) {
+                ItemRate rate = attributeRates.get(0);
+                log.debug("Using attribute-specific AIRPORT_TRIP rate: {} (${}) for attributeTypeId={}",
+                        rate.getName(), rate.getRate(), attributeTypeId);
+                return rate;
+            }
+            log.debug("No attribute-specific AIRPORT_TRIP rate for attributeTypeId={}, falling back to generic", attributeTypeId);
+        }
+        // Fallback to generic rate (no attribute)
+        return getAirportTripRate(checkDate);
+    }
+
+    /**
      * Calculate airport charge details for a driver shift.
      * Returns trip count, rate per trip, and total charge.
+     * Uses the first generic AIRPORT_TRIP rate found.
      *
      * @param cabNumber The cab number
      * @param logonTime The logon time
@@ -149,6 +176,26 @@ public class AirportChargeService {
                                                       LocalDateTime logonTime,
                                                       LocalDateTime logoffTime,
                                                       LocalDate checkDate) {
+        return calculateAirportChargeForShiftDetailed(cabNumber, logonTime, logoffTime, checkDate, null);
+    }
+
+    /**
+     * Calculate airport charge details for a driver shift with attribute-specific rate.
+     * If attributeTypeId is provided, uses the rate linked to that attribute.
+     * Falls back to generic AIRPORT_TRIP rate if no attribute-specific rate exists.
+     *
+     * @param cabNumber The cab number
+     * @param logonTime The logon time
+     * @param logoffTime The logoff time
+     * @param checkDate The date to check for active rates
+     * @param attributeTypeId Optional attribute type ID for attribute-specific rate lookup
+     * @return AirportChargeResult with trip count, rate, and charge
+     */
+    public AirportChargeResult calculateAirportChargeForShiftDetailed(String cabNumber,
+                                                      LocalDateTime logonTime,
+                                                      LocalDateTime logoffTime,
+                                                      LocalDate checkDate,
+                                                      Long attributeTypeId) {
         // Count trips for this shift
         int tripCount = countAirportTripsForShift(cabNumber, logonTime, logoffTime);
         log.debug("   Total trips for shift: {}", tripCount);
@@ -162,16 +209,11 @@ public class AirportChargeService {
                 .build();
         }
 
-        // Find active AIRPORT_TRIP rate for this date
-        List<ItemRate> allRates = itemRateRepository.findActiveOnDate(checkDate);
-        log.debug("   Found {} active rates on {}", allRates.size(), checkDate);
+        // Find rate — use attribute-specific rate if attributeTypeId is provided
+        ItemRate rate = getAirportTripRateForAttribute(attributeTypeId, checkDate);
 
-        List<ItemRate> rates = allRates.stream()
-            .filter(r -> r.getUnitType() == ItemRateUnitType.AIRPORT_TRIP)
-            .toList();
-
-        if (rates.isEmpty()) {
-            log.warn("   ⚠️ No active AIRPORT_TRIP rate found for date {}", checkDate);
+        if (rate == null) {
+            log.warn("   No active AIRPORT_TRIP rate found for date {} (attributeTypeId={})", checkDate, attributeTypeId);
             return AirportChargeResult.builder()
                 .tripCount(tripCount)
                 .ratePerTrip(BigDecimal.ZERO)
@@ -179,12 +221,10 @@ public class AirportChargeService {
                 .build();
         }
 
-        // Use the first matching rate
-        ItemRate rate = rates.get(0);
         BigDecimal ratePerTrip = rate.getRate();
         BigDecimal amount = BigDecimal.valueOf(tripCount).multiply(ratePerTrip);
 
-        log.info("   ✈️ Airport charge: {} trips × ${}/trip = ${}", tripCount, ratePerTrip, amount);
+        log.info("   Airport charge: {} trips x ${}/trip = ${} (rate: {})", tripCount, ratePerTrip, amount, rate.getName());
 
         return AirportChargeResult.builder()
             .tripCount(tripCount)
@@ -207,34 +247,19 @@ public class AirportChargeService {
                                                       LocalDateTime logonTime,
                                                       LocalDateTime logoffTime,
                                                       LocalDate checkDate) {
-        // Count trips for this shift
-        int tripCount = countAirportTripsForShift(cabNumber, logonTime, logoffTime);
-        log.debug("   Total trips for shift: {}", tripCount);
+        return calculateAirportChargeForShiftDetailed(cabNumber, logonTime, logoffTime, checkDate, null)
+            .getTotalCharge();
+    }
 
-        if (tripCount == 0) {
-            log.debug("   No airport trips found - charge = $0");
-            return BigDecimal.ZERO;
-        }
-
-        // Find active AIRPORT_TRIP rate for this date
-        List<ItemRate> allRates = itemRateRepository.findActiveOnDate(checkDate);
-        log.debug("   Found {} active rates on {}", allRates.size(), checkDate);
-
-        List<ItemRate> rates = allRates.stream()
-            .filter(r -> r.getUnitType() == ItemRateUnitType.AIRPORT_TRIP)
-            .toList();
-
-        if (rates.isEmpty()) {
-            log.warn("   ⚠️ No active AIRPORT_TRIP rate found for date {}", checkDate);
-            return BigDecimal.ZERO;
-        }
-
-        // Use the first matching rate (assumes only one active rate per unit type)
-        ItemRate rate = rates.get(0);
-
-        BigDecimal amount = BigDecimal.valueOf(tripCount).multiply(rate.getRate());
-        log.info("   ✈️ Airport charge: {} trips × ${}/trip = ${}", tripCount, rate.getRate(), amount);
-
-        return amount;
+    /**
+     * Calculate airport charge amount for a driver shift with attribute-specific rate.
+     */
+    public BigDecimal calculateAirportChargeForShift(String cabNumber,
+                                                      LocalDateTime logonTime,
+                                                      LocalDateTime logoffTime,
+                                                      LocalDate checkDate,
+                                                      Long attributeTypeId) {
+        return calculateAirportChargeForShiftDetailed(cabNumber, logonTime, logoffTime, checkDate, attributeTypeId)
+            .getTotalCharge();
     }
 }

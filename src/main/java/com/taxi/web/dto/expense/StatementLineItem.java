@@ -44,6 +44,13 @@ public class StatementLineItem {
     private Integer tripCount;        // Number of airport trips
     private BigDecimal ratePerUnit;   // Rate per trip
 
+    // Per-item tax (populated if this expense category has a tax assignment)
+    private String taxTypeCode;       // e.g., "HST"
+    private String taxTypeName;       // e.g., "Harmonized Sales Tax"
+    private BigDecimal taxRate;       // e.g., 13.00 (percentage)
+    private BigDecimal taxAmount;     // amount × taxRate / 100
+    private BigDecimal amountWithTax; // amount + taxAmount
+
     // For lease expenses breakdown: Fixed Lease | Mileage Lease | Total Lease
     private LeaseBreakdown leaseBreakdown;
 
