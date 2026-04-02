@@ -4,6 +4,7 @@ import com.taxi.domain.airport.model.AirportTrip;
 import com.taxi.domain.airport.model.AirportTripDriver;
 import com.taxi.domain.airport.repository.AirportTripDriverRepository;
 import com.taxi.domain.airport.repository.AirportTripRepository;
+import com.taxi.domain.csvuploader.CreditCardTransactionUploadService;
 import com.taxi.domain.payment.model.CreditCardTransaction;
 import com.taxi.domain.payment.repository.CreditCardTransactionRepository;
 import com.taxi.domain.mileage.model.MileageRecord;
@@ -31,6 +32,7 @@ import java.util.Optional;
 public class DataViewController {
 
     private final CreditCardTransactionRepository creditCardRepository;
+    private final CreditCardTransactionUploadService creditCardUploadService;
     private final MileageRecordRepository mileageRepository;
     private final AirportTripRepository airportTripRepository;
     private final AirportTripDriverRepository airportTripDriverRepository;
@@ -46,36 +48,43 @@ public class DataViewController {
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "25") int size) {
 
-        log.info("Fetching credit card transactions: {} to {}, cab={}, driver={}", 
+        log.info("Fetching credit card transactions: {} to {}, cab={}, driver={}",
                  startDate, endDate, cabNumber, driverNumber);
 
-        Pageable pageable = PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "transactionDate", "transactionTime"));
-        
-        Page<CreditCardTransaction> result;
-        boolean hasCab = cabNumber != null && !cabNumber.isEmpty();
-        boolean hasDriver = driverNumber != null && !driverNumber.isEmpty();
-        boolean isUnassigned = "N/A".equalsIgnoreCase(driverNumber);
+        try {
+            Pageable pageable = PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "transactionDate", "transactionTime"));
 
-        if (hasCab && hasDriver && !isUnassigned) {
-            result = creditCardRepository.findByTransactionDateBetweenAndCabNumberAndDriverNumber(
-                startDate, endDate, cabNumber, driverNumber, pageable);
-        } else if (hasCab && isUnassigned) {
-            result = creditCardRepository.findByTransactionDateBetweenAndCabNumberAndDriverNumberIsNull(
-                startDate, endDate, cabNumber, pageable);
-        } else if (hasCab) {
-            result = creditCardRepository.findByTransactionDateBetweenAndCabNumber(
-                startDate, endDate, cabNumber, pageable);
-        } else if (isUnassigned) {
-            result = creditCardRepository.findByTransactionDateBetweenAndDriverNumberIsNull(
-                startDate, endDate, pageable);
-        } else if (hasDriver) {
-            result = creditCardRepository.findByTransactionDateBetweenAndDriverNumber(
-                startDate, endDate, driverNumber, pageable);
-        } else {
-            result = creditCardRepository.findByTransactionDateBetween(startDate, endDate, pageable);
+            Page<CreditCardTransaction> result;
+            boolean hasCab = cabNumber != null && !cabNumber.isEmpty();
+            boolean hasDriver = driverNumber != null && !driverNumber.isEmpty();
+            boolean isUnassigned = "N/A".equalsIgnoreCase(driverNumber);
+
+            if (hasCab && hasDriver && !isUnassigned) {
+                result = creditCardRepository.findByTransactionDateBetweenAndCabNumberAndDriverNumber(
+                    startDate, endDate, cabNumber, driverNumber, pageable);
+            } else if (hasCab && isUnassigned) {
+                result = creditCardRepository.findByTransactionDateBetweenAndCabNumberAndDriverNumberIsNull(
+                    startDate, endDate, cabNumber, pageable);
+            } else if (hasCab) {
+                result = creditCardRepository.findByTransactionDateBetweenAndCabNumber(
+                    startDate, endDate, cabNumber, pageable);
+            } else if (isUnassigned) {
+                result = creditCardRepository.findByTransactionDateBetweenAndDriverNumberIsNull(
+                    startDate, endDate, pageable);
+            } else if (hasDriver) {
+                result = creditCardRepository.findByTransactionDateBetweenAndDriverNumber(
+                    startDate, endDate, driverNumber, pageable);
+            } else {
+                result = creditCardRepository.findByTransactionDateBetween(startDate, endDate, pageable);
+            }
+
+            log.info("Credit card query returned {} results (page {} of {})",
+                     result.getNumberOfElements(), result.getNumber(), result.getTotalPages());
+            return ResponseEntity.ok(result);
+        } catch (Exception e) {
+            log.error("Error fetching credit card transactions: {}", e.getMessage(), e);
+            return ResponseEntity.internalServerError().build();
         }
-
-        return ResponseEntity.ok(result);
     }
 
     @PatchMapping("/credit-card-transactions/{id}")
@@ -92,14 +101,34 @@ public class DataViewController {
         }
 
         CreditCardTransaction transaction = optionalTransaction.get();
-        
-        // Only allow updating driverNumber
+
+        // Allow updating cabNumber and driverNumber
+        if (updates.containsKey("cabNumber")) {
+            transaction.setCabNumber(updates.get("cabNumber"));
+        }
         if (updates.containsKey("driverNumber")) {
             transaction.setDriverNumber(updates.get("driverNumber"));
         }
 
         creditCardRepository.save(transaction);
         return ResponseEntity.ok(transaction);
+    }
+
+    @PostMapping("/credit-card-transactions/re-enrich")
+    @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER')")
+    public ResponseEntity<?> reEnrichCreditCardTransactions(
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate startDate,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate endDate) {
+
+        log.info("Re-enriching credit card transactions: {} to {}", startDate, endDate);
+
+        try {
+            Map<String, Object> result = creditCardUploadService.reEnrichTransactions(startDate, endDate);
+            return ResponseEntity.ok(result);
+        } catch (Exception e) {
+            log.error("Error re-enriching transactions: {}", e.getMessage(), e);
+            return ResponseEntity.internalServerError().build();
+        }
     }
 
     // ==================== Mileage Records ====================

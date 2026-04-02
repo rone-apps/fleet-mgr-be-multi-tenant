@@ -15,20 +15,10 @@ import java.time.LocalTime;
 @Entity
 @Table(name = "credit_card_transaction",
         uniqueConstraints = {
-                // Primary uniqueness: terminal + auth code + amount + datetime
+                // Single natural key: merchant + terminal + auth code + exact datetime
                 @UniqueConstraint(
-                        name = "uk_cc_transaction_primary",
-                        columnNames = {"terminal_id", "authorization_code", "amount", "transaction_date", "transaction_time"}
-                ),
-                // Backup uniqueness: transaction_id from processor
-                @UniqueConstraint(
-                        name = "uk_cc_transaction_id",
-                        columnNames = {"transaction_id"}
-                ),
-                // Additional safeguard: merchant + terminal + cab + amount + datetime
-                @UniqueConstraint(
-                        name = "uk_cc_transaction_secondary",
-                        columnNames = {"merchant_id", "terminal_id", "cab_number", "amount", "transaction_date", "transaction_time"}
+                        name = "uk_cc_transaction_natural",
+                        columnNames = {"merchant_id", "terminal_id", "authorization_code", "transaction_date", "transaction_time"}
                 )
         },
         indexes = {
@@ -41,7 +31,8 @@ import java.time.LocalTime;
                 @Index(name = "idx_cc_merchant_terminal", columnList = "merchant_id, terminal_id"),
                 @Index(name = "idx_cc_upload_batch", columnList = "upload_batch_id"),
                 @Index(name = "idx_cc_auth_code", columnList = "authorization_code"),
-                @Index(name = "idx_cc_job_id", columnList = "job_id")
+                @Index(name = "idx_cc_job_id", columnList = "job_id"),
+                @Index(name = "idx_cc_cardholder_number", columnList = "cardholder_number")
         })
 @Getter
 @Setter
@@ -57,7 +48,7 @@ public class CreditCardTransaction {
     private Long id;
 
     // Transaction Identification
-    @Column(name = "transaction_id", nullable = false, length = 100)
+    @Column(name = "transaction_id", nullable = true, length = 100)
     private String transactionId;
 
     @Column(name = "authorization_code", nullable = false, length = 50)
@@ -79,15 +70,18 @@ public class CreditCardTransaction {
     @Column(name = "settlement_date")
     private LocalDate settlementDate;
 
-    // Card Details (Masked for PCI compliance)
+    // Card Details
     @Column(name = "card_type", length = 20)
-    private String cardType; // VISA, MASTERCARD, AMEX, DISCOVER
+    private String cardType; // VISA, MASTERCARD, AMEX, DEBIT (normalized)
 
     @Column(name = "card_last_four", length = 4)
     private String cardLastFour;
 
     @Column(name = "card_brand", length = 30)
     private String cardBrand;
+
+    @Column(name = "cardholder_number", length = 30)
+    private String cardholderNumber; // Masked number (e.g., 000000452005***2498)
 
     // Business Context (Using business identifiers instead of foreign key IDs)
     @Column(name = "cab_number", length = 20)
@@ -136,6 +130,9 @@ public class CreditCardTransaction {
 
     @Column(name = "reference_number", length = 100)
     private String referenceNumber;
+
+    @Column(name = "capture_method", length = 5)
+    private String captureMethod; // Card capture method (O=Online, M=Manual)
 
     @Column(name = "customer_name", length = 100)
     private String customerName;

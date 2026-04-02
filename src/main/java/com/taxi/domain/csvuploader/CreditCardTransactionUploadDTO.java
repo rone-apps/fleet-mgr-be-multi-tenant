@@ -68,6 +68,7 @@ public class CreditCardTransactionUploadDTO {
     private String storeNumber;
     private String clerkId;
     private String currency;
+    private String captureMethod;
     private String notes;
     
     // Metadata

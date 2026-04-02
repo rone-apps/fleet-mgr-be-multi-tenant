@@ -782,8 +782,12 @@ public class FinancialStatementService {
             log.info("Found {} credit card transactions for person {} (period: {} to {})", creditCardTransactions.size(), personId, ccFrom, ccTo);
 
             for (com.taxi.domain.payment.model.CreditCardTransaction transaction : creditCardTransactions) {
-                String cardDesc = (transaction.getCardLastFour() != null ? "Card ending in " + transaction.getCardLastFour() : "Credit Card") +
-                    (transaction.getCardType() != null ? " (" + transaction.getCardType() + ")" : "");
+                String cardDesc = transaction.getCardholderNumber() != null
+                    ? transaction.getCardholderNumber()
+                    : (transaction.getCardLastFour() != null ? "****" + transaction.getCardLastFour() : "Credit Card");
+                if (transaction.getCardType() != null) {
+                    cardDesc += " (" + transaction.getCardType() + ")";
+                }
 
                 report.getRevenues().add(OwnerReportDTO.RevenueLineItem.builder()
                     .categoryName("Credit Card Revenue")

@@ -469,17 +469,31 @@ public class DriverFinancialCalculationService {
             runningTotal = runningTotal.add(totalAmount);
             
             CreditCardRevenueDTO item = CreditCardRevenueDTO.builder()
+                    .transactionId(transaction.getId())
                     .transactionDate(transaction.getTransactionDate())
                     .transactionTime(transaction.getTransactionTime())
+                    .authorizationCode(transaction.getAuthorizationCode())
+                    .terminalId(transaction.getTerminalId())
+                    .merchantId(transaction.getMerchantId())
+                    .batchNumber(transaction.getBatchNumber())
                     .cabNumber(transaction.getCabNumber())
+                    .driverNumber(transaction.getDriverNumber())
                     .cardType(transaction.getCardType())
                     .cardLastFour(transaction.getCardLastFour())
+                    .cardholderNumber(transaction.getCardholderNumber())
+                    .captureMethod(transaction.getCaptureMethod())
                     .amount(amount)
                     .tipAmount(tipAmount)
                     .totalAmount(totalAmount)
                     .processingFee(transaction.getProcessingFee())
+                    .netAmount(transaction.getNetAmount())
                     .isSettled(transaction.getIsSettled())
+                    .isRefunded(transaction.getIsRefunded())
+                    .refundAmount(transaction.getRefundAmount())
+                    .settlementDate(transaction.getSettlementDate())
                     .transactionStatus(transaction.getTransactionStatus().name())
+                    .receiptNumber(transaction.getReceiptNumber())
+                    .notes(transaction.getNotes())
                     .build();
             report.addTransactionItem(item);
         }

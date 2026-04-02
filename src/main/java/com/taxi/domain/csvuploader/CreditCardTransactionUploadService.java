@@ -468,24 +468,79 @@ public class CreditCardTransactionUploadService {
     
     private String buildTransactionKey(CreditCardTransactionUploadDTO dto) {
         return String.format("%s|%s|%s|%s|%s",
+            dto.getMerchantId(),
             dto.getTerminalId(),
             dto.getAuthorizationCode(),
-            dto.getAmount(),
             dto.getTransactionDate(),
             dto.getTransactionTime()
         );
     }
-    
+
     private String buildTransactionKey(CreditCardTransaction t) {
         return String.format("%s|%s|%s|%s|%s",
+            t.getMerchantId(),
             t.getTerminalId(),
             t.getAuthorizationCode(),
-            t.getAmount(),
             t.getTransactionDate(),
             t.getTransactionTime()
         );
     }
     
+    /**
+     * Re-enrich existing transactions that have missing cab numbers or drivers.
+     * Uses current merchant mappings and shift/login data to fill in gaps.
+     */
+    @Transactional
+    public Map<String, Object> reEnrichTransactions(LocalDate startDate, LocalDate endDate) {
+        log.info("Re-enriching credit card transactions from {} to {}", startDate, endDate);
+
+        List<CreditCardTransaction> transactions = transactionRepository.findByTransactionDateBetween(startDate, endDate);
+
+        int cabUpdated = 0;
+        int driverUpdated = 0;
+        int totalChecked = 0;
+
+        for (CreditCardTransaction txn : transactions) {
+            boolean changed = false;
+            totalChecked++;
+
+            // Step 1: Try to fill missing cab number from merchant mapping
+            if ((txn.getCabNumber() == null || txn.getCabNumber().trim().isEmpty())
+                    && txn.getMerchantId() != null && txn.getTransactionDate() != null) {
+                String cabNumber = lookupCabNumber(txn.getMerchantId(), txn.getTransactionDate());
+                if (cabNumber != null) {
+                    txn.setCabNumber(cabNumber);
+                    changed = true;
+                    cabUpdated++;
+                }
+            }
+
+            // Step 2: Try to fill missing driver from shift data
+            if ((txn.getDriverNumber() == null || txn.getDriverNumber().trim().isEmpty())
+                    && txn.getCabNumber() != null && !txn.getCabNumber().trim().isEmpty()
+                    && txn.getTransactionDate() != null && txn.getTransactionTime() != null) {
+                DriverInfo driverInfo = lookupDriver(txn.getCabNumber(), txn.getTransactionDate(), txn.getTransactionTime());
+                if (driverInfo != null) {
+                    txn.setDriverNumber(driverInfo.getDriverNumber());
+                    changed = true;
+                    driverUpdated++;
+                }
+            }
+
+            if (changed) {
+                transactionRepository.save(txn);
+            }
+        }
+
+        log.info("Re-enrich complete: checked={}, cabsUpdated={}, driversUpdated={}", totalChecked, cabUpdated, driverUpdated);
+
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("totalChecked", totalChecked);
+        result.put("cabsUpdated", cabUpdated);
+        result.put("driversUpdated", driverUpdated);
+        return result;
+    }
+
     private void enrichWithCabAndDriver(CreditCardTransactionUploadDTO dto) {
         StringBuilder lookupMsg = new StringBuilder();
 
@@ -658,6 +713,7 @@ public class CreditCardTransactionUploadService {
         if (header.equals("Store Number")) return "storeNumber";
         if (header.equals("Clerk ID")) return "clerkId";
         if (header.equals("Currency")) return "currency";
+        if (header.equals("Capture Method")) return "captureMethod";
         
         // Pattern matching fallback
         if (headerLower.matches(".*merchant.*number.*")) return "merchantId";
@@ -815,7 +871,10 @@ public class CreditCardTransactionUploadService {
             if (mappings.containsKey("currency")) {
                 dto.setCurrency(getValue(row, mappings.get("currency")));
             }
-            
+            if (mappings.containsKey("captureMethod")) {
+                dto.setCaptureMethod(getValue(row, mappings.get("captureMethod")));
+            }
+
             // Build notes
             dto.setNotes(buildNotes(dto));
             
@@ -853,21 +912,13 @@ public class CreditCardTransactionUploadService {
     }
     
     private String buildNotes(CreditCardTransactionUploadDTO dto) {
+        // Most fields now have dedicated columns — only store truly extra info in notes
         List<String> noteParts = new ArrayList<>();
-        
-        if (dto.getPotCode() != null && !dto.getPotCode().isEmpty()) {
-            noteParts.add("POT: " + dto.getPotCode());
-        }
+
         if (dto.getStoreNumber() != null && !dto.getStoreNumber().isEmpty()) {
             noteParts.add("Store: " + dto.getStoreNumber());
         }
-        if (dto.getClerkId() != null && !dto.getClerkId().isEmpty()) {
-            noteParts.add("Clerk: " + dto.getClerkId());
-        }
-        if (dto.getCurrency() != null && !dto.getCurrency().isEmpty()) {
-            noteParts.add("Currency: " + dto.getCurrency());
-        }
-        
+
         return noteParts.isEmpty() ? null : String.join(" | ", noteParts);
     }
     
@@ -940,10 +991,10 @@ public class CreditCardTransactionUploadService {
     }
     
     private boolean isDuplicate(CreditCardTransactionUploadDTO dto) {
-        return transactionRepository.existsByTerminalIdAndAuthorizationCodeAndAmountAndTransactionDateAndTransactionTime(
+        return transactionRepository.existsByMerchantIdAndTerminalIdAndAuthorizationCodeAndTransactionDateAndTransactionTime(
+            dto.getMerchantId(),
             dto.getTerminalId(),
             dto.getAuthorizationCode(),
-            dto.getAmount(),
             dto.getTransactionDate(),
             dto.getTransactionTime()
         );
@@ -982,8 +1033,10 @@ public class CreditCardTransactionUploadService {
         entity.setReferenceNumber(dto.getReferenceNumber());
         entity.setCustomerName(dto.getCustomerName());
         entity.setReceiptNumber(dto.getReceiptNumber());
+        entity.setCardholderNumber(dto.getCardholderNumber());
+        entity.setCaptureMethod(dto.getCaptureMethod());
         entity.setNotes(dto.getNotes());
-        
+
         return entity;
     }
 

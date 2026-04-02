@@ -222,14 +222,14 @@ public interface CreditCardTransactionRepository extends JpaRepository<CreditCar
             @Param("endDate") LocalDate endDate
     );
 
-       /**
-     * Check if a transaction already exists (duplicate detection)
-     * Uses the unique constraint: terminal_id, authorization_code, amount, transaction_date, transaction_time
+    /**
+     * Check if a transaction already exists (duplicate detection).
+     * Matches the natural unique constraint: merchant_id + terminal_id + authorization_code + transaction_date + transaction_time
      */
-    boolean existsByTerminalIdAndAuthorizationCodeAndAmountAndTransactionDateAndTransactionTime(
+    boolean existsByMerchantIdAndTerminalIdAndAuthorizationCodeAndTransactionDateAndTransactionTime(
+        String merchantId,
         String terminalId,
         String authorizationCode,
-        BigDecimal amount,
         LocalDate transactionDate,
         LocalTime transactionTime
     );
