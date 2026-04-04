@@ -272,50 +272,75 @@ public class YearEndReportService {
         List<Map<String, Object>> expenses = new ArrayList<>();
         BigDecimal totalExpense = BigDecimal.ZERO;
 
-        if (visibleExpKeys.contains("LEASE_EXPENSE") && ds.getLeaseExpense() != null && ds.getLeaseExpense().compareTo(BigDecimal.ZERO) != 0) {
-            expenses.add(lineItem("Lease Expense", ds.getLeaseExpense()));
-            totalExpense = totalExpense.add(ds.getLeaseExpense());
-        }
-        if (visibleExpKeys.contains("FIXED_EXPENSE") && ds.getFixedExpense() != null && ds.getFixedExpense().compareTo(BigDecimal.ZERO) != 0) {
-            expenses.add(lineItem("Fixed Expenses", ds.getFixedExpense()));
-            totalExpense = totalExpense.add(ds.getFixedExpense());
-        }
-        if (visibleExpKeys.contains("VARIABLE_EXPENSE") && ds.getVariableExpense() != null && ds.getVariableExpense().compareTo(BigDecimal.ZERO) != 0) {
-            expenses.add(lineItem("Variable / One-Time Expenses", ds.getVariableExpense()));
-            totalExpense = totalExpense.add(ds.getVariableExpense());
-        }
-        if (visibleExpKeys.contains("INSURANCE_MILEAGE") && ds.getInsuranceMileageExpense() != null && ds.getInsuranceMileageExpense().compareTo(BigDecimal.ZERO) != 0) {
-            expenses.add(lineItem("Insurance & Mileage", ds.getInsuranceMileageExpense()));
-            totalExpense = totalExpense.add(ds.getInsuranceMileageExpense());
-        }
-        if (visibleExpKeys.contains("AIRPORT_TRIPS") && ds.getAirportTripCost() != null && ds.getAirportTripCost().compareTo(BigDecimal.ZERO) != 0) {
-            String label = "Airport Trip Charges";
-            if (ds.getAirportTripCount() != null && ds.getAirportTripCount() > 0) {
-                label += " (" + ds.getAirportTripCount() + " trips)";
-            }
-            expenses.add(lineItem(label, ds.getAirportTripCost()));
-            totalExpense = totalExpense.add(ds.getAirportTripCost());
-        }
-
-        // Itemized expense breakdown items
-        if (ds.getExpenseBreakdown() != null) {
+        // Show all individual expense items from the itemized breakdown
+        if (ds.getExpenseBreakdown() != null && !ds.getExpenseBreakdown().isEmpty()) {
+            // Separate tax items from other expenses
+            List<DriverSummaryDTO.ItemizedBreakdown> regularItems = new ArrayList<>();
+            List<DriverSummaryDTO.ItemizedBreakdown> taxItems = new ArrayList<>();
             for (DriverSummaryDTO.ItemizedBreakdown item : ds.getExpenseBreakdown()) {
-                if (visibleExpKeys.contains(item.getKey()) && item.getAmount() != null && item.getAmount().compareTo(BigDecimal.ZERO) != 0) {
-                    expenses.add(lineItem(item.getDisplayName(), item.getAmount()));
+                if (item.getKey() != null && item.getKey().startsWith("TAX:")) {
+                    taxItems.add(item);
+                } else {
+                    regularItems.add(item);
                 }
             }
-        }
 
-        // Tax
-        if (showTax && ds.getTaxExpense() != null && ds.getTaxExpense().compareTo(BigDecimal.ZERO) != 0) {
-            expenses.add(lineItem("Taxes (HST/GST)", ds.getTaxExpense()));
-            totalExpense = totalExpense.add(ds.getTaxExpense());
-        }
+            // Add regular expense items
+            for (DriverSummaryDTO.ItemizedBreakdown item : regularItems) {
+                if (item.getAmount() != null && item.getAmount().compareTo(BigDecimal.ZERO) != 0) {
+                    expenses.add(lineItem(item.getDisplayName(), item.getAmount()));
+                    totalExpense = totalExpense.add(item.getAmount());
+                }
+            }
 
-        // Commission
-        if (showCommission && ds.getCommissionExpense() != null && ds.getCommissionExpense().compareTo(BigDecimal.ZERO) != 0) {
-            expenses.add(lineItem("Commissions", ds.getCommissionExpense()));
-            totalExpense = totalExpense.add(ds.getCommissionExpense());
+            // Add tax items as indented sub-items with a total
+            if (!taxItems.isEmpty()) {
+                BigDecimal totalTax = BigDecimal.ZERO;
+                for (DriverSummaryDTO.ItemizedBreakdown item : taxItems) {
+                    if (item.getAmount() != null && item.getAmount().compareTo(BigDecimal.ZERO) != 0) {
+                        expenses.add(subLineItem(item.getDisplayName(), item.getAmount()));
+                        totalTax = totalTax.add(item.getAmount());
+                    }
+                }
+                if (totalTax.compareTo(BigDecimal.ZERO) != 0) {
+                    expenses.add(lineItem("Total GST/HST", totalTax));
+                    totalExpense = totalExpense.add(totalTax);
+                }
+            }
+        } else {
+            // Fallback to grouped totals if no breakdown available
+            if (visibleExpKeys.contains("LEASE_EXPENSE") && ds.getLeaseExpense() != null && ds.getLeaseExpense().compareTo(BigDecimal.ZERO) != 0) {
+                expenses.add(lineItem("Lease Expense", ds.getLeaseExpense()));
+                totalExpense = totalExpense.add(ds.getLeaseExpense());
+            }
+            if (visibleExpKeys.contains("FIXED_EXPENSE") && ds.getFixedExpense() != null && ds.getFixedExpense().compareTo(BigDecimal.ZERO) != 0) {
+                expenses.add(lineItem("Fixed Expenses", ds.getFixedExpense()));
+                totalExpense = totalExpense.add(ds.getFixedExpense());
+            }
+            if (visibleExpKeys.contains("VARIABLE_EXPENSE") && ds.getVariableExpense() != null && ds.getVariableExpense().compareTo(BigDecimal.ZERO) != 0) {
+                expenses.add(lineItem("Variable / One-Time Expenses", ds.getVariableExpense()));
+                totalExpense = totalExpense.add(ds.getVariableExpense());
+            }
+            if (visibleExpKeys.contains("INSURANCE_MILEAGE") && ds.getInsuranceMileageExpense() != null && ds.getInsuranceMileageExpense().compareTo(BigDecimal.ZERO) != 0) {
+                expenses.add(lineItem("Insurance & Mileage", ds.getInsuranceMileageExpense()));
+                totalExpense = totalExpense.add(ds.getInsuranceMileageExpense());
+            }
+            if (visibleExpKeys.contains("AIRPORT_TRIPS") && ds.getAirportTripCost() != null && ds.getAirportTripCost().compareTo(BigDecimal.ZERO) != 0) {
+                String label = "Airport Trip Charges";
+                if (ds.getAirportTripCount() != null && ds.getAirportTripCount() > 0) {
+                    label += " (" + ds.getAirportTripCount() + " trips)";
+                }
+                expenses.add(lineItem(label, ds.getAirportTripCost()));
+                totalExpense = totalExpense.add(ds.getAirportTripCost());
+            }
+            if (showTax && ds.getTaxExpense() != null && ds.getTaxExpense().compareTo(BigDecimal.ZERO) != 0) {
+                expenses.add(lineItem("Taxes (HST/GST)", ds.getTaxExpense()));
+                totalExpense = totalExpense.add(ds.getTaxExpense());
+            }
+            if (showCommission && ds.getCommissionExpense() != null && ds.getCommissionExpense().compareTo(BigDecimal.ZERO) != 0) {
+                expenses.add(lineItem("Commissions", ds.getCommissionExpense()));
+                totalExpense = totalExpense.add(ds.getCommissionExpense());
+            }
         }
 
         report.put("expenses", expenses);
@@ -337,6 +362,14 @@ public class YearEndReportService {
         Map<String, Object> item = new LinkedHashMap<>();
         item.put("label", label);
         item.put("amount", amount != null ? amount : BigDecimal.ZERO);
+        return item;
+    }
+
+    private Map<String, Object> subLineItem(String label, BigDecimal amount) {
+        Map<String, Object> item = new LinkedHashMap<>();
+        item.put("label", label);
+        item.put("amount", amount != null ? amount : BigDecimal.ZERO);
+        item.put("indent", true);
         return item;
     }
 
