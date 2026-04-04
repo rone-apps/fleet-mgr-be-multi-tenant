@@ -194,7 +194,7 @@ public class ReportPdfService {
         cell.addElement(title);
 
         Font companyFont = new Font(Font.FontFamily.HELVETICA, 11, Font.NORMAL, new BaseColor(189, 195, 199));
-        Paragraph company = new Paragraph("Maclures Cabs", companyFont);
+        Paragraph company = new Paragraph("Smart Fleets", companyFont);
         company.setAlignment(Element.ALIGN_CENTER);
         cell.addElement(company);
 
@@ -1032,7 +1032,7 @@ public class ReportPdfService {
         document.add(new Paragraph(" "));
 
         Font footerFont = new Font(Font.FontFamily.HELVETICA, 8, Font.NORMAL, new BaseColor(120, 120, 120));
-        Paragraph footer = new Paragraph("This is an automated financial statement from Maclures Cabs. For questions, please contact the office.", footerFont);
+        Paragraph footer = new Paragraph("This is an automated financial statement from Smart Fleets. For questions, please contact the office.", footerFont);
         footer.setAlignment(Element.ALIGN_CENTER);
         document.add(footer);
 

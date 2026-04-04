@@ -147,7 +147,7 @@ public class YearEndReportPdfService {
         }
 
         // Footer
-        Paragraph footer = new Paragraph("Generated on " + LocalDate.now().format(DATE_FMT) + "  |  FareFlow", footerFont);
+        Paragraph footer = new Paragraph("Generated on " + LocalDate.now().format(DATE_FMT) + "  |  Smart Fleets", footerFont);
         footer.setAlignment(Element.ALIGN_CENTER);
         footer.setSpacingBefore(15);
         document.add(footer);

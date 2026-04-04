@@ -15,9 +15,9 @@ services:
       SPRING_JPA_HIBERNATE_DDL_AUTO: validate
 
       # ==================== Email Configuration (Gmail SMTP) ====================
-      SPRING_MAIL_USERNAME: pooni.harjot@gmail.com
-      SPRING_MAIL_PASSWORD: "zkkt gwot qvyo hxjm"
-      SPRING_MAIL_SENDER_NAME: "FareFlow Systems (TaxiMgr.com)"
+      SPRING_MAIL_USERNAME: info@smartfleets.ai
+      SPRING_MAIL_PASSWORD: "tdpa viqn wrpe zrvg"
+      SPRING_MAIL_SENDER_NAME: "Smart Fleets (SmartFleets.ai)"
 
       # ==================== JWT Configuration ====================
       JWT_SECRET: 5367566B59703373367639792F423F4528482B4D6251655468576D5A71347437772A462D4A614E645267556A586E3272357538782F413F4428472B4B6250655368

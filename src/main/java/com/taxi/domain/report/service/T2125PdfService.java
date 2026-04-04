@@ -234,7 +234,7 @@ public class T2125PdfService {
 
         // === FOOTER / DISCLAIMER ===
         Paragraph disclaimer = new Paragraph(
-                "This is a tax preparation worksheet generated from FareFlow fleet management data. " +
+                "This is a tax preparation worksheet generated from Smart Fleets fleet management data. " +
                 "It is NOT an official CRA form. Please review all amounts with a qualified tax professional " +
                 "before filing. Some line items may need to be reclassified based on your specific tax situation. " +
                 "Generated on " + LocalDate.now().format(DATE_FMT) + ".",

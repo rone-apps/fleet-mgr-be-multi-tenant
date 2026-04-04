@@ -101,6 +101,7 @@ public class TenantFilter extends OncePerRequestFilter {
         // NOTE: /api/auth/* should NOT be bypassed - users need X-Tenant-ID to login
         return uri.startsWith("/actuator") ||
                uri.equals("/api/test") ||
-               uri.startsWith("/api/test/");
+               uri.startsWith("/api/test/") ||
+               uri.equals("/api/auth/contact");
     }
 }

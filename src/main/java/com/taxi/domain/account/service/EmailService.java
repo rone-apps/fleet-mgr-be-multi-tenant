@@ -37,7 +37,7 @@ public class EmailService {
      * Send invoice via email to customer with PDF attachment (backward compatibility)
      */
     public void sendInvoiceEmail(Invoice invoice, byte[] pdfContent, String recipientEmail) {
-        sendInvoiceEmail(invoice, pdfContent, recipientEmail, "Maclures Cabs");
+        sendInvoiceEmail(invoice, pdfContent, recipientEmail, "Smart Fleets");
     }
 
     /**
@@ -65,7 +65,7 @@ public class EmailService {
                 helper.setFrom(emailFrom);
             }
             helper.setTo(recipientEmail);
-            helper.setSubject("Invoice " + invoice.getInvoiceNumber() + " from FareFlow");
+            helper.setSubject("Invoice " + invoice.getInvoiceNumber() + " from Smart Fleets");
 
             // Format amounts
             DecimalFormat currencyFormat = new DecimalFormat("$#,##0.00");
@@ -112,8 +112,8 @@ public class EmailService {
 
         // Header
         html.append("<div style=\"background-color: #3e5244; color: white; padding: 20px; text-align: center; border-radius: 4px;\">");
-        html.append("<h1 style=\"margin: 0; font-size: 24px;\">🚕 FareFlow Invoice</h1>");
-        html.append("<p style=\"margin: 5px 0 0 0; font-size: 14px;\">").append(companyName != null ? companyName : "Maclures Cabs").append("</p>");
+        html.append("<h1 style=\"margin: 0; font-size: 24px;\">Smart Fleets Invoice</h1>");
+        html.append("<p style=\"margin: 5px 0 0 0; font-size: 14px;\">").append(companyName != null ? companyName : "Smart Fleets").append("</p>");
         html.append("</div>");
 
         // Customer and Invoice Details
@@ -212,8 +212,8 @@ public class EmailService {
             SimpleMailMessage message = new SimpleMailMessage();
             message.setFrom(emailFrom);
             message.setTo(recipientEmail);
-            message.setSubject("Test Email from FareFlow");
-            message.setText("This is a test email from FareFlow Invoice System.\n\n" +
+            message.setSubject("Test Email from Smart Fleets");
+            message.setText("This is a test email from Smart Fleets Invoice System.\n\n" +
                     "If you received this email, the email configuration is working correctly.");
 
             mailSender.send(message);
@@ -281,7 +281,7 @@ public class EmailService {
         // Header with Company Branding
         html.append("<div style=\"background: linear-gradient(135deg, #2c3e50 0%, #34495e 100%); color: white; padding: 30px; text-align: center; border-radius: 8px; margin-bottom: 30px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);\">");
         html.append("<h1 style=\"margin: 0; font-size: 28px; font-weight: 600;\">📊 Financial Statement</h1>");
-        html.append("<p style=\"margin: 8px 0 0 0; font-size: 16px; opacity: 0.9;\">Maclures Cabs</p>");
+        html.append("<p style=\"margin: 8px 0 0 0; font-size: 16px; opacity: 0.9;\">Smart Fleets</p>");
         html.append("</div>");
 
         // Greeting Section
@@ -313,7 +313,7 @@ public class EmailService {
 
         // Footer
         html.append("<div style=\"margin-top: 30px; padding-top: 20px; border-top: 1px solid #ddd; text-align: center; font-size: 11px; color: #7f8c8d;\">");
-        html.append("<p style=\"margin: 5px 0;\">This is an automated message from Maclures Cabs Management System</p>");
+        html.append("<p style=\"margin: 5px 0;\">This is an automated message from Smart Fleets</p>");
         html.append("<p style=\"margin: 5px 0;\">Please do not reply to this email. For inquiries, contact your manager directly.</p>");
         html.append("<p style=\"margin: 5px 0; opacity: 0.7;\">Generated on ").append(java.time.LocalDateTime.now().format(java.time.format.DateTimeFormatter.ofPattern("MMM dd, yyyy HH:mm a"))).append("</p>");
         html.append("</div>");

@@ -35,10 +35,10 @@ public class InvoicePDFService {
     }
 
     /**
-     * Generate PDF invoice as byte array (backward compatibility, defaults to Maclures Cabs)
+     * Generate PDF invoice as byte array (backward compatibility, defaults to Smart Fleets)
      */
     public byte[] generateInvoicePDF(Invoice invoice) {
-        return generateInvoicePDFInternal(invoice, "Maclures Cabs");
+        return generateInvoicePDFInternal(invoice, "Smart Fleets");
     }
 
     /**
@@ -93,8 +93,8 @@ public class InvoicePDFService {
         companyCell.setPadding(15);
         companyCell.setBorder(0);
         Paragraph companyPara = new Paragraph();
-        companyPara.add(new Paragraph("🚕 FareFlow", TITLE_FONT));
-        companyPara.add(new Paragraph(companyName != null ? companyName : "Maclures Cabs", new Font(Font.FontFamily.HELVETICA, 12, Font.NORMAL, BaseColor.WHITE)));
+        companyPara.add(new Paragraph("Smart Fleets", TITLE_FONT));
+        companyPara.add(new Paragraph(companyName != null ? companyName : "Smart Fleets", new Font(Font.FontFamily.HELVETICA, 12, Font.NORMAL, BaseColor.WHITE)));
         companyCell.addElement(companyPara);
         headerTable.addCell(companyCell);
 

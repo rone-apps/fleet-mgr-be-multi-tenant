@@ -258,7 +258,7 @@ public class GstReturnPdfService {
 
         // === DISCLAIMER ===
         Paragraph disclaimer = new Paragraph(
-                "This is a GST/HST return preparation worksheet generated from FareFlow fleet management data. " +
+                "This is a GST/HST return preparation worksheet generated from Smart Fleets fleet management data. " +
                 "It is NOT an official CRA form. GST amounts are estimated at 5% (British Columbia). PST (7%) is filed separately with BC. " +
                 "Actual GST collected and ITCs may differ — verify all amounts with receipts and a qualified tax professional before filing. " +
                 "Insurance is shown as GST-exempt. " +
