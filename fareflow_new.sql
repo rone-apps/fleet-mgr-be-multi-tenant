@@ -160,6 +160,60 @@ CREATE TABLE `tenant_config` (
   UNIQUE KEY `UK_tenant_id` (`tenant_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE TABLE `moneris_config` (
+  `id` bigint NOT NULL AUTO_INCREMENT,
+  `cab_number` varchar(20) NOT NULL,
+  `shift` varchar(10) NOT NULL DEFAULT 'BOTH',
+  `merchant_number` varchar(100) NOT NULL,
+  `moneris_store_id` varchar(50) NOT NULL,
+  `moneris_api_token` varchar(100) NOT NULL,
+  `moneris_environment` varchar(10) NOT NULL DEFAULT 'PROD',
+  `created_at` datetime(6) DEFAULT NULL,
+  `updated_at` datetime(6) DEFAULT NULL,
+  `created_by` varchar(100) DEFAULT NULL,
+  `updated_by` varchar(100) DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_moneris_cab_shift_merchant` (`cab_number`, `shift`, `merchant_number`),
+  INDEX `idx_moneris_cab` (`cab_number`),
+  INDEX `idx_moneris_store` (`moneris_store_id`),
+  INDEX `idx_moneris_merchant` (`merchant_number`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE `year_end_report_config` (
+  `id` bigint NOT NULL AUTO_INCREMENT,
+  `section` varchar(20) NOT NULL,
+  `item_key` varchar(100) NOT NULL,
+  `item_label` varchar(200) NOT NULL,
+  `is_visible` tinyint(1) NOT NULL DEFAULT 1,
+  `display_order` int NOT NULL DEFAULT 0,
+  `created_at` datetime(6) DEFAULT NULL,
+  `updated_at` datetime(6) DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_yer_section_key` (`section`, `item_key`),
+  INDEX `idx_yer_section` (`section`),
+  INDEX `idx_yer_visible` (`is_visible`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Seed year-end report config defaults
+INSERT INTO `year_end_report_config` (`section`, `item_key`, `item_label`, `is_visible`, `display_order`, `created_at`) VALUES
+('REVENUE', 'LEASE_REVENUE',        'Lease Revenue',                1, 10, NOW()),
+('REVENUE', 'CREDIT_CARD_REVENUE',  'Credit Card Revenue',          1, 20, NOW()),
+('REVENUE', 'CHARGES_REVENUE',      'Account Charges Revenue',      1, 30, NOW()),
+('REVENUE', 'OTHER_REVENUE',        'Other Revenue',                1, 40, NOW()),
+('EXPENSE', 'LEASE_EXPENSE',        'Lease Expense',                1, 10, NOW()),
+('EXPENSE', 'FIXED_EXPENSE',        'Fixed Expenses',               1, 20, NOW()),
+('EXPENSE', 'VARIABLE_EXPENSE',     'Variable / One-Time Expenses', 1, 30, NOW()),
+('EXPENSE', 'INSURANCE_MILEAGE',    'Insurance & Mileage',          1, 40, NOW()),
+('EXPENSE', 'AIRPORT_TRIPS',        'Airport Trip Charges',         1, 50, NOW()),
+('TAX',        'TAX_EXPENSE',        'Taxes (HST/GST)',             1, 10, NOW()),
+('COMMISSION', 'COMMISSION_EXPENSE', 'Commissions',                 1, 10, NOW()),
+('SUMMARY', 'TOTAL_REVENUE',   'Total Revenue',        1, 10, NOW()),
+('SUMMARY', 'TOTAL_EXPENSE',   'Total Expenses',       1, 20, NOW()),
+('SUMMARY', 'NET_INCOME',      'Net Income',           1, 30, NOW()),
+('SUMMARY', 'PREVIOUS_BALANCE','Previous Balance',     1, 40, NOW()),
+('SUMMARY', 'PAYMENTS_MADE',   'Payments Made',        1, 50, NOW()),
+('SUMMARY', 'OUTSTANDING',     'Outstanding Balance',  1, 60, NOW());
+
 -- ============================================================================
 -- SECTION 2: Tables with single-level FK dependencies
 -- ============================================================================

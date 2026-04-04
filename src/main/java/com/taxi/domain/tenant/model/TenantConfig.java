@@ -56,4 +56,5 @@ public class TenantConfig {
         return taxicallerApiKey != null && !taxicallerApiKey.isBlank()
                 && taxicallerCompanyId != null;
     }
+
 }

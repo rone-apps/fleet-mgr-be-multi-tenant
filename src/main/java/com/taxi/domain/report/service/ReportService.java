@@ -203,6 +203,37 @@ public class ReportService {
 
 
     /**
+     * Generate financial summary for a single driver by driver number.
+     * Avoids generating the full all-drivers report when only one is needed.
+     */
+    @Transactional(readOnly = true)
+    public DriverSummaryDTO generateSingleDriverSummary(String driverNumber, LocalDate startDate, LocalDate endDate) {
+        log.info("Generating single driver summary for {} from {} to {}", driverNumber, startDate, endDate);
+        long startTime = System.currentTimeMillis();
+
+        Driver driver = driverRepository.findByDriverNumber(driverNumber)
+                .orElse(null);
+        if (driver == null) {
+            log.warn("Driver not found: {}", driverNumber);
+            return null;
+        }
+
+        LocalDateTime startDateTime = startDate.atStartOfDay();
+        LocalDateTime endDateTime = endDate.atTime(23, 59, 59);
+        List<DriverShift> driverShifts = driverShiftRepository
+                .findByDriverNumberAndLogonTimeBetween(driverNumber, startDateTime, endDateTime);
+
+        java.util.Map<String, List<DriverShift>> shiftsByDriver = new java.util.HashMap<>();
+        shiftsByDriver.put(driverNumber, driverShifts);
+
+        DriverSummaryDTO summary = calculateDriverSummaryOptimized(driver, startDate, endDate, shiftsByDriver, false);
+
+        long duration = System.currentTimeMillis() - startTime;
+        log.info("Generated single driver summary for {} in {} ms", driverNumber, duration);
+        return summary;
+    }
+
+    /**
      * ✅ SINGLE SOURCE OF TRUTH
      * Calculate financial summary for a single driver (SUMMARY REPORT)
      * NOW DELEGATES TO FinancialStatementService.generateOwnerReport()
