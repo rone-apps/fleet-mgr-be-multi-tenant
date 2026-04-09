@@ -8,6 +8,7 @@ import com.taxi.domain.financial.Merchant2Cab;
 import com.taxi.domain.financial.Merchant2CabRepository;
 import com.taxi.domain.payment.model.CreditCardTransaction;
 import com.taxi.domain.payment.repository.CreditCardTransactionRepository;
+import com.taxi.domain.payment.service.SpareMachineService;
 import com.taxi.domain.shift.model.DriverShift;
 import com.taxi.domain.shift.repository.DriverShiftRepository;
 import lombok.Data;
@@ -38,6 +39,7 @@ public class CreditCardTransactionUploadService {
     private final DriverRepository driverRepository;
     private final Merchant2CabRepository merchant2CabRepository;
     private final DriverShiftRepository driverShiftRepository;
+    private final SpareMachineService spareMachineService;
     
     // UPDATED: Added formats for the actual CSV
     private static final List<DateTimeFormatter> DATE_FORMATTERS = Arrays.asList(
@@ -507,7 +509,7 @@ public class CreditCardTransactionUploadService {
             // Step 1: Try to fill missing cab number from merchant mapping
             if ((txn.getCabNumber() == null || txn.getCabNumber().trim().isEmpty())
                     && txn.getMerchantId() != null && txn.getTransactionDate() != null) {
-                String cabNumber = lookupCabNumber(txn.getMerchantId(), txn.getTransactionDate());
+                String cabNumber = lookupCabNumber(txn.getMerchantId(), txn.getTransactionDate(), txn.getTransactionTime());
                 if (cabNumber != null) {
                     txn.setCabNumber(cabNumber);
                     changed = true;
@@ -549,7 +551,7 @@ public class CreditCardTransactionUploadService {
             dto.setCabLookupSuccess(true);
             lookupMsg.append("Cab: ").append(dto.getCabNumber()).append(" (from input file). ");
         } else if (dto.getMerchantId() != null && dto.getTransactionDate() != null) {
-            String cabNumber = lookupCabNumber(dto.getMerchantId(), dto.getTransactionDate());
+            String cabNumber = lookupCabNumber(dto.getMerchantId(), dto.getTransactionDate(), dto.getTransactionTime());
 
             if (cabNumber != null) {
                 dto.setCabNumber(cabNumber);
@@ -589,18 +591,27 @@ public class CreditCardTransactionUploadService {
         dto.setLookupMessage(lookupMsg.toString().trim());
     }
     
-    private String lookupCabNumber(String merchantId, LocalDate transactionDate) {
+    private String lookupCabNumber(String merchantId, LocalDate transactionDate, LocalTime transactionTime) {
         try {
+            // First try regular merchant2cab lookup (for standard cabs)
             List<Merchant2Cab> mappings = merchant2CabRepository
                 .findByMerchantNumberAndActiveDateRange(merchantId, transactionDate);
-            
+
             if (!mappings.isEmpty()) {
                 return mappings.get(0).getCabNumber();
+            }
+
+            // If not found in merchant2cab, check if this merchant belongs to a spare machine
+            LocalDateTime transactionDateTime = LocalDateTime.of(transactionDate, transactionTime != null ? transactionTime : LocalTime.MIDNIGHT);
+            Integer resolvedCabId = spareMachineService.resolveTransactionCab(merchantId, transactionDateTime);
+
+            if (resolvedCabId != null) {
+                return String.valueOf(resolvedCabId);
             }
         } catch (Exception e) {
             log.warn("Error looking up cab for merchant {}: {}", merchantId, e.getMessage());
         }
-        
+
         return null;
     }
     
