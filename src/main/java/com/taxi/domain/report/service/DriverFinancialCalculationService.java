@@ -1026,61 +1026,14 @@ public class DriverFinancialCalculationService {
 
         for (com.taxi.domain.airport.model.AirportTripDriver atd : assignments) {
             totalTrips += atd.getTripCount();
-            cabsHandled.add(atd.getCabNumber());
         }
 
-        if (!cabsHandled.isEmpty()) {
-            log.debug("Airport trips for driver {} ({} to {}): {} from airport_trip_driver for cabs {}",
-                    driverNumber, startDate, endDate, totalTrips, cabsHandled);
-        }
-
-        // FALLBACK: For owned cabs NOT handled by airport_trip_driver, use airport_trips directly
-        int fallbackTrips = countAirportTripsFallback(driverNumber, startDate, endDate, cabsHandled);
-        totalTrips += fallbackTrips;
-
-        if (fallbackTrips > 0) {
-            log.debug("Airport trips fallback for driver {} ({} to {}): {} additional trips from airport_trips",
-                    driverNumber, startDate, endDate, fallbackTrips);
+        if (totalTrips > 0) {
+            log.debug("Airport trips for driver {} ({} to {}): {} from airport_trip_driver assignments only",
+                    driverNumber, startDate, endDate, totalTrips);
         }
 
         return totalTrips;
-    }
-
-    /**
-     * Fallback: count airport trips from airport_trips table directly for driver's owned cabs
-     * that are NOT already handled by airport_trip_driver.
-     */
-    private int countAirportTripsFallback(String driverNumber, LocalDate startDate, LocalDate endDate,
-                                           java.util.Set<String> cabsAlreadyHandled) {
-        try {
-            Optional<Driver> driverOpt = driverRepository.findByDriverNumber(driverNumber);
-            if (driverOpt.isEmpty()) return 0;
-
-            List<ShiftOwnership> ownerships = shiftOwnershipRepository.findOwnershipsInRange(
-                    driverOpt.get().getId(), startDate, endDate);
-            if (ownerships.isEmpty()) return 0;
-
-            java.util.Set<String> processedCabs = new java.util.HashSet<>();
-            int total = 0;
-
-            for (ShiftOwnership ownership : ownerships) {
-                String cabNumber = ownership.getShift().getCab().getCabNumber();
-                if (cabNumber == null || !processedCabs.add(cabNumber)) continue;
-                if (cabsAlreadyHandled.contains(cabNumber)) continue;
-
-                List<AirportTrip> trips = airportTripRepository.findByCabNumberAndTripDateBetweenOrderByTripDateDesc(
-                        cabNumber, startDate, endDate);
-                for (AirportTrip trip : trips) {
-                    if (trip.getGrandTotal() != null) {
-                        total += trip.getGrandTotal();
-                    }
-                }
-            }
-            return total;
-        } catch (Exception e) {
-            log.warn("Error in airport trips fallback for driver {}: {}", driverNumber, e.getMessage());
-            return 0;
-        }
     }
 
     /**
@@ -1119,67 +1072,19 @@ public class DriverFinancialCalculationService {
             }
         }
 
-        // FALLBACK: For owned cabs NOT handled by airport_trip_driver, use airport_trips directly
-        BigDecimal fallbackExpense = calculateAirportExpenseFallback(driverNumber, startDate, endDate, cabsHandled);
-        totalExpense = totalExpense.add(fallbackExpense);
+        // NO FALLBACK: Only use pre-computed airport_trip_driver assignments
+        // Trips MUST be explicitly assigned to the driver in airport_trip_driver table.
+        // This ensures trips are attributed to the driver who actually drove them,
+        // not to a driver who merely owns the cab. Ownership-based fallback was
+        // incorrectly attributing unassigned trips to cab owners.
 
         if (totalExpense.compareTo(BigDecimal.ZERO) > 0) {
-            log.debug("Airport expense for driver {} ({} to {}): ${} (primary) + ${} (fallback)",
-                    driverNumber, startDate, endDate,
-                    totalExpense.subtract(fallbackExpense), fallbackExpense);
+            log.debug("Airport expense for driver {} ({} to {}): ${} (from airport_trip_driver assignments only)",
+                    driverNumber, startDate, endDate, totalExpense);
         }
         return totalExpense;
     }
 
-    /**
-     * Fallback: calculate airport expense from airport_trips table directly for driver's owned cabs
-     * that are NOT already handled by airport_trip_driver.
-     */
-    private BigDecimal calculateAirportExpenseFallback(String driverNumber, LocalDate startDate, LocalDate endDate,
-                                                        java.util.Set<String> cabsAlreadyHandled) {
-        try {
-            Optional<Driver> driverOpt = driverRepository.findByDriverNumber(driverNumber);
-            if (driverOpt.isEmpty()) return BigDecimal.ZERO;
-
-            List<ShiftOwnership> ownerships = shiftOwnershipRepository.findOwnershipsInRange(
-                    driverOpt.get().getId(), startDate, endDate);
-            if (ownerships.isEmpty()) return BigDecimal.ZERO;
-
-            java.util.Set<String> processedCabs = new java.util.HashSet<>();
-            BigDecimal totalExpense = BigDecimal.ZERO;
-
-            for (ShiftOwnership ownership : ownerships) {
-                String cabNumber = ownership.getShift().getCab().getCabNumber();
-                if (cabNumber == null || !processedCabs.add(cabNumber)) continue;
-                if (cabsAlreadyHandled.contains(cabNumber)) continue;
-
-                List<AirportTrip> trips = airportTripRepository.findByCabNumberAndTripDateBetweenOrderByTripDateDesc(
-                        cabNumber, startDate, endDate);
-                if (trips.isEmpty()) continue;
-
-                Long attributeTypeId = resolveAirportAttributeTypeId(cabNumber, startDate);
-                ItemRate rate = airportChargeService.getAirportTripRateForAttribute(attributeTypeId, startDate);
-
-                if (rate == null) {
-                    log.warn("No AIRPORT_TRIP rate found for cab {} on {} (fallback)", cabNumber, startDate);
-                    continue;
-                }
-
-                BigDecimal ratePerTrip = rate.getRate();
-                for (AirportTrip trip : trips) {
-                    int dayTrips = trip.getGrandTotal() != null ? trip.getGrandTotal() : 0;
-                    if (dayTrips == 0) continue;
-                    totalExpense = totalExpense.add(ratePerTrip.multiply(BigDecimal.valueOf(dayTrips)));
-                }
-
-                log.info("Airport expense (fallback): Cab {} for driver {} using airport_trips directly", cabNumber, driverNumber);
-            }
-            return totalExpense;
-        } catch (Exception e) {
-            log.warn("Error in airport expense fallback for driver {}: {}", driverNumber, e.getMessage());
-            return BigDecimal.ZERO;
-        }
-    }
 
     /**
      * Wrapper for countTotalAirportTrips for clarity

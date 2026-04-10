@@ -617,8 +617,8 @@ public class FinancialStatementService {
         }
 
         // 3.7. Add airport trip expenses
-        // Primary: use airport_trip_driver table (pre-computed driver assignments from upload)
-        // Fallback: if no driver assignments exist, use airport_trips table directly for owned cabs
+        // Use ONLY airport_trip_driver table (pre-computed driver assignments from upload)
+        // Trips MUST be explicitly assigned to the driver. No fallback to ownership-based attribution.
         // Per-trip rate differs by attribute: AIRPORT_PLATE=$6.50, TRANSPONDER=$7.00
         try {
             Set<String> cabsHandledByDriverAssignments = new HashSet<>();
@@ -680,55 +680,11 @@ public class FinancialStatementService {
                 }
             }
 
-            // FALLBACK: for owned cabs that have NO airport_trip_driver data, use airport_trips directly
-            // This handles data uploaded before the driver assignment feature was added
-            // Per-cab check: only fall back for cabs NOT already handled by the primary path
-            if (!relevantShifts.isEmpty()) {
-                Set<String> processedCabs = new HashSet<>();
-                for (CabShift shift : relevantShifts) {
-                    String cabNumber = shift.getCab().getCabNumber();
-                    if (cabNumber == null || !processedCabs.add(cabNumber)) continue;
-
-                    // Skip cabs already handled by airport_trip_driver primary path
-                    if (cabsHandledByDriverAssignments.contains(cabNumber)) continue;
-
-                    List<AirportTrip> trips = airportTripRepository.findByCabNumberAndTripDateBetweenOrderByTripDateDesc(
-                            cabNumber, from, to);
-                    if (trips.isEmpty()) continue;
-
-                    Long attributeTypeId = resolveAirportAttributeTypeId(cabNumber, from);
-                    ItemRate rate = airportChargeService.getAirportTripRateForAttribute(attributeTypeId, from);
-
-                    if (rate == null) {
-                        log.warn("No AIRPORT_TRIP rate found for cab {} on {}", cabNumber, from);
-                        continue;
-                    }
-
-                    BigDecimal ratePerTrip = rate.getRate();
-
-                    for (AirportTrip trip : trips) {
-                        int dayTrips = trip.getGrandTotal() != null ? trip.getGrandTotal() : 0;
-                        if (dayTrips == 0) continue;
-
-                        BigDecimal dayCharge = ratePerTrip.multiply(BigDecimal.valueOf(dayTrips));
-
-                        report.getOneTimeExpenses().add(StatementLineItem.builder()
-                                .categoryCode("AIRPORT_TRIP")
-                                .categoryName("Airport Trip Expense")
-                                .applicationType("AIRPORT")
-                                .date(trip.getTripDate())
-                                .cabNumber(cabNumber)
-                                .description(dayTrips + " trips @ $" + ratePerTrip + "/trip (Cab " + cabNumber + ")")
-                                .amount(dayCharge)
-                                .tripCount(dayTrips)
-                                .ratePerUnit(ratePerTrip)
-                                .isRecurring(false)
-                                .build());
-                    }
-
-                    log.info("Airport expense (fallback): Cab {} for person {} using airport_trips directly", cabNumber, personId);
-                }
-            }
+            // NO FALLBACK: Only use pre-computed airport_trip_driver assignments
+            // Trips MUST be explicitly assigned to the driver in airport_trip_driver table.
+            // This ensures trips are attributed to the driver who actually drove them,
+            // not to a driver who merely owns the cab. Ownership-based fallback was
+            // incorrectly attributing unassigned trips to cab owners.
         } catch (Exception e) {
             log.warn("Error calculating airport trip expense for person {}: {}", personId, e.getMessage());
         }
