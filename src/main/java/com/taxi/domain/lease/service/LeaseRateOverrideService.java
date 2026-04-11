@@ -16,8 +16,9 @@ import java.util.Optional;
 
 /**
  * Service for managing custom lease rate overrides
- * 
- * Allows cab owners to set custom rates that override default lease rates
+ *
+ * Allows cab owners to set custom rates that override default lease rates.
+ * Also supports driver-specific (beneficiary) overrides for exemptions and arrangements.
  */
 @Service
 @RequiredArgsConstructor
@@ -30,15 +31,16 @@ public class LeaseRateOverrideService {
     /**
      * Get the applicable lease rate for a specific shift
      *
-     * Logic:
-     * 1. Find all matching overrides for the owner/cab/shift/day combination
-     * 2. First check if the override is active in the date range, then check owner (its always there), then check if cab number,
-     *  if null, then all cabs for this owner, and then shift, if shift defined then for that shfit, if shift null then both shifts.
-     * the check day of week, if null then all days.
-     * 2. Return the highest priority override's rate
-     * 3. If no override found, return null (caller should use default rate)
+     * Logic (two-tier priority):
+     * 1. Check for driver-specific (beneficiary) overrides first
+     *    (e.g., "Owner A grants Driver B $0 on this shift")
+     * 2. If no beneficiary override, check for owner-level overrides
+     *    (e.g., "Owner A sets $50 for all drivers on this shift")
+     * 3. Return the first (highest priority) match found
+     * 4. If no override found, return null (caller should use default rate)
      *
      * @param ownerDriverNumber The cab owner
+     * @param workingDriverNumber The driver actually working the shift (for beneficiary check)
      * @param cabNumber The cab number
      * @param shiftType "DAY" or "NIGHT"
      * @param date The date of the shift
@@ -47,6 +49,7 @@ public class LeaseRateOverrideService {
     @Transactional(readOnly = true)
     public BigDecimal getApplicableLeaseRate(
             String ownerDriverNumber,
+            String workingDriverNumber,
             String cabNumber,
             String shiftType,
             LocalDate date) {
@@ -55,51 +58,52 @@ public class LeaseRateOverrideService {
             cabNumber == null || cabNumber.isEmpty() ||
             shiftType == null || shiftType.isEmpty() ||
             date == null) {
-            log.warn("Invalid parameters for lease rate lookup: owner={}, cab={}, shift={}, date={}",
-                ownerDriverNumber, cabNumber, shiftType, date);
+            log.warn("Invalid parameters for lease rate lookup: owner={}, driver={}, cab={}, shift={}, date={}",
+                ownerDriverNumber, workingDriverNumber, cabNumber, shiftType, date);
             return null;
         }
 
-        // Get day of week
         DayOfWeek dayOfWeek = date.getDayOfWeek();
-        String dayOfWeekStr = dayOfWeek.toString(); // "MONDAY", "TUESDAY", etc.
+        String dayOfWeekStr = dayOfWeek.toString();
 
         log.info("=== LEASE RATE LOOKUP START ===");
-        log.info("Searching for: owner='{}', cab='{}', shift='{}', date='{}' ({})",
-            ownerDriverNumber, cabNumber, shiftType, date, dayOfWeekStr);
+        log.info("Searching for: owner='{}', driver='{}', cab='{}', shift='{}', date='{}' ({})",
+            ownerDriverNumber, workingDriverNumber, cabNumber, shiftType, date, dayOfWeekStr);
 
-        // Strategy: Get all overrides for the owner and filter manually
-        // This ensures we can properly handle null/wildcard fields
+        // ✅ STEP 1: Check for driver-specific (beneficiary) overrides FIRST
+        if (workingDriverNumber != null && !workingDriverNumber.isEmpty()) {
+            List<LeaseRateOverride> beneficiaryOverrides = leaseRateOverrideRepository.findBeneficiaryOverrides(
+                ownerDriverNumber, workingDriverNumber, cabNumber, shiftType, dayOfWeekStr, date);
+
+            if (!beneficiaryOverrides.isEmpty()) {
+                LeaseRateOverride matched = beneficiaryOverrides.get(0);
+                log.info("✓✓✓ BENEFICIARY OVERRIDE FOUND! id={}, beneficiary={}, rate={}, priority={}",
+                    matched.getId(), matched.getBeneficiaryDriverNumber(), matched.getLeaseRate(), matched.getPriority());
+                log.info("=== LEASE RATE LOOKUP END (BENEFICIARY MATCH) ===");
+                return matched.getLeaseRate();
+            }
+        }
+
+        // ✅ STEP 2: Check for owner-level (non-beneficiary) overrides
         List<LeaseRateOverride> allOwnerOverrides = leaseRateOverrideRepository
             .findByOwnerDriverNumberOrderByPriorityDescCreatedAtDesc(ownerDriverNumber);
 
         if (allOwnerOverrides.isEmpty()) {
             log.info("No overrides found for owner: '{}'", ownerDriverNumber);
+            log.info("=== LEASE RATE LOOKUP END (NOT FOUND) ===");
             return null;
         }
 
-        log.info("Found {} total overrides for owner '{}'. Starting filter checks...", allOwnerOverrides.size(), ownerDriverNumber);
-        for (LeaseRateOverride ov : allOwnerOverrides) {
-            log.info("  Override {}: cab='{}', shift='{}', day='{}', rate={}, startDate='{}', endDate='{}', isActive={}",
-                ov.getId(),
-                ov.getCabNumber() != null ? ov.getCabNumber() : "NULL",
-                ov.getShiftType() != null ? ov.getShiftType() : "NULL",
-                ov.getDayOfWeek() != null ? ov.getDayOfWeek() : "NULL",
-                ov.getLeaseRate(),
-                ov.getStartDate(),
-                ov.getEndDate() != null ? ov.getEndDate() : "NULL",
-                ov.getIsActive());
-        }
-
-        // Filter overrides according to the business rules:
-        // 1. Must be active (isActive = true)
-        // 2. Must be active on the given date (startDate <= date AND (endDate IS NULL OR endDate >= date))
-        // 3. Cab must match: either override.cabNumber is null (all cabs) OR override.cabNumber == cabNumber
-        // 4. Shift must match: either override.shiftType is null (all shifts) OR override.shiftType == shiftType
-        // 5. Day of week must match: either override.dayOfWeek is null (all days) OR override.dayOfWeek == dayOfWeek
-        // Return the first one (already ordered by priority DESC)
+        log.info("Found {} total overrides for owner '{}'. Checking for owner-level (non-beneficiary) matches...",
+            allOwnerOverrides.size(), ownerDriverNumber);
 
         for (LeaseRateOverride override : allOwnerOverrides) {
+            // Skip beneficiary-specific overrides (already checked in STEP 1)
+            if (override.getBeneficiaryDriverNumber() != null && !override.getBeneficiaryDriverNumber().isEmpty()) {
+                log.debug("  Override {}: beneficiary-specific, skip in owner-level search", override.getId());
+                continue;
+            }
+
             log.info("  Checking Override {}...", override.getId());
 
             // Check 1: Is active flag
@@ -129,7 +133,6 @@ public class LeaseRateOverrideService {
             }
 
             // Check 3: Cab number match
-            // Override matches if: cabNumber is null (all cabs) OR cabNumber matches exactly
             if (override.getCabNumber() != null && !override.getCabNumber().isEmpty()) {
                 if (!override.getCabNumber().equalsIgnoreCase(cabNumber)) {
                     log.info("    ✗ Check 3 (Cab): override cab='{}' does NOT match requested cab='{}' - SKIP",
@@ -143,7 +146,6 @@ public class LeaseRateOverrideService {
             }
 
             // Check 4: Shift type match
-            // Override matches if: shiftType is null (all shifts) OR shiftType matches exactly
             if (override.getShiftType() != null && !override.getShiftType().isEmpty()) {
                 if (!override.getShiftType().equalsIgnoreCase(shiftType)) {
                     log.info("    ✗ Check 4 (Shift): override shift='{}' does NOT match requested shift='{}' - SKIP",
@@ -157,7 +159,6 @@ public class LeaseRateOverrideService {
             }
 
             // Check 5: Day of week match
-            // Override matches if: dayOfWeek is null (all days) OR dayOfWeek matches exactly
             if (override.getDayOfWeek() != null && !override.getDayOfWeek().isEmpty()) {
                 if (!override.getDayOfWeek().equalsIgnoreCase(dayOfWeekStr)) {
                     log.info("    ✗ Check 5 (Day): override day='{}' does NOT match requested day='{}' - SKIP",
@@ -170,19 +171,19 @@ public class LeaseRateOverrideService {
                 log.info("    ✓ Check 5 (Day): override dayOfWeek is NULL (matches all days)");
             }
 
-            // All checks passed! This is the highest priority match (already sorted by priority DESC)
+            // All checks passed! This is the highest priority match
             log.info("✓✓✓ MATCH FOUND! Override id={}, rate={}, priority={}, cab={}, shift={}, day={}",
                 override.getId(), override.getLeaseRate(), override.getPriority(),
                 override.getCabNumber() != null ? override.getCabNumber() : "ALL",
                 override.getShiftType() != null ? override.getShiftType() : "ALL",
                 override.getDayOfWeek() != null ? override.getDayOfWeek() : "ALL");
-            log.info("=== LEASE RATE LOOKUP END (FOUND) ===");
+            log.info("=== LEASE RATE LOOKUP END (OWNER-LEVEL MATCH) ===");
 
             return override.getLeaseRate();
         }
 
-        log.info("✗✗✗ NO MATCHING OVERRIDE FOUND after filtering all {} overrides for owner='{}', cab='{}', shift='{}', day='{}'",
-            allOwnerOverrides.size(), ownerDriverNumber, cabNumber, shiftType, dayOfWeekStr);
+        log.info("✗✗✗ NO MATCHING OVERRIDE FOUND after checking all {} overrides for owner='{}', driver='{}', cab='{}', shift='{}', day='{}'",
+            allOwnerOverrides.size(), ownerDriverNumber, workingDriverNumber, cabNumber, shiftType, dayOfWeekStr);
         log.info("=== LEASE RATE LOOKUP END (NOT FOUND) ===");
         return null;
     }
@@ -192,30 +193,22 @@ public class LeaseRateOverrideService {
      */
     @Transactional
     public LeaseRateOverride createOverride(LeaseRateOverride override) {
-        log.info("Creating lease rate override: owner={}, cab={}, shift={}, day={}, rate={}", 
-            override.getOwnerDriverNumber(), 
+        log.info("Creating lease rate override: owner={}, beneficiary={}, cab={}, shift={}, day={}, rate={}",
+            override.getOwnerDriverNumber(),
+            override.getBeneficiaryDriverNumber() != null ? override.getBeneficiaryDriverNumber() : "ALL",
             override.getCabNumber() != null ? override.getCabNumber() : "ALL",
             override.getShiftType() != null ? override.getShiftType() : "ALL",
             override.getDayOfWeek() != null ? override.getDayOfWeek() : "ALL",
             override.getLeaseRate());
-        
+
         // Validate owner exists and is actually an owner
         validateOwner(override.getOwnerDriverNumber());
-        
+
         // Auto-calculate priority if not set
         if (override.getPriority() == null || override.getPriority() == 0) {
             override.calculatePriority();
         }
-        
-        // Set default values
-        if (override.getIsActive() == null) {
-            override.setIsActive(true);
-        }
-        
-        if (override.getStartDate() == null) {
-            override.setStartDate(LocalDate.now());
-        }
-        
+
         return leaseRateOverrideRepository.save(override);
     }
 
@@ -225,42 +218,30 @@ public class LeaseRateOverrideService {
     @Transactional
     public LeaseRateOverride updateOverride(Long id, LeaseRateOverride updates) {
         LeaseRateOverride existing = leaseRateOverrideRepository.findById(id)
-            .orElseThrow(() -> new RuntimeException("Override not found: " + id));
-        
-        log.info("Updating lease rate override: id={}", id);
-        
-        // Update fields
-        if (updates.getCabNumber() != null) {
+            .orElseThrow(() -> new IllegalArgumentException("Override not found: " + id));
+
+        if (updates.getOwnerDriverNumber() != null)
+            existing.setOwnerDriverNumber(updates.getOwnerDriverNumber());
+        if (updates.getBeneficiaryDriverNumber() != null)
+            existing.setBeneficiaryDriverNumber(updates.getBeneficiaryDriverNumber());
+        if (updates.getCabNumber() != null)
             existing.setCabNumber(updates.getCabNumber());
-        }
-        if (updates.getShiftType() != null) {
+        if (updates.getShiftType() != null)
             existing.setShiftType(updates.getShiftType());
-        }
-        if (updates.getDayOfWeek() != null) {
+        if (updates.getDayOfWeek() != null)
             existing.setDayOfWeek(updates.getDayOfWeek());
-        }
-        if (updates.getLeaseRate() != null) {
+        if (updates.getLeaseRate() != null)
             existing.setLeaseRate(updates.getLeaseRate());
-        }
-        if (updates.getStartDate() != null) {
+        if (updates.getStartDate() != null)
             existing.setStartDate(updates.getStartDate());
-        }
-        if (updates.getEndDate() != null) {
+        if (updates.getEndDate() != null)
             existing.setEndDate(updates.getEndDate());
-        }
-        if (updates.getIsActive() != null) {
+        if (updates.getIsActive() != null)
             existing.setIsActive(updates.getIsActive());
-        }
-        if (updates.getNotes() != null) {
+        if (updates.getNotes() != null)
             existing.setNotes(updates.getNotes());
-        }
-        if (updates.getUpdatedBy() != null) {
-            existing.setUpdatedBy(updates.getUpdatedBy());
-        }
-        
-        // Recalculate priority
+
         existing.calculatePriority();
-        
         return leaseRateOverrideRepository.save(existing);
     }
 
@@ -269,7 +250,6 @@ public class LeaseRateOverrideService {
      */
     @Transactional
     public void deleteOverride(Long id) {
-        log.info("Deleting lease rate override: id={}", id);
         leaseRateOverrideRepository.deleteById(id);
     }
 
@@ -279,9 +259,7 @@ public class LeaseRateOverrideService {
     @Transactional
     public LeaseRateOverride deactivateOverride(Long id) {
         LeaseRateOverride override = leaseRateOverrideRepository.findById(id)
-            .orElseThrow(() -> new RuntimeException("Override not found: " + id));
-        
-        log.info("Deactivating lease rate override: id={}", id);
+            .orElseThrow(() -> new IllegalArgumentException("Override not found: " + id));
         override.setIsActive(false);
         return leaseRateOverrideRepository.save(override);
     }
@@ -292,9 +270,7 @@ public class LeaseRateOverrideService {
     @Transactional
     public LeaseRateOverride activateOverride(Long id) {
         LeaseRateOverride override = leaseRateOverrideRepository.findById(id)
-            .orElseThrow(() -> new RuntimeException("Override not found: " + id));
-        
-        log.info("Activating lease rate override: id={}", id);
+            .orElseThrow(() -> new IllegalArgumentException("Override not found: " + id));
         override.setIsActive(true);
         return leaseRateOverrideRepository.save(override);
     }
@@ -304,12 +280,19 @@ public class LeaseRateOverrideService {
      */
     @Transactional(readOnly = true)
     public List<LeaseRateOverride> getOwnerOverrides(String ownerDriverNumber) {
-        return leaseRateOverrideRepository
-            .findByOwnerDriverNumberOrderByPriorityDescCreatedAtDesc(ownerDriverNumber);
+        return leaseRateOverrideRepository.findByOwnerDriverNumberOrderByPriorityDescCreatedAtDesc(ownerDriverNumber);
     }
 
     /**
-     * Get all overrides (all owners)
+     * Get all active overrides
+     */
+    @Transactional(readOnly = true)
+    public List<LeaseRateOverride> getAllActiveOverrides(LocalDate date) {
+        return leaseRateOverrideRepository.findAllActiveOverrides(date);
+    }
+
+    /**
+     * Get all overrides
      */
     @Transactional(readOnly = true)
     public List<LeaseRateOverride> getAllOverrides() {
@@ -317,45 +300,15 @@ public class LeaseRateOverrideService {
     }
 
     /**
-     * Get all active overrides for an owner
+     * Get overrides expiring soon
      */
     @Transactional(readOnly = true)
-    public List<LeaseRateOverride> getActiveOwnerOverrides(String ownerDriverNumber) {
-        return leaseRateOverrideRepository
-            .findByOwnerDriverNumberAndIsActiveTrue(ownerDriverNumber);
+    public List<LeaseRateOverride> getExpiringSoon(LocalDate startDate, LocalDate endDate) {
+        return leaseRateOverrideRepository.findExpiringSoon(startDate, endDate);
     }
 
     /**
-     * Get overrides expiring in the next N days
-     */
-    @Transactional(readOnly = true)
-    public List<LeaseRateOverride> getExpiringSoon(int days) {
-        LocalDate now = LocalDate.now();
-        LocalDate futureDate = now.plusDays(days);
-        return leaseRateOverrideRepository.findExpiringSoon(now, futureDate);
-    }
-
-    /**
-     * Get all currently active overrides
-     */
-    @Transactional(readOnly = true)
-    public List<LeaseRateOverride> getAllActiveOverrides() {
-        return leaseRateOverrideRepository.findAllActiveOverrides(LocalDate.now());
-    }
-
-    /**
-     * Validate that the driver is actually an owner
-     */
-    private void validateOwner(String driverNumber) {
-        driverRepository.findByDriverNumber(driverNumber)
-            .filter(driver -> driver.getIsOwner() != null && driver.getIsOwner())
-            .orElseThrow(() -> new RuntimeException(
-                "Driver " + driverNumber + " is not found or not an owner"));
-    }
-
-    /**
-     * Bulk create overrides for a specific pattern
-     * Example: Create overrides for all weekdays with one rate, weekends with another
+     * Create multiple overrides in bulk
      */
     @Transactional
     public List<LeaseRateOverride> createBulkOverrides(
@@ -363,33 +316,46 @@ public class LeaseRateOverrideService {
             String cabNumber,
             String shiftType,
             List<String> daysOfWeek,
-            BigDecimal leaseRate,
+            java.math.BigDecimal leaseRate,
             LocalDate startDate,
             LocalDate endDate,
             String notes) {
-        
+
         validateOwner(ownerDriverNumber);
-        
-        List<LeaseRateOverride> overrides = daysOfWeek.stream()
-            .map(day -> {
-                LeaseRateOverride override = LeaseRateOverride.builder()
-                    .ownerDriverNumber(ownerDriverNumber)
-                    .cabNumber(cabNumber)
-                    .shiftType(shiftType)
-                    .dayOfWeek(day)
-                    .leaseRate(leaseRate)
-                    .startDate(startDate != null ? startDate : LocalDate.now())
-                    .endDate(endDate)
-                    .isActive(true)
-                    .notes(notes)
-                    .build();
-                
-                override.calculatePriority();
-                return override;
-            })
-            .toList();
-        
-        log.info("Creating {} bulk overrides for owner {}", overrides.size(), ownerDriverNumber);
-        return leaseRateOverrideRepository.saveAll(overrides);
+
+        java.util.List<LeaseRateOverride> overrides = new java.util.ArrayList<>();
+
+        for (String day : daysOfWeek) {
+            LeaseRateOverride override = LeaseRateOverride.builder()
+                .ownerDriverNumber(ownerDriverNumber)
+                .beneficiaryDriverNumber(null)
+                .cabNumber(cabNumber)
+                .shiftType(shiftType)
+                .dayOfWeek(day)
+                .leaseRate(leaseRate)
+                .startDate(startDate)
+                .endDate(endDate)
+                .isActive(true)
+                .notes(notes)
+                .build();
+
+            override.calculatePriority();
+            overrides.add(leaseRateOverrideRepository.save(override));
+        }
+
+        return overrides;
+    }
+
+    /**
+     * Validate that a driver exists and is marked as an owner
+     */
+    private void validateOwner(String driverNumber) {
+        Optional<com.taxi.domain.driver.model.Driver> driver = driverRepository.findByDriverNumber(driverNumber);
+        if (driver.isEmpty()) {
+            throw new IllegalArgumentException("Driver not found: " + driverNumber);
+        }
+        if (!driver.get().getIsOwner()) {
+            throw new IllegalArgumentException("Driver is not marked as an owner: " + driverNumber);
+        }
     }
 }

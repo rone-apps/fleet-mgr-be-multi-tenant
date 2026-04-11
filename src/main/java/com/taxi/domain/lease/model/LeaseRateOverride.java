@@ -14,19 +14,22 @@ import java.time.LocalDateTime;
 
 /**
  * Custom lease rate overrides for specific cab/shift combinations
- * 
- * Allows cab owners to set custom lease rates that override the default rates
+ *
+ * Allows cab owners to set custom lease rates that override the default rates.
+ * Can also be driver-specific (beneficiary) for exemptions and arrangements.
+ *
  * Can be configured by:
+ * - Beneficiary driver (nullable - null = owner-level, not null = driver-specific exemption)
  * - Cab number (specific cab or null for all owner's cabs)
  * - Shift type (DAY, NIGHT, or null for both)
  * - Day of week (MONDAY, TUESDAY, etc., or null for all days)
  * - Date range (start date required, end date null means ongoing)
- * 
+ *
  * Example use cases:
- * 1. "Cab 1, DAY shift, MONDAY-THURSDAY = $45, ongoing"
- * 2. "Cab 1, DAY shift, FRIDAY-SUNDAY = $65, ongoing"
- * 3. "All my cabs, NIGHT shift, all days = $75, Dec 1-31, 2025"
- * 4. "Cab 2, both shifts, SATURDAY = $80, ongoing"
+ * 1. "Cab 1, DAY shift, MONDAY-THURSDAY = $45, ongoing" (owner-level)
+ * 2. "Owner A grants Owner B $0 on Cab 6 DAY shift" (beneficiary-specific)
+ * 3. "All my cabs, NIGHT shift, all days = $75, Dec 1-31, 2025" (owner-level)
+ * 4. "Driver X exempt from lease on Cab 5" (beneficiary-specific)
  */
 @Entity
 @Table(
@@ -53,6 +56,17 @@ public class LeaseRateOverride {
      */
     @Column(name = "owner_driver_number", nullable = false, length = 50)
     private String ownerDriverNumber;
+
+    /**
+     * Driver who benefits from this override (nullable)
+     * - If null: applies to all drivers (owner-level rate)
+     * - If set: applies only to this specific driver (driver-specific exemption)
+     *
+     * Use case: Owner A grants Owner B (or their driver) an exemption from lease
+     * when driving Owner A's shifts (co-owner arrangement)
+     */
+    @Column(name = "beneficiary_driver_number", length = 50)
+    private String beneficiaryDriverNumber;
 
     /**
      * Specific cab number (nullable)

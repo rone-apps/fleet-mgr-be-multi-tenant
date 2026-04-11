@@ -111,19 +111,20 @@ public class DriverFinancialCalculationService {
      * ═══════════════════════════════════════════════════════════════════════
      * LEASE RATE CALCULATION - WITH OVERRIDE SUPPORT
      * ═══════════════════════════════════════════════════════════════════════
-     * 
+     *
      * This method determines the applicable lease rate for a shift.
-     * 
+     *
      * LOGIC:
-     * 1. Check for owner's custom override (specific to cab/shift/day)
+     * 1. Check for custom override (owner-generic or driver-specific beneficiary)
      * 2. If override exists, use it
      * 3. If no override, fall back to default lease rate from lease_rates table
-     * 
-     * This allows owners to customize rates while maintaining backwards
-     * compatibility with existing default rate system.
+     *
+     * This allows owners to customize rates and grant driver-specific exemptions
+     * while maintaining backwards compatibility with existing default rate system.
      */
     BigDecimal getApplicableLeaseRate(
             String ownerDriverNumber,
+            String workingDriverNumber,
             String cabNumber,
             String shiftType,
             LocalDateTime shiftDateTime,
@@ -133,21 +134,23 @@ public class DriverFinancialCalculationService {
 
         LocalDate shiftDate = shiftDateTime.toLocalDate();
 
-        // ✅ STEP 1: Check for custom override FIRST
+        // ✅ Check for override (owner-generic or driver-specific beneficiary)
+        // LeaseRateOverrideService now checks for beneficiary match first, then owner-level
         BigDecimal overrideRate = leaseRateOverrideService.getApplicableLeaseRate(
             ownerDriverNumber,
+            workingDriverNumber,
             cabNumber,
             shiftType,
             shiftDate
         );
 
         if (overrideRate != null) {
-            log.debug("   💰 Using CUSTOM override rate: ${} for owner={}, cab={}, shift={}, date={}",
-                overrideRate, ownerDriverNumber, cabNumber, shiftType, shiftDate);
+            log.debug("   💰 Using CUSTOM override rate: ${} for owner={}, driver={}, cab={}, shift={}, date={}",
+                overrideRate, ownerDriverNumber, workingDriverNumber, cabNumber, shiftType, shiftDate);
             return overrideRate;
         }
 
-        // ✅ STEP 2: No override - use default rate with CabShift attributes
+        // ✅ No override - use default rate with CabShift attributes
         log.debug("   💰 No override found, using DEFAULT rate for cab={}, shift={}",
             cabNumber, shiftType);
         return getDefaultLeaseRate(cab, shiftDateTime, cabType, hasAirportLicense);
@@ -313,9 +316,10 @@ public class DriverFinancialCalculationService {
         boolean hasAirportLicense = (cabShift != null && cabShift.getHasAirportLicense() != null)
                 ? cabShift.getHasAirportLicense() : false;
 
-        // ✅ Get applicable rate (override or default) - now passes CabShift attributes
+        // ✅ Get applicable rate (exemption, override, or default) - now passes working driver for exemption check
         BigDecimal baseRate = getApplicableLeaseRate(
             owner.getDriverNumber(),
+            shift.getDriverNumber(),
             cab.getCabNumber(),
             shiftType,
             shift.getLogonTime(),

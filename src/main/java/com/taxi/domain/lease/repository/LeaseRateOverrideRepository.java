@@ -34,20 +34,57 @@ public interface LeaseRateOverrideRepository extends JpaRepository<LeaseRateOver
         String cabNumber, String ownerDriverNumber);
 
     /**
-     * Find the best matching override for given criteria
-     * Returns overrides ordered by priority (highest first)
-     * 
+     * Find driver-specific (beneficiary) overrides for an owner+driver pair
+     * Checks for exemptions/custom rates granted to a specific driver by an owner
+     * Returns overrides ordered by priority (highest first), active on the given date
+     *
      * This query finds overrides that match:
      * 1. The owner
-     * 2. The cab (or null for all cabs)
-     * 3. The shift type (or null for all shifts)
-     * 4. The day of week (or null for all days)
-     * 5. Active on the given date
-     * 6. Is active flag = true
+     * 2. The beneficiary (working driver)
+     * 3. The cab (or null for all owner's cabs)
+     * 4. The shift type (or null for all shifts)
+     * 5. The day of week (or null for all days)
+     * 6. Active on the given date
+     * 7. Is active flag = true
      */
     @Query("""
         SELECT lro FROM LeaseRateOverride lro
         WHERE lro.ownerDriverNumber = :ownerDriverNumber
+        AND lro.beneficiaryDriverNumber = :beneficiaryDriverNumber
+        AND lro.isActive = true
+        AND lro.startDate <= :date
+        AND (lro.endDate IS NULL OR lro.endDate >= :date)
+        AND (lro.cabNumber IS NULL OR lro.cabNumber = :cabNumber)
+        AND (lro.shiftType IS NULL OR lro.shiftType = :shiftType)
+        AND (lro.dayOfWeek IS NULL OR lro.dayOfWeek = :dayOfWeek)
+        ORDER BY lro.priority DESC, lro.id DESC
+        """)
+    List<LeaseRateOverride> findBeneficiaryOverrides(
+        @Param("ownerDriverNumber") String ownerDriverNumber,
+        @Param("beneficiaryDriverNumber") String beneficiaryDriverNumber,
+        @Param("cabNumber") String cabNumber,
+        @Param("shiftType") String shiftType,
+        @Param("dayOfWeek") String dayOfWeek,
+        @Param("date") LocalDate date
+    );
+
+    /**
+     * Find the best matching override for given criteria (owner-level only)
+     * Returns overrides ordered by priority (highest first)
+     *
+     * This query finds overrides that match:
+     * 1. The owner
+     * 2. NO beneficiary (owner-level, not driver-specific)
+     * 3. The cab (or null for all cabs)
+     * 4. The shift type (or null for all shifts)
+     * 5. The day of week (or null for all days)
+     * 6. Active on the given date
+     * 7. Is active flag = true
+     */
+    @Query("""
+        SELECT lro FROM LeaseRateOverride lro
+        WHERE lro.ownerDriverNumber = :ownerDriverNumber
+        AND lro.beneficiaryDriverNumber IS NULL
         AND lro.isActive = true
         AND lro.startDate <= :date
         AND (lro.endDate IS NULL OR lro.endDate >= :date)

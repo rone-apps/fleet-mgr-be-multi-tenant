@@ -169,12 +169,13 @@ public class LeaseRateOverrideController {
         Map<String, Object> response = new HashMap<>();
         
         try {
-            List<LeaseRateOverride> overrides;
-            
+            List<LeaseRateOverride> overrides = leaseRateOverrideService.getOwnerOverrides(ownerDriverNumber);
+
             if (activeOnly) {
-                overrides = leaseRateOverrideService.getActiveOwnerOverrides(ownerDriverNumber);
-            } else {
-                overrides = leaseRateOverrideService.getOwnerOverrides(ownerDriverNumber);
+                LocalDate today = LocalDate.now();
+                overrides = overrides.stream()
+                    .filter(o -> o.getIsActive() && o.isActiveOn(today))
+                    .collect(Collectors.toList());
             }
             
             List<LeaseRateOverrideDTO> dtos = overrides.stream()
@@ -203,14 +204,14 @@ public class LeaseRateOverrideController {
     @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER', 'ACCOUNTANT')")
     public ResponseEntity<Map<String, Object>> getAllOverrides(
             @RequestParam(required = false, defaultValue = "false") boolean activeOnly) {
-        
+
         Map<String, Object> response = new HashMap<>();
-        
+
         try {
             List<LeaseRateOverride> overrides;
-            
+
             if (activeOnly) {
-                overrides = leaseRateOverrideService.getAllActiveOverrides();
+                overrides = leaseRateOverrideService.getAllActiveOverrides(LocalDate.now());
             } else {
                 overrides = leaseRateOverrideService.getAllOverrides();
             }
@@ -235,24 +236,26 @@ public class LeaseRateOverrideController {
 
     /**
      * Get the applicable lease rate for specific criteria
-     * GET /api/lease-rate-overrides/lookup
+     * GET /api/lease-rate-overrides/lookup?ownerDriverNumber=...&workingDriverNumber=...&cabNumber=...&shiftType=...&date=...
      */
     @GetMapping("/lookup")
     @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER', 'ACCOUNTANT')")
     public ResponseEntity<Map<String, Object>> lookupLeaseRate(
             @RequestParam String ownerDriverNumber,
+            @RequestParam(required = false) String workingDriverNumber,
             @RequestParam String cabNumber,
             @RequestParam String shiftType,
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date) {
-        
+
         Map<String, Object> response = new HashMap<>();
-        
+
         try {
             BigDecimal rate = leaseRateOverrideService.getApplicableLeaseRate(
-                ownerDriverNumber, cabNumber, shiftType, date);
-            
+                ownerDriverNumber, workingDriverNumber, cabNumber, shiftType, date);
+
             response.put("success", true);
             response.put("ownerDriverNumber", ownerDriverNumber);
+            response.put("workingDriverNumber", workingDriverNumber);
             response.put("cabNumber", cabNumber);
             response.put("shiftType", shiftType);
             response.put("date", date.toString());
@@ -284,9 +287,9 @@ public class LeaseRateOverrideController {
     @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER', 'ACCOUNTANT')")
     public ResponseEntity<Map<String, Object>> getAllActiveOverrides() {
         Map<String, Object> response = new HashMap<>();
-        
+
         try {
-            List<LeaseRateOverride> overrides = leaseRateOverrideService.getAllActiveOverrides();
+            List<LeaseRateOverride> overrides = leaseRateOverrideService.getAllActiveOverrides(LocalDate.now());
             
             List<LeaseRateOverrideDTO> dtos = overrides.stream()
                 .map(this::convertToDTO)
@@ -314,11 +317,13 @@ public class LeaseRateOverrideController {
     @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER')")
     public ResponseEntity<Map<String, Object>> getExpiringSoon(
             @RequestParam(defaultValue = "30") int days) {
-        
+
         Map<String, Object> response = new HashMap<>();
-        
+
         try {
-            List<LeaseRateOverride> overrides = leaseRateOverrideService.getExpiringSoon(days);
+            LocalDate today = LocalDate.now();
+            LocalDate endDate = today.plusDays(days);
+            List<LeaseRateOverride> overrides = leaseRateOverrideService.getExpiringSoon(today, endDate);
             
             List<LeaseRateOverrideDTO> dtos = overrides.stream()
                 .map(this::convertToDTO)
@@ -392,6 +397,7 @@ public class LeaseRateOverrideController {
     private LeaseRateOverride convertToEntity(LeaseRateOverrideDTO dto) {
         return LeaseRateOverride.builder()
             .ownerDriverNumber(dto.getOwnerDriverNumber())
+            .beneficiaryDriverNumber(dto.getBeneficiaryDriverNumber())
             .cabNumber(dto.getCabNumber())
             .shiftType(dto.getShiftType())
             .dayOfWeek(dto.getDayOfWeek())
@@ -403,11 +409,12 @@ public class LeaseRateOverrideController {
             .notes(dto.getNotes())
             .build();
     }
-    
+
     private LeaseRateOverrideDTO convertToDTO(LeaseRateOverride entity) {
         return LeaseRateOverrideDTO.builder()
             .id(entity.getId())
             .ownerDriverNumber(entity.getOwnerDriverNumber())
+            .beneficiaryDriverNumber(entity.getBeneficiaryDriverNumber())
             .cabNumber(entity.getCabNumber())
             .shiftType(entity.getShiftType())
             .dayOfWeek(entity.getDayOfWeek())
