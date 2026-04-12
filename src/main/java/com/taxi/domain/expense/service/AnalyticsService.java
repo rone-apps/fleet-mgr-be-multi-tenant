@@ -13,10 +13,13 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import com.taxi.domain.drivertrip.repository.DriverTripRepository;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 
 @Service
@@ -28,6 +31,7 @@ public class AnalyticsService {
     private final RecurringExpenseRepository recurringExpenseRepository;
     private final OneTimeExpenseRepository oneTimeExpenseRepository;
     private final DriverRepository driverRepository;
+    private final DriverTripRepository driverTripRepository;
 
     /**
      * Generate analytics dashboard metrics for a date period
@@ -110,5 +114,84 @@ public class AnalyticsService {
                 ? netAmount.divide(totalRevenues, 4, java.math.RoundingMode.HALF_UP).multiply(new BigDecimal(100))
                 : BigDecimal.ZERO)
             .build();
+    }
+
+    /**
+     * Get trip analytics data for heatmap and time charts
+     * Aggregates trips by pickup address, hour of day, and day of week
+     */
+    public Map<String, Object> getTripAnalytics(
+            LocalDate startDate,
+            LocalDate endDate,
+            String accountNumber,
+            Long driverId,
+            Integer startHour,
+            Integer endHour) {
+
+        Map<String, Object> result = new HashMap<>();
+
+        // Get top pickup addresses
+        List<Object[]> addressResults = driverTripRepository.findTopPickupAddresses(
+            startDate, endDate, accountNumber, driverId, startHour, endHour);
+
+        List<Map<String, Object>> pickupAddresses = addressResults.stream()
+            .map(row -> {
+                Map<String, Object> map = new HashMap<>();
+                map.put("address", row[0]);
+                map.put("count", ((Number) row[1]).longValue());
+                return map;
+            })
+            .collect(Collectors.toList());
+
+        result.put("pickupAddresses", pickupAddresses);
+
+        // Get trips by hour of day
+        List<Object[]> hourResults = driverTripRepository.findTripsByHour(
+            startDate, endDate, accountNumber, driverId);
+
+        List<Map<String, Object>> byHour = hourResults.stream()
+            .map(row -> {
+                Map<String, Object> map = new HashMap<>();
+                map.put("hour", ((Number) row[0]).intValue());
+                map.put("count", ((Number) row[1]).longValue());
+                return map;
+            })
+            .collect(Collectors.toList());
+
+        result.put("byHour", byHour);
+
+        // Get trips by day of week (1=Sun ... 7=Sat)
+        List<Object[]> dayResults = driverTripRepository.findTripsByDayOfWeek(
+            startDate, endDate, accountNumber, driverId);
+
+        List<Map<String, Object>> byDayOfWeek = dayResults.stream()
+            .map(row -> {
+                Map<String, Object> map = new HashMap<>();
+                map.put("dayOfWeek", ((Number) row[0]).intValue());
+                map.put("count", ((Number) row[1]).longValue());
+                return map;
+            })
+            .collect(Collectors.toList());
+
+        result.put("byDayOfWeek", byDayOfWeek);
+
+        // Calculate total trips from hour data
+        long totalTrips = byHour.stream()
+            .mapToLong(h -> ((Number) h.get("count")).longValue())
+            .sum();
+
+        result.put("totalTrips", totalTrips);
+
+        log.info("Trip analytics generated: {} pickup addresses, {} hours, {} days, {} total trips",
+            pickupAddresses.size(), byHour.size(), byDayOfWeek.size(), totalTrips);
+
+        return result;
+    }
+
+    /**
+     * Get distinct account numbers from driver trips
+     */
+    public List<String> getDistinctAccountNumbers() {
+        return driverTripRepository.findDistinctAccountNumbers();
     }
 }

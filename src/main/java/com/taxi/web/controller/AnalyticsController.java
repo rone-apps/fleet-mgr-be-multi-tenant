@@ -13,6 +13,7 @@ import org.springframework.web.bind.annotation.*;
 import java.time.LocalDate;
 import java.time.YearMonth;
 import java.util.List;
+import java.util.Map;
 
 @RestController
 @RequestMapping("/analytics")
@@ -71,6 +72,57 @@ public class AnalyticsController {
 
         } catch (Exception e) {
             log.error("Error generating driver performance", e);
+            return ResponseEntity.badRequest().body(e.getMessage());
+        }
+    }
+
+    /**
+     * Get trip analytics data for heatmap (top pickup addresses, time charts)
+     */
+    @GetMapping("/trips")
+    @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER', 'ACCOUNTANT')")
+    public ResponseEntity<?> getTripAnalytics(
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate startDate,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate endDate,
+            @RequestParam(required = false) String accountNumber,
+            @RequestParam(required = false) Long driverId,
+            @RequestParam(required = false) Integer startHour,
+            @RequestParam(required = false) Integer endHour) {
+        try {
+            // Default to current month if not provided
+            LocalDate start = startDate;
+            LocalDate end = endDate;
+            if (start == null || end == null) {
+                YearMonth now = YearMonth.now();
+                start = now.atDay(1);
+                end = now.atEndOfMonth();
+            }
+
+            log.info("Getting trip analytics from {} to {}, account={}, driver={}, hours={}-{}",
+                start, end, accountNumber, driverId, startHour, endHour);
+            Map<String, Object> analytics = analyticsService.getTripAnalytics(
+                start, end, accountNumber, driverId, startHour, endHour);
+            return ResponseEntity.ok(analytics);
+
+        } catch (Exception e) {
+            log.error("Error generating trip analytics", e);
+            return ResponseEntity.badRequest().body(e.getMessage());
+        }
+    }
+
+    /**
+     * Get distinct account numbers for filter dropdown
+     */
+    @GetMapping("/trips/account-numbers")
+    @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER', 'ACCOUNTANT')")
+    public ResponseEntity<?> getDistinctAccountNumbers() {
+        try {
+            log.info("Fetching distinct account numbers from driver trips");
+            List<String> accountNumbers = analyticsService.getDistinctAccountNumbers();
+            return ResponseEntity.ok(accountNumbers);
+
+        } catch (Exception e) {
+            log.error("Error fetching distinct account numbers", e);
             return ResponseEntity.badRequest().body(e.getMessage());
         }
     }

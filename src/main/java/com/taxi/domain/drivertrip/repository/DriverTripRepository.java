@@ -106,4 +106,78 @@ public interface DriverTripRepository extends JpaRepository<DriverTrip, Long> {
             @Param("endDate") LocalDate endDate,
             @Param("driverName") String driverName,
             Pageable pageable);
+
+    /**
+     * Get top pickup addresses for heatmap analytics
+     */
+    @Query(value = """
+            SELECT pickup_address, COUNT(*) AS cnt
+            FROM driver_trips
+            WHERE (:startDate IS NULL OR trip_date >= :startDate)
+              AND (:endDate IS NULL OR trip_date <= :endDate)
+              AND (:accountNumber IS NULL OR account_number = :accountNumber)
+              AND (:driverId IS NULL OR driver_id = :driverId)
+              AND (:startHour IS NULL OR HOUR(start_time) >= :startHour)
+              AND (:endHour IS NULL OR HOUR(start_time) <= :endHour)
+              AND pickup_address IS NOT NULL AND pickup_address != ''
+            GROUP BY pickup_address
+            ORDER BY cnt DESC
+            LIMIT 60
+            """, nativeQuery = true)
+    List<Object[]> findTopPickupAddresses(
+            @Param("startDate") LocalDate startDate,
+            @Param("endDate") LocalDate endDate,
+            @Param("accountNumber") String accountNumber,
+            @Param("driverId") Long driverId,
+            @Param("startHour") Integer startHour,
+            @Param("endHour") Integer endHour);
+
+    /**
+     * Get trips aggregated by hour of day
+     */
+    @Query(value = """
+            SELECT HOUR(start_time) AS hr, COUNT(*) AS cnt
+            FROM driver_trips
+            WHERE (:startDate IS NULL OR trip_date >= :startDate)
+              AND (:endDate IS NULL OR trip_date <= :endDate)
+              AND (:accountNumber IS NULL OR account_number = :accountNumber)
+              AND (:driverId IS NULL OR driver_id = :driverId)
+              AND start_time IS NOT NULL
+            GROUP BY HOUR(start_time)
+            ORDER BY hr
+            """, nativeQuery = true)
+    List<Object[]> findTripsByHour(
+            @Param("startDate") LocalDate startDate,
+            @Param("endDate") LocalDate endDate,
+            @Param("accountNumber") String accountNumber,
+            @Param("driverId") Long driverId);
+
+    /**
+     * Get trips aggregated by day of week (MySQL DAYOFWEEK: 1=Sun ... 7=Sat)
+     */
+    @Query(value = """
+            SELECT DAYOFWEEK(trip_date) AS dow, COUNT(*) AS cnt
+            FROM driver_trips
+            WHERE (:startDate IS NULL OR trip_date >= :startDate)
+              AND (:endDate IS NULL OR trip_date <= :endDate)
+              AND (:accountNumber IS NULL OR account_number = :accountNumber)
+              AND (:driverId IS NULL OR driver_id = :driverId)
+            GROUP BY DAYOFWEEK(trip_date)
+            ORDER BY dow
+            """, nativeQuery = true)
+    List<Object[]> findTripsByDayOfWeek(
+            @Param("startDate") LocalDate startDate,
+            @Param("endDate") LocalDate endDate,
+            @Param("accountNumber") String accountNumber,
+            @Param("driverId") Long driverId);
+
+    /**
+     * Get distinct account numbers in driver_trips (for filter dropdown)
+     */
+    @Query(value = """
+            SELECT DISTINCT account_number FROM driver_trips
+            WHERE account_number IS NOT NULL AND account_number != ''
+            ORDER BY account_number
+            """, nativeQuery = true)
+    List<String> findDistinctAccountNumbers();
 }
