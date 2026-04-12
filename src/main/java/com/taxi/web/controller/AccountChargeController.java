@@ -20,6 +20,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
+import org.springframework.security.core.Authentication;
 
 @RestController
 @RequestMapping("/account-charges")
@@ -33,6 +34,40 @@ public class AccountChargeController {
     public ResponseEntity<AccountChargeDTO> createCharge(@RequestBody AccountCharge charge) {
         AccountCharge created = accountChargeService.createCharge(charge);
         return ResponseEntity.ok(AccountChargeDTO.fromEntity(created));
+    }
+
+    @PostMapping("/manual")
+    @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER', 'DISPATCHER')")
+    public ResponseEntity<Map<String, Object>> createManualCharge(
+            @RequestBody AccountCharge charge,
+            Authentication authentication) {
+
+        Map<String, Object> response = new HashMap<>();
+
+        // Validate notes are required for manual charges
+        if (charge.getNotes() == null || charge.getNotes().isBlank()) {
+            response.put("success", false);
+            response.put("message", "Notes/reason is required for manual charges");
+            response.put("error", "Notes field cannot be empty");
+            return ResponseEntity.status(400).body(response);
+        }
+
+        // Set manual flag and capture user
+        charge.setIsManual(true);
+        charge.setCreatedBy(authentication.getName());
+
+        try {
+            AccountCharge created = accountChargeService.createCharge(charge);
+            response.put("success", true);
+            response.put("message", "Manual charge created successfully");
+            response.put("data", AccountChargeDTO.fromEntity(created));
+            return ResponseEntity.ok(response);
+        } catch (Exception e) {
+            response.put("success", false);
+            response.put("message", "Failed to create manual charge");
+            response.put("error", e.getMessage());
+            return ResponseEntity.status(500).body(response);
+        }
     }
 
     // Get summary statistics for filtered charges (MUST be before /{id})

@@ -94,6 +94,13 @@ public class AccountCharge {
     @Column(name = "notes", length = 500)
     private String notes;
 
+    @Column(name = "is_manual", nullable = false)
+    @Builder.Default
+    private Boolean isManual = false;
+
+    @Column(name = "created_by", length = 100)
+    private String createdBy;
+
     @Column(name = "is_paid", nullable = false)
     @Builder.Default
     private boolean paid = false;
