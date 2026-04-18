@@ -59,6 +59,7 @@ create table tax_category_assignment (assigned_at date not null, is_active bit n
 create table tax_rate (effective_from date not null, effective_to date, is_active bit not null, rate decimal(8,4) not null, created_at datetime(6) not null, id bigint not null auto_increment, tax_type_id bigint not null, updated_at datetime(6), notes varchar(500), primary key (id)) engine=InnoDB;
 create table tax_type (is_active bit not null, created_at datetime(6) not null, id bigint not null auto_increment, updated_at datetime(6), code varchar(30) not null, name varchar(100) not null, description varchar(500), primary key (id)) engine=InnoDB;
 create table tenant_config (taxicaller_company_id integer, created_at datetime(6), id bigint not null auto_increment, updated_at datetime(6), tenant_id varchar(63) not null, company_name varchar(100), taxicaller_api_key varchar(100), taxicaller_base_url varchar(255), primary key (id)) engine=InnoDB;
+create table receipts (id bigint not null auto_increment, image_data mediumblob, tax_amount decimal(10,2), total_amount decimal(10,2), created_at datetime(6), updated_at datetime(6), document_type varchar(50), image_mime_type varchar(50), vendor_name varchar(255), receipt_date date, status varchar(20), line_items_json longtext, raw_claude_response longtext, primary key (id)) engine=InnoDB;
 create table user (is_active bit, created_at datetime(6) not null, driver_id bigint, id bigint not null auto_increment, updated_at datetime(6), phone varchar(20), role enum ('ACCOUNTANT','ADMIN','DISPATCHER','DRIVER','MANAGER','SUPER_ADMIN','VIEWER') not null, first_name varchar(50), last_name varchar(50), username varchar(50) not null, email varchar(100), password varchar(255) not null, primary key (id)) engine=InnoDB;
 create index idx_charge_customer on account_charge (customer_id);
 create index idx_charge_date on account_charge (trip_date);
@@ -309,3 +310,7 @@ alter table tax_category_assignment add constraint FKdd2mftp2ykdillxg56i6jq912 f
 alter table tax_category_assignment add constraint FKefoc0ue31gg1do217u3gfc4qc foreign key (tax_type_id) references tax_type (id);
 alter table tax_rate add constraint FKcm85lkmd70pftji6b409p97do foreign key (tax_type_id) references tax_type (id);
 alter table user add constraint FKc4heewvadmwpbm330r49pue0j foreign key (driver_id) references driver (id);
+create index idx_receipt_status on receipts (status);
+create index idx_receipt_date on receipts (receipt_date);
+create index idx_receipt_doc_type on receipts (document_type);
+create index idx_receipt_created on receipts (created_at);
