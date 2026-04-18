@@ -8,11 +8,14 @@ public class ReceiptAnalysisResult {
     private Long receiptId;
     private String documentType;
     private String vendorName;
+    private String accountNumber;
     private LocalDate receiptDate;
     private BigDecimal subtotal;
     private BigDecimal taxAmount;
     private BigDecimal totalAmount;
     private List<LineItem> lineItems;
+    private String cabNumber;
+    private String driverName;
 
     public ReceiptAnalysisResult() {}
 
@@ -27,6 +30,8 @@ public class ReceiptAnalysisResult {
         this.taxAmount = taxAmount;
         this.totalAmount = totalAmount;
         this.lineItems = lineItems;
+        this.cabNumber = null;
+        this.driverName = null;
     }
 
     public Long getReceiptId() {
@@ -51,6 +56,14 @@ public class ReceiptAnalysisResult {
 
     public void setVendorName(String vendorName) {
         this.vendorName = vendorName;
+    }
+
+    public String getAccountNumber() {
+        return accountNumber;
+    }
+
+    public void setAccountNumber(String accountNumber) {
+        this.accountNumber = accountNumber;
     }
 
     public LocalDate getReceiptDate() {
@@ -91,5 +104,21 @@ public class ReceiptAnalysisResult {
 
     public void setLineItems(List<LineItem> lineItems) {
         this.lineItems = lineItems;
+    }
+
+    public String getCabNumber() {
+        return cabNumber;
+    }
+
+    public void setCabNumber(String cabNumber) {
+        this.cabNumber = cabNumber;
+    }
+
+    public String getDriverName() {
+        return driverName;
+    }
+
+    public void setDriverName(String driverName) {
+        this.driverName = driverName;
     }
 }

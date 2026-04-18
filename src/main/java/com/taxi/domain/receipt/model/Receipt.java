@@ -43,6 +43,9 @@ public class Receipt {
     @Column(name = "raw_claude_response", columnDefinition = "LONGTEXT")
     private String rawClaudeResponse;
 
+    @Column(name = "notes", columnDefinition = "TEXT")
+    private String notes;
+
     @Column(name = "status")
     private String status;
 
@@ -57,6 +60,12 @@ public class Receipt {
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "owner_id")
     private Driver owner;
+
+    @Column(name = "account_customer_id")
+    private Long accountCustomerId;
+
+    @Column(name = "shift_type")
+    private String shiftType;
 
     @Column(name = "created_at")
     private LocalDateTime createdAt;
@@ -159,6 +168,14 @@ public class Receipt {
         this.rawClaudeResponse = rawClaudeResponse;
     }
 
+    public String getNotes() {
+        return notes;
+    }
+
+    public void setNotes(String notes) {
+        this.notes = notes;
+    }
+
     public String getStatus() {
         return status;
     }
@@ -205,5 +222,21 @@ public class Receipt {
 
     public void setOwner(Driver owner) {
         this.owner = owner;
+    }
+
+    public Long getAccountCustomerId() {
+        return accountCustomerId;
+    }
+
+    public void setAccountCustomerId(Long accountCustomerId) {
+        this.accountCustomerId = accountCustomerId;
+    }
+
+    public String getShiftType() {
+        return shiftType;
+    }
+
+    public void setShiftType(String shiftType) {
+        this.shiftType = shiftType;
     }
 }

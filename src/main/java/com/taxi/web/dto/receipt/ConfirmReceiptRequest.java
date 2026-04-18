@@ -14,6 +14,10 @@ public class ConfirmReceiptRequest {
     private BigDecimal totalAmount;
     private List<LineItem> lineItems;
     private String notes;
+    private Long cabId;
+    private Long ownerId;
+    private Long accountCustomerId;
+    private String shiftType;
 
     public ConfirmReceiptRequest() {}
 
@@ -79,5 +83,37 @@ public class ConfirmReceiptRequest {
 
     public void setNotes(String notes) {
         this.notes = notes;
+    }
+
+    public Long getCabId() {
+        return cabId;
+    }
+
+    public void setCabId(Long cabId) {
+        this.cabId = cabId;
+    }
+
+    public Long getOwnerId() {
+        return ownerId;
+    }
+
+    public void setOwnerId(Long ownerId) {
+        this.ownerId = ownerId;
+    }
+
+    public Long getAccountCustomerId() {
+        return accountCustomerId;
+    }
+
+    public void setAccountCustomerId(Long accountCustomerId) {
+        this.accountCustomerId = accountCustomerId;
+    }
+
+    public String getShiftType() {
+        return shiftType;
+    }
+
+    public void setShiftType(String shiftType) {
+        this.shiftType = shiftType;
     }
 }

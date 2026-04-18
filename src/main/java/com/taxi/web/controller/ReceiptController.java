@@ -1,6 +1,7 @@
 package com.taxi.web.controller;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.taxi.domain.account.repository.AccountCustomerRepository;
 import com.taxi.domain.receipt.dto.LineItem;
 import com.taxi.domain.receipt.dto.ReceiptAnalysisResult;
 import com.taxi.domain.receipt.model.Receipt;
@@ -40,13 +41,16 @@ public class ReceiptController {
     private final ReceiptRepository receiptRepository;
     private final ReceiptAnalysisService receiptAnalysisService;
     private final ObjectMapper objectMapper;
+    private final AccountCustomerRepository accountCustomerRepository;
 
     public ReceiptController(ReceiptRepository receiptRepository,
                             ReceiptAnalysisService receiptAnalysisService,
-                            ObjectMapper objectMapper) {
+                            ObjectMapper objectMapper,
+                            AccountCustomerRepository accountCustomerRepository) {
         this.receiptRepository = receiptRepository;
         this.receiptAnalysisService = receiptAnalysisService;
         this.objectMapper = objectMapper;
+        this.accountCustomerRepository = accountCustomerRepository;
     }
 
     @PostMapping("/analyze")
@@ -132,12 +136,28 @@ public class ReceiptController {
             receipt.setReceiptDate(request.getReceiptDate());
             receipt.setTaxAmount(request.getTaxAmount());
             receipt.setTotalAmount(request.getTotalAmount());
+            receipt.setNotes(request.getNotes());
+            receipt.setAccountCustomerId(request.getAccountCustomerId());
+            receipt.setShiftType(request.getShiftType());
             receipt.setStatus("CONFIRMED");
 
             // Serialize line items to JSON
             if (request.getLineItems() != null) {
                 String lineItemsJson = objectMapper.writeValueAsString(request.getLineItems());
                 receipt.setLineItemsJson(lineItemsJson);
+            }
+
+            // Set cab and owner if provided (these are optional)
+            if (request.getCabId() != null) {
+                // Note: We're setting the ID only; the entity will be lazy-loaded if needed
+                receipt.setCab(new com.taxi.domain.cab.model.Cab());
+                receipt.getCab().setId(request.getCabId());
+            }
+
+            if (request.getOwnerId() != null) {
+                // Note: We're setting the ID only; the entity will be lazy-loaded if needed
+                receipt.setOwner(new com.taxi.domain.driver.model.Driver());
+                receipt.getOwner().setId(request.getOwnerId());
             }
 
             Receipt updatedReceipt = receiptRepository.save(receipt);
@@ -165,6 +185,7 @@ public class ReceiptController {
             @RequestParam(required = false) Long shiftId,
             @RequestParam(required = false) Long ownerId,
             @RequestParam(required = false) String vendorName,
+            @RequestParam(required = false) String documentType,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int size) {
         try {
@@ -191,6 +212,9 @@ public class ReceiptController {
                 if (vendorName != null && !vendorName.isEmpty()) {
                     predicates.add(cb.like(cb.lower(root.get("vendorName")), "%" + vendorName.toLowerCase() + "%"));
                 }
+                if (documentType != null && !documentType.isEmpty()) {
+                    predicates.add(cb.equal(root.get("documentType"), documentType));
+                }
 
                 return cb.and(predicates.toArray(new jakarta.persistence.criteria.Predicate[0]));
             };
@@ -211,7 +235,23 @@ public class ReceiptController {
                     map.put("driverNumber", receipt.getShift() != null ? receipt.getShift().getDriverNumber() : null);
                     map.put("ownerName", receipt.getOwner() != null ?
                         receipt.getOwner().getFirstName() + " " + receipt.getOwner().getLastName() : null);
+                    map.put("accountCustomerId", receipt.getAccountCustomerId());
+                    String accountName = null;
+                    if (receipt.getAccountCustomerId() != null) {
+                        accountName = accountCustomerRepository.findById(receipt.getAccountCustomerId())
+                            .map(ac -> ac.getCompanyName())
+                            .orElse(null);
+                    }
+                    map.put("accountName", accountName);
+                    map.put("shiftType", receipt.getShiftType());
                     map.put("createdAt", receipt.getCreatedAt());
+                    if (receipt.getImageData() != null) {
+                        String imageDataBase64 = "data:" + receipt.getImageMimeType() + ";base64," +
+                            java.util.Base64.getEncoder().encodeToString(receipt.getImageData());
+                        map.put("imageData", imageDataBase64);
+                    } else {
+                        map.put("imageData", null);
+                    }
                     return map;
                 })
                 .collect(Collectors.toList());

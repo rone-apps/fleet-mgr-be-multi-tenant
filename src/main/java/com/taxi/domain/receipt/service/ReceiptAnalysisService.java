@@ -50,16 +50,8 @@ public class ReceiptAnalysisService {
         }
 
         try {
-            // Convert HEIC to JPEG if needed (Claude doesn't support HEIC)
-            byte[] processedImageData = imageData;
-            String processedMimeType = imageMimeType;
-            if (imageMimeType != null && imageMimeType.contains("heic")) {
-                processedImageData = convertHeicToJpeg(imageData);
-                processedMimeType = "image/jpeg";
-            }
-
-            String imageBase64 = Base64.getEncoder().encodeToString(processedImageData);
-            String mediaType = normalizeMediaType(processedMimeType);
+            String imageBase64 = Base64.getEncoder().encodeToString(imageData);
+            String mediaType = normalizeMediaType(imageMimeType);
 
             // Build Claude API request
             Map<String, Object> requestBody = buildClaudeRequest(imageBase64, mediaType);
@@ -98,11 +90,14 @@ public class ReceiptAnalysisService {
         String analysisPrompt = "Analyze this receipt or bill image. Extract structured data and return ONLY valid JSON:\n" +
             "{\n" +
             "  \"document_type\": \"one of: GAS_RECEIPT|PARKING|MAINTENANCE|BILL|ACCOUNT_CHARGE|AIRPORT_FEE|MEAL|OTHER\",\n" +
-            "  \"vendor_name\": \"string\",\n" +
+            "  \"vendor_name\": \"string (business/vendor name, or account number if no vendor name visible)\",\n" +
+            "  \"account_number\": \"string or null (any account/reference/confirmation number on receipt)\",\n" +
             "  \"receipt_date\": \"YYYY-MM-DD or null\",\n" +
             "  \"subtotal\": number or null,\n" +
             "  \"tax_amount\": number or null,\n" +
             "  \"total_amount\": number or null,\n" +
+            "  \"cab_number\": \"string or null (any handwritten or printed cab/vehicle number)\",\n" +
+            "  \"driver_name\": \"string or null (any handwritten or printed driver/owner name)\",\n" +
             "  \"line_items\": [{\"description\": \"string\", \"quantity\": number, \"unit_price\": number, \"total\": number}]\n" +
             "}\n" +
             "If any field cannot be determined, use null. Return ONLY the JSON object, no additional text.";
@@ -140,16 +135,6 @@ public class ReceiptAnalysisService {
         return requestBody;
     }
 
-    private byte[] convertHeicToJpeg(byte[] heicData) {
-        // Note: Java's built-in ImageIO doesn't support HEIC natively
-        // For now, we'll reject HEIC files with a helpful error message
-        // Users can convert HEIC to JPEG on their device or use the browser's auto-conversion
-        throw new IllegalArgumentException(
-            "HEIC format is not supported. Please convert your image to JPEG, PNG, GIF, or WebP format. " +
-            "On iPhone: Use 'Settings > Camera > Formats > Most Compatible' or export as JPEG from Photos app."
-        );
-    }
-
     private String normalizeMediaType(String mimeType) {
         if (mimeType == null) {
             return "image/jpeg";
@@ -165,9 +150,6 @@ public class ReceiptAnalysisService {
         }
         if (mimeType.contains("webp")) {
             return "image/webp";
-        }
-        if (mimeType.contains("heic")) {
-            return "image/jpeg";
         }
         return "image/jpeg";
     }
@@ -205,6 +187,11 @@ public class ReceiptAnalysisService {
                 ? jsonNode.get("vendor_name").asText()
                 : "";
 
+            String accountNumber = null;
+            if (jsonNode.has("account_number") && !jsonNode.get("account_number").isNull()) {
+                accountNumber = jsonNode.get("account_number").asText();
+            }
+
             LocalDate receiptDate = null;
             if (jsonNode.has("receipt_date") && !jsonNode.get("receipt_date").isNull()) {
                 String dateStr = jsonNode.get("receipt_date").asText();
@@ -226,6 +213,16 @@ public class ReceiptAnalysisService {
             BigDecimal totalAmount = null;
             if (jsonNode.has("total_amount") && !jsonNode.get("total_amount").isNull()) {
                 totalAmount = new BigDecimal(jsonNode.get("total_amount").asDouble());
+            }
+
+            String cabNumber = null;
+            if (jsonNode.has("cab_number") && !jsonNode.get("cab_number").isNull()) {
+                cabNumber = jsonNode.get("cab_number").asText();
+            }
+
+            String driverName = null;
+            if (jsonNode.has("driver_name") && !jsonNode.get("driver_name").isNull()) {
+                driverName = jsonNode.get("driver_name").asText();
             }
 
             List<LineItem> lineItems = new ArrayList<>();
@@ -253,7 +250,7 @@ public class ReceiptAnalysisService {
                 }
             }
 
-            return new ReceiptAnalysisResult(
+            ReceiptAnalysisResult result = new ReceiptAnalysisResult(
                 receiptId,
                 documentType,
                 vendorName,
@@ -263,6 +260,10 @@ public class ReceiptAnalysisService {
                 totalAmount,
                 lineItems
             );
+            result.setAccountNumber(accountNumber);
+            result.setCabNumber(cabNumber);
+            result.setDriverName(driverName);
+            return result;
         } catch (Exception e) {
             logger.error("Failed to parse Claude response", e);
             throw new RuntimeException("Failed to parse Claude analysis result", e);
