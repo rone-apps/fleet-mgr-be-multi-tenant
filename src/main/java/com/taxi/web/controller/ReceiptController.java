@@ -11,6 +11,12 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
+import org.springframework.data.jpa.domain.Specification;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -20,8 +26,11 @@ import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
 import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/receipts")
@@ -145,6 +154,80 @@ public class ReceiptController {
             logger.error("Error confirming receipt", e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                 .body(Map.of("error", "Failed to confirm receipt: " + e.getMessage()));
+        }
+    }
+
+    @GetMapping
+    public ResponseEntity<?> getReceipts(
+            @RequestParam(required = false) LocalDate startDate,
+            @RequestParam(required = false) LocalDate endDate,
+            @RequestParam(required = false) Long cabId,
+            @RequestParam(required = false) Long shiftId,
+            @RequestParam(required = false) Long ownerId,
+            @RequestParam(required = false) String vendorName,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size) {
+        try {
+            Pageable pageable = PageRequest.of(page, size, Sort.by("createdAt").descending());
+
+            Specification<Receipt> spec = (root, query, cb) -> {
+                var predicates = new java.util.ArrayList<>();
+
+                if (startDate != null) {
+                    predicates.add(cb.greaterThanOrEqualTo(root.get("receiptDate"), startDate));
+                }
+                if (endDate != null) {
+                    predicates.add(cb.lessThanOrEqualTo(root.get("receiptDate"), endDate));
+                }
+                if (cabId != null) {
+                    predicates.add(cb.equal(root.get("cab").get("id"), cabId));
+                }
+                if (shiftId != null) {
+                    predicates.add(cb.equal(root.get("shift").get("id"), shiftId));
+                }
+                if (ownerId != null) {
+                    predicates.add(cb.equal(root.get("owner").get("id"), ownerId));
+                }
+                if (vendorName != null && !vendorName.isEmpty()) {
+                    predicates.add(cb.like(cb.lower(root.get("vendorName")), "%" + vendorName.toLowerCase() + "%"));
+                }
+
+                return cb.and(predicates.toArray(new jakarta.persistence.criteria.Predicate[0]));
+            };
+
+            Page<Receipt> receipts = receiptRepository.findAll(spec, pageable);
+
+            List<Map<String, Object>> response = receipts.getContent().stream()
+                .map(receipt -> {
+                    Map<String, Object> map = new HashMap<>();
+                    map.put("id", receipt.getId());
+                    map.put("vendorName", receipt.getVendorName());
+                    map.put("totalAmount", receipt.getTotalAmount());
+                    map.put("taxAmount", receipt.getTaxAmount());
+                    map.put("receiptDate", receipt.getReceiptDate());
+                    map.put("documentType", receipt.getDocumentType());
+                    map.put("status", receipt.getStatus());
+                    map.put("cabNumber", receipt.getCab() != null ? receipt.getCab().getCabNumber() : null);
+                    map.put("driverNumber", receipt.getShift() != null ? receipt.getShift().getDriverNumber() : null);
+                    map.put("ownerName", receipt.getOwner() != null ?
+                        receipt.getOwner().getFirstName() + " " + receipt.getOwner().getLastName() : null);
+                    map.put("createdAt", receipt.getCreatedAt());
+                    return map;
+                })
+                .collect(Collectors.toList());
+
+            return ResponseEntity.ok(Map.of(
+                "content", response,
+                "totalElements", receipts.getTotalElements(),
+                "totalPages", receipts.getTotalPages(),
+                "currentPage", page,
+                "pageSize", size
+            ));
+
+        } catch (Exception e) {
+            logger.error("Error fetching receipts", e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body(Map.of("error", "Failed to fetch receipts: " + e.getMessage()));
         }
     }
 }
