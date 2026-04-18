@@ -189,6 +189,9 @@ public class ReceiptController {
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int size) {
         try {
+            logger.info("GET /api/receipts - Filters: ownerId={}, vendorName={}, documentType={}, startDate={}, endDate={}",
+                ownerId, vendorName, documentType, startDate, endDate);
+
             Pageable pageable = PageRequest.of(page, size, Sort.by("createdAt").descending());
 
             Specification<Receipt> spec = (root, query, cb) -> {
@@ -207,7 +210,11 @@ public class ReceiptController {
                     predicates.add(cb.equal(root.get("shift").get("id"), shiftId));
                 }
                 if (ownerId != null) {
-                    predicates.add(cb.equal(root.get("owner").get("id"), ownerId));
+                    // Filter by owner ID, excluding null owners
+                    predicates.add(cb.and(
+                        cb.isNotNull(root.get("owner")),
+                        cb.equal(root.get("owner").get("id"), ownerId)
+                    ));
                 }
                 if (vendorName != null && !vendorName.isEmpty()) {
                     predicates.add(cb.like(cb.lower(root.get("vendorName")), "%" + vendorName.toLowerCase() + "%"));
@@ -220,6 +227,26 @@ public class ReceiptController {
             };
 
             Page<Receipt> receipts = receiptRepository.findAll(spec, pageable);
+
+            logger.info("Receipts query result: {} receipts found (page {} of {}, total: {})",
+                receipts.getContent().size(), page, receipts.getTotalPages(), receipts.getTotalElements());
+
+            if (ownerId != null) {
+                // Log details about owner filtering
+                long totalReceipts = receiptRepository.count();
+                long reciptsWithOwner = receipts.getTotalElements();
+                logger.info("Owner filter ownerId={}: {} receipts found with this owner (total receipts: {})",
+                    ownerId, reciptsWithOwner, totalReceipts);
+
+                // Log the first few receipts' owner info for debugging
+                for (Receipt r : receipts.getContent()) {
+                    if (r.getOwner() != null) {
+                        logger.debug("Receipt {}: owner.id={}, owner.name={}", r.getId(), r.getOwner().getId(), r.getOwner().getFirstName());
+                    } else {
+                        logger.debug("Receipt {}: owner is NULL", r.getId());
+                    }
+                }
+            }
 
             List<Map<String, Object>> response = receipts.getContent().stream()
                 .map(receipt -> {

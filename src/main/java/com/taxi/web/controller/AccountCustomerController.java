@@ -41,7 +41,7 @@ public class AccountCustomerController {
     }
 
     @GetMapping
-    @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER', 'ACCOUNTANT', 'DISPATCHER')")
+    @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER', 'ACCOUNTANT', 'DISPATCHER', 'DRIVER')")
     public ResponseEntity<List<AccountCustomer>> getAllCustomers() {
         List<AccountCustomer> customers = accountCustomerService.getAllCustomers();
         return ResponseEntity.ok(customers);
@@ -64,7 +64,7 @@ public class AccountCustomerController {
     }
 
     @GetMapping("/active")
-    @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER', 'ACCOUNTANT', 'DISPATCHER')")
+    @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER', 'ACCOUNTANT', 'DISPATCHER', 'DRIVER')")
     public ResponseEntity<List<AccountCustomer>> getActiveCustomers() {
         List<AccountCustomer> customers = accountCustomerService.getActiveCustomers();
         return ResponseEntity.ok(customers);
@@ -85,7 +85,7 @@ public class AccountCustomerController {
     }
 
     @GetMapping("/search")
-    @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER', 'ACCOUNTANT', 'DISPATCHER')")
+    @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER', 'ACCOUNTANT', 'DISPATCHER', 'DRIVER')")
     public ResponseEntity<List<AccountCustomer>> searchByCompanyName(@RequestParam String name) {
         List<AccountCustomer> customers = accountCustomerService.searchByCompanyName(name);
         return ResponseEntity.ok(customers);

@@ -33,14 +33,19 @@ public class CabController {
     private final CabService cabService;
 
     /**
-     * Get all cabs
-     * GET /api/cabs
+     * Get all cabs or cabs by owner
+     * GET /api/cabs?ownerId={ownerId}
      */
     @GetMapping
-    @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER', 'DISPATCHER')")
-    public ResponseEntity<List<CabDTO>> getAllCabs() {
-        log.info("GET /api/cabs - Get all cabs");
-        List<CabDTO> cabs = cabService.getAllCabs();
+    @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER', 'DISPATCHER', 'DRIVER')")
+    public ResponseEntity<List<CabDTO>> getAllCabs(@RequestParam(required = false) Long ownerId) {
+        log.info("GET /api/cabs - Get all cabs" + (ownerId != null ? " for owner: " + ownerId : ""));
+        List<CabDTO> cabs;
+        if (ownerId != null) {
+            cabs = cabService.getCabsByOwnerId(ownerId);
+        } else {
+            cabs = cabService.getAllCabs();
+        }
         return ResponseEntity.ok(cabs);
     }
 

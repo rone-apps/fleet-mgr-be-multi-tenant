@@ -65,6 +65,22 @@ public class CabService {
     }
 
     /**
+     * Get cabs by owner ID (for drivers to see their cabs)
+     * Filters by checking which cabs have shifts owned by the specified driver
+     */
+    @Transactional(readOnly = true)
+    public List<CabDTO> getCabsByOwnerId(Long ownerId) {
+        log.info("Getting cabs for owner (driver): {}", ownerId);
+        return cabRepository.findAllWithShifts().stream()
+                .filter(c -> c.getShifts() != null &&
+                           c.getShifts().stream()
+                            .anyMatch(shift -> shift.getCurrentOwner() != null &&
+                                             shift.getCurrentOwner().getId().equals(ownerId)))
+                .map(CabDTO::fromEntity)
+                .collect(Collectors.toList());
+    }
+
+    /**
      * DEPRECATED: Get cabs by type
      *
      * Cab type is now managed at shift level, not cab level.
