@@ -250,36 +250,91 @@ public class ReceiptController {
 
             List<Map<String, Object>> response = receipts.getContent().stream()
                 .map(receipt -> {
-                    Map<String, Object> map = new HashMap<>();
-                    map.put("id", receipt.getId());
-                    map.put("vendorName", receipt.getVendorName());
-                    map.put("totalAmount", receipt.getTotalAmount());
-                    map.put("taxAmount", receipt.getTaxAmount());
-                    map.put("receiptDate", receipt.getReceiptDate());
-                    map.put("documentType", receipt.getDocumentType());
-                    map.put("status", receipt.getStatus());
-                    map.put("cabNumber", receipt.getCab() != null ? receipt.getCab().getCabNumber() : null);
-                    map.put("driverNumber", receipt.getShift() != null ? receipt.getShift().getDriverNumber() : null);
-                    map.put("ownerName", receipt.getOwner() != null ?
-                        receipt.getOwner().getFirstName() + " " + receipt.getOwner().getLastName() : null);
-                    map.put("accountCustomerId", receipt.getAccountCustomerId());
-                    String accountName = null;
-                    if (receipt.getAccountCustomerId() != null) {
-                        accountName = accountCustomerRepository.findById(receipt.getAccountCustomerId())
-                            .map(ac -> ac.getCompanyName())
-                            .orElse(null);
+                    try {
+                        Map<String, Object> map = new HashMap<>();
+                        map.put("id", receipt.getId());
+                        map.put("vendorName", receipt.getVendorName());
+                        map.put("totalAmount", receipt.getTotalAmount());
+                        map.put("taxAmount", receipt.getTaxAmount());
+                        map.put("receiptDate", receipt.getReceiptDate());
+                        map.put("documentType", receipt.getDocumentType());
+                        map.put("status", receipt.getStatus());
+
+                        // Safely get cab number
+                        String cabNumber = null;
+                        try {
+                            if (receipt.getCab() != null) {
+                                cabNumber = receipt.getCab().getCabNumber();
+                            }
+                        } catch (Exception e) {
+                            logger.debug("Error loading cab for receipt {}: {}", receipt.getId(), e.getMessage());
+                        }
+                        map.put("cabNumber", cabNumber);
+
+                        // Safely get driver number from shift
+                        String driverNumber = null;
+                        try {
+                            if (receipt.getShift() != null) {
+                                driverNumber = receipt.getShift().getDriverNumber();
+                            }
+                        } catch (Exception e) {
+                            logger.debug("Error loading shift for receipt {}: {}", receipt.getId(), e.getMessage());
+                        }
+                        map.put("driverNumber", driverNumber);
+
+                        // Safely get owner name
+                        String ownerName = null;
+                        try {
+                            if (receipt.getOwner() != null) {
+                                ownerName = receipt.getOwner().getFirstName() + " " + receipt.getOwner().getLastName();
+                            }
+                        } catch (Exception e) {
+                            logger.debug("Error loading owner for receipt {}: {}", receipt.getId(), e.getMessage());
+                        }
+                        map.put("ownerName", ownerName);
+
+                        map.put("accountCustomerId", receipt.getAccountCustomerId());
+
+                        // Safely get account name
+                        String accountName = null;
+                        if (receipt.getAccountCustomerId() != null) {
+                            try {
+                                accountName = accountCustomerRepository.findById(receipt.getAccountCustomerId())
+                                    .map(ac -> ac.getCompanyName())
+                                    .orElse(null);
+                            } catch (Exception e) {
+                                logger.debug("Error loading account customer for receipt {}: {}", receipt.getId(), e.getMessage());
+                            }
+                        }
+                        map.put("accountName", accountName);
+
+                        map.put("shiftType", receipt.getShiftType());
+                        map.put("createdAt", receipt.getCreatedAt());
+
+                        // Safely encode image data
+                        if (receipt.getImageData() != null) {
+                            try {
+                                String imageDataBase64 = "data:" + receipt.getImageMimeType() + ";base64," +
+                                    java.util.Base64.getEncoder().encodeToString(receipt.getImageData());
+                                map.put("imageData", imageDataBase64);
+                            } catch (Exception e) {
+                                logger.debug("Error encoding image for receipt {}: {}", receipt.getId(), e.getMessage());
+                                map.put("imageData", null);
+                            }
+                        } else {
+                            map.put("imageData", null);
+                        }
+                        return map;
+                    } catch (Exception e) {
+                        logger.error("Error mapping receipt {}: {}", receipt.getId(), e.getMessage());
+                        // Return minimal response for this receipt
+                        Map<String, Object> map = new HashMap<>();
+                        map.put("id", receipt.getId());
+                        map.put("vendorName", receipt.getVendorName());
+                        map.put("totalAmount", receipt.getTotalAmount());
+                        map.put("status", receipt.getStatus());
+                        return map;
                     }
-                    map.put("accountName", accountName);
-                    map.put("shiftType", receipt.getShiftType());
-                    map.put("createdAt", receipt.getCreatedAt());
-                    if (receipt.getImageData() != null) {
-                        String imageDataBase64 = "data:" + receipt.getImageMimeType() + ";base64," +
-                            java.util.Base64.getEncoder().encodeToString(receipt.getImageData());
-                        map.put("imageData", imageDataBase64);
-                    } else {
-                        map.put("imageData", null);
-                    }
-                    return map;
                 })
                 .collect(Collectors.toList());
 
