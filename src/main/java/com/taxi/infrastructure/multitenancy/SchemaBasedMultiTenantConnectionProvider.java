@@ -43,12 +43,13 @@ public class SchemaBasedMultiTenantConnectionProvider
     
     @Override
     public Connection getConnection(String tenantIdentifier) throws SQLException {
-        log.debug("Getting connection for tenant: {}", tenantIdentifier);
-        
+        log.info("MULTI_TENANT: getConnection() called with tenantIdentifier: {}", tenantIdentifier);
+
         Connection connection = dataSource.getConnection();
-        
+
         // Determine the schema to use
         String schema = sanitizeSchemaName(tenantIdentifier);
+        log.info("MULTI_TENANT: Sanitized schema name: {}", schema);
         
         // If schema is empty or null, use the default
         if (schema == null || schema.isEmpty()) {
@@ -58,12 +59,14 @@ public class SchemaBasedMultiTenantConnectionProvider
         try {
             // For MySQL, use the database/schema
             try (Statement stmt = connection.createStatement()) {
-                stmt.execute("USE `" + schema + "`");
-                log.debug("Switched to schema: {}", schema);
+                String useStatement = "USE `" + schema + "`";
+                log.info("MULTI_TENANT: Executing: {}", useStatement);
+                stmt.execute(useStatement);
+                log.info("MULTI_TENANT: Successfully switched to schema: {}", schema);
             }
         } catch (SQLException e) {
             // Schema doesn't exist, fall back to default (fareflow)
-            log.warn("Schema '{}' not found or access denied, using default: {}", schema, TenantContext.SYSTEM_TENANT);
+            log.warn("MULTI_TENANT: Schema '{}' not found or access denied, falling back to default: {}", schema, TenantContext.SYSTEM_TENANT, e);
             try (Statement stmt = connection.createStatement()) {
                 stmt.execute("USE `" + TenantContext.SYSTEM_TENANT + "`");
                 log.debug("Switched to default schema: {}", TenantContext.SYSTEM_TENANT);

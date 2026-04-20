@@ -3,6 +3,7 @@ package com.taxi.web.controller;
 import com.taxi.domain.report.ReportJobStatus;
 import com.taxi.domain.report.service.ReportCacheService;
 import com.taxi.domain.report.service.ReportService;
+import com.taxi.infrastructure.multitenancy.TenantContext;
 import com.taxi.web.dto.report.DriverSummaryReportDTO;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -133,8 +134,11 @@ public class DriverSummaryController {
 
         log.info("Starting async report generation - jobId: {}, dates: {} to {}", jobId, startDate, endDate);
 
+        // Get current tenant to pass to async method (ThreadLocal won't carry over)
+        String tenantId = TenantContext.getCurrentTenant();
+
         reportService.generateReportAsync(jobId, startDate, endDate,
-                personType.toUpperCase(), quickMode, sort, direction);
+                personType.toUpperCase(), quickMode, sort, direction, tenantId);
 
         Map<String, Object> response = new HashMap<>();
         response.put("jobId", jobId);

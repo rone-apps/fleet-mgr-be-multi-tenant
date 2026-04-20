@@ -15,6 +15,7 @@ import com.taxi.web.dto.expense.StatementLineItem;
 import com.taxi.domain.report.ReportJobStatus;
 import com.taxi.domain.statement.repository.StatementRepository;
 import com.taxi.domain.statement.model.Statement;
+import com.taxi.infrastructure.multitenancy.TenantContext;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Async;
@@ -977,8 +978,31 @@ public class ReportService {
     // ═══════════════════════════════════════════════════════════════════════
 
     @Async("uploadTaskExecutor")
-    @Transactional(readOnly = true)
     public void generateReportAsync(
+            String jobId,
+            LocalDate startDate,
+            LocalDate endDate,
+            String personType,
+            boolean quickMode,
+            String sortField,
+            String sortDirection,
+            String tenantId) {
+
+        // Set tenant context BEFORE starting transaction
+        log.error("ASYNC REPORT: Setting tenant context to: {} for job {}", tenantId, jobId);
+        TenantContext.setCurrentTenant(tenantId);
+        log.error("ASYNC REPORT: Tenant context successfully set");
+
+        try {
+            // Call transactional method AFTER tenant context is set
+            generateReportAsyncInternal(jobId, startDate, endDate, personType, quickMode, sortField, sortDirection);
+        } finally {
+            TenantContext.clear();
+        }
+    }
+
+    @Transactional(readOnly = true)
+    private void generateReportAsyncInternal(
             String jobId,
             LocalDate startDate,
             LocalDate endDate,
@@ -1013,8 +1037,16 @@ public class ReportService {
             String mappedSort = "driverName".equalsIgnoreCase(sortField) ? "lastName" : sortField;
             org.springframework.data.domain.Sort sort = org.springframework.data.domain.Sort.by(dir, mappedSort);
 
+            log.error("ASYNC REPORT: Before findAll - TenantContext is: {}", TenantContext.getCurrentTenant());
             List<Driver> allDrivers = driverRepository.findAll(spec, sort);
             int totalDriverCount = allDrivers.size();
+
+            // Log first driver to verify which schema was queried
+            if (!allDrivers.isEmpty()) {
+                Driver firstDriver = allDrivers.get(0);
+                log.error("ASYNC REPORT: First driver returned: {} {} (should be anonymized name like Emma, Liam, Noah if fareflow_demo)",
+                        firstDriver.getFirstName(), firstDriver.getLastName());
+            }
 
             // Set totalDrivers immediately so FE can show progress
             jobStatus.setTotalDrivers(totalDriverCount);
@@ -1185,6 +1217,8 @@ public class ReportService {
             jobStatus.setMessage("Report generation failed: " + e.getMessage());
             jobStatus.getErrors().add(e.getMessage());
             jobStatus.setEndTime(LocalDateTime.now());
+        } finally {
+            TenantContext.clear();
         }
     }
 

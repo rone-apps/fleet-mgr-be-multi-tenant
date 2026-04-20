@@ -21,11 +21,11 @@ public class TenantIdentifierResolver
     public String resolveCurrentTenantIdentifier() {
         try {
             String tenant = TenantContext.getCurrentTenant();
-            log.debug("Resolved current tenant: {}", tenant);
+            log.info("MULTI_TENANT: TenantIdentifierResolver.resolveCurrentTenantIdentifier() returning: {}", tenant);
             return tenant;
         } catch (IllegalStateException e) {
             // During startup/non-request contexts, fall back to system tenant
-            log.debug("No tenant set, using system tenant: {}", TenantContext.SYSTEM_TENANT);
+            log.info("MULTI_TENANT: No tenant set in TenantContext, using system default: {}", TenantContext.SYSTEM_TENANT);
             return TenantContext.SYSTEM_TENANT;
         }
     }
