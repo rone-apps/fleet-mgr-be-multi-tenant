@@ -50,8 +50,19 @@ public class ReceiptAnalysisService {
         }
 
         try {
-            String imageBase64 = Base64.getEncoder().encodeToString(imageData);
+            // Validate and convert image if necessary
+            byte[] processedImageData = validateAndProcessImage(imageData, imageMimeType);
             String mediaType = normalizeMediaType(imageMimeType);
+
+            logger.info("Processing receipt image - Original size: {} bytes, mime type: {}, processed size: {} bytes",
+                imageData.length, imageMimeType, processedImageData.length);
+
+            String imageBase64 = Base64.getEncoder().encodeToString(processedImageData);
+
+            // Validate Base64 string (must not have newlines or invalid chars)
+            if (!imageBase64.matches("^[A-Za-z0-9+/]*={0,2}$")) {
+                throw new IllegalArgumentException("Invalid Base64 encoding - contains invalid characters");
+            }
 
             // Build Claude API request
             Map<String, Object> requestBody = buildClaudeRequest(imageBase64, mediaType);
@@ -135,9 +146,91 @@ public class ReceiptAnalysisService {
         return requestBody;
     }
 
+    private byte[] validateAndProcessImage(byte[] imageData, String mimeType) throws IOException {
+        if (imageData == null || imageData.length == 0) {
+            throw new IllegalArgumentException("Image data is empty");
+        }
+
+        // iPhone sometimes reports HEIC as jpeg - detect actual format by magic bytes
+        String actualFormat = detectImageFormat(imageData);
+        logger.debug("Detected actual image format: {} (reported as: {})", actualFormat, mimeType);
+
+        // Convert HEIC/HEIF to JPEG if needed
+        if (actualFormat.equalsIgnoreCase("heic") || actualFormat.equalsIgnoreCase("heif")) {
+            logger.info("Converting HEIC/HEIF image to JPEG for compatibility");
+            return convertHeicToJpeg(imageData);
+        }
+
+        // Try to re-encode as JPEG if image appears corrupted or is unusual format
+        if (actualFormat.equalsIgnoreCase("unknown") || imageData.length < 100) {
+            logger.warn("Image format unknown or too small ({} bytes), attempting re-encode", imageData.length);
+            return reencodeImageAsJpeg(imageData);
+        }
+
+        return imageData;
+    }
+
+    private String detectImageFormat(byte[] imageData) {
+        if (imageData.length < 12) return "unknown";
+
+        // Check magic bytes for common formats
+        if (imageData[0] == (byte) 0xFF && imageData[1] == (byte) 0xD8) return "jpeg";
+        if (imageData[0] == (byte) 0x89 && imageData[1] == 'P' && imageData[2] == 'N' && imageData[3] == 'G') return "png";
+        if (imageData[0] == 'G' && imageData[1] == 'I' && imageData[2] == 'F') return "gif";
+        if (imageData[0] == 'R' && imageData[1] == 'I' && imageData[2] == 'F' && imageData[3] == 'F') {
+            // Check for WebP or HEIC
+            if (imageData.length > 12 && imageData[8] == 'W' && imageData[9] == 'E') return "webp";
+            if (imageData.length > 12 && imageData[8] == 'f' && imageData[9] == 't') return "heic"; // ftyp = HEIC
+        }
+
+        return "unknown";
+    }
+
+    private byte[] convertHeicToJpeg(byte[] heicData) throws IOException {
+        try {
+            // Try to read as BufferedImage and re-encode
+            BufferedImage image = ImageIO.read(new ByteArrayInputStream(heicData));
+            if (image != null) {
+                return reencodeImage(image, "jpeg");
+            }
+        } catch (Exception e) {
+            logger.warn("Failed to convert HEIC via ImageIO: {}", e.getMessage());
+        }
+
+        // If ImageIO fails, return original - Anthropic API might support it
+        logger.warn("Could not convert HEIC image, sending as-is to Claude API");
+        return heicData;
+    }
+
+    private byte[] reencodeImageAsJpeg(byte[] imageData) throws IOException {
+        try {
+            BufferedImage image = ImageIO.read(new ByteArrayInputStream(imageData));
+            if (image != null) {
+                return reencodeImage(image, "jpeg");
+            }
+        } catch (Exception e) {
+            logger.warn("Failed to re-encode image: {}", e.getMessage());
+        }
+
+        // If all else fails, return original data
+        return imageData;
+    }
+
+    private byte[] reencodeImage(BufferedImage image, String format) throws IOException {
+        ByteArrayOutputStream baos = new ByteArrayOutputStream();
+        ImageIO.write(image, format, baos);
+        byte[] result = baos.toByteArray();
+        baos.close();
+        logger.info("Re-encoded image to {} - new size: {} bytes", format, result.length);
+        return result;
+    }
+
     private String normalizeMediaType(String mimeType) {
         if (mimeType == null) {
             return "image/jpeg";
+        }
+        if (mimeType.contains("heic") || mimeType.contains("heif")) {
+            return "image/jpeg"; // Convert HEIC to JPEG for Claude API compatibility
         }
         if (mimeType.contains("jpeg") || mimeType.contains("jpg")) {
             return "image/jpeg";

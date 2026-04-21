@@ -96,19 +96,29 @@ public class ReceiptController {
             return ResponseEntity.ok(analysisResult);
 
         } catch (IOException e) {
-            logger.error("IO error while reading image file", e);
+            logger.error("IO error while reading image file: {}", e.getMessage(), e);
             return ResponseEntity.status(HttpStatus.BAD_REQUEST)
                 .body(Map.of("error", "Failed to read image file: " + e.getMessage()));
         } catch (IllegalArgumentException e) {
-            logger.error("Unsupported image format", e);
+            logger.error("Image validation error: {}", e.getMessage(), e);
             return ResponseEntity.status(HttpStatus.BAD_REQUEST)
                 .body(Map.of("error", e.getMessage()));
         } catch (IllegalStateException e) {
-            logger.error("Configuration error", e);
+            logger.error("Configuration error: {}", e.getMessage(), e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                 .body(Map.of("error", e.getMessage()));
+        } catch (RuntimeException e) {
+            // Handle Claude API errors like "string did not match expected pattern"
+            if (e.getMessage() != null && e.getMessage().contains("pattern")) {
+                logger.error("Claude API rejected image (pattern mismatch): {}", e.getMessage(), e);
+                return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                    .body(Map.of("error", "Image format issue - try retaking the photo or using a different device"));
+            }
+            logger.error("Error analyzing receipt: {}", e.getMessage(), e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body(Map.of("error", "Failed to analyze receipt: " + e.getMessage()));
         } catch (Exception e) {
-            logger.error("Error analyzing receipt", e);
+            logger.error("Unexpected error analyzing receipt: {}", e.getMessage(), e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                 .body(Map.of("error", "Failed to analyze receipt: " + e.getMessage()));
         }
