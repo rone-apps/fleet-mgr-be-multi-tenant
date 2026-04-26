@@ -28,8 +28,18 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.mail.SimpleMailMessage;
+import org.springframework.mail.javamail.JavaMailSender;
+import org.springframework.mail.javamail.MimeMessageHelper;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
+import jakarta.mail.MessagingException;
+import jakarta.mail.internet.MimeMessage;
 
 import java.io.IOException;
+import java.io.ByteArrayInputStream;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.HashMap;
@@ -48,6 +58,15 @@ public class ReceiptController {
     private final ObjectMapper objectMapper;
     private final ReceiptClassifierService receiptClassifierService;
     private final ReceiptTypeConverterRegistry converterRegistry;
+
+    @Autowired(required = false)
+    private JavaMailSender mailSender;
+
+    @Value("${spring.mail.username:noreply@smartfleets.ai}")
+    private String mailFrom;
+
+    @Value("${spring.mail.sender-name:Smart Fleets}")
+    private String senderName;
 
     public ReceiptController(ReceiptRepository receiptRepository,
                             ReceiptAnalysisService receiptAnalysisService,
@@ -204,8 +223,9 @@ public class ReceiptController {
                 return ResponseEntity.notFound().build();
             }
 
-            // Update receipt with confirmed data (minimal fields only)
+            // Update receipt with confirmed data
             receipt.setReceiptType(request.getDocumentType());
+            receipt.setShiftType(request.getShiftType());
             receipt.setStatus("CONFIRMED");
 
             // Set cab and owner if provided
@@ -219,22 +239,13 @@ public class ReceiptController {
                 receipt.getOwner().setId(request.getOwnerId());
             }
 
-            Receipt updatedReceipt = receiptRepository.save(receipt);
+            // Capture the user who updated this receipt
+            Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+            if (auth != null && auth.isAuthenticated()) {
+                receipt.setUpdatedBy(auth.getName());
+            }
 
-            // Run type-specific converter (Step 2 of the two-step flow)
-            ReceiptType type = ReceiptType.fromString(updatedReceipt.getReceiptType());
-            converterRegistry.getConverter(type).ifPresent(converter -> {
-                try {
-                    Map<String, Object> parsedJson = null;
-                    if (updatedReceipt.getParsedDataJson() != null) {
-                        parsedJson = objectMapper.readValue(updatedReceipt.getParsedDataJson(), new TypeReference<Map<String, Object>>() {});
-                    }
-                    converter.convert(updatedReceipt, parsedJson, request);
-                    logger.info("Converter ran for receipt {} type {}", updatedReceipt.getId(), type);
-                } catch (Exception e) {
-                    logger.error("Converter failed for receipt {}: {}", updatedReceipt.getId(), e.getMessage(), e);
-                }
-            });
+            Receipt updatedReceipt = receiptRepository.save(receipt);
 
             logger.info("Receipt confirmed: {}", updatedReceipt.getId());
 
@@ -248,6 +259,76 @@ public class ReceiptController {
             logger.error("Error confirming receipt", e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                 .body(Map.of("error", "Failed to confirm receipt: " + e.getMessage()));
+        }
+    }
+
+    @PostMapping("/send-email")
+    public ResponseEntity<?> sendReceiptEmail(@RequestBody Map<String, String> request) {
+        try {
+            String recipientEmail = request.get("recipientEmail");
+            String subject = request.get("subject");
+            String message = request.get("message");
+            String receiptId = request.get("receiptId");
+            String imageData = request.get("imageData");
+
+            if (recipientEmail == null || recipientEmail.trim().isEmpty()) {
+                return ResponseEntity.badRequest().body(Map.of("error", "Recipient email is required"));
+            }
+
+            if (mailSender == null) {
+                logger.warn("Email service not configured");
+                return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of("error", "Email service not configured"));
+            }
+
+            MimeMessage mimeMessage = mailSender.createMimeMessage();
+            MimeMessageHelper helper = new MimeMessageHelper(mimeMessage, true);
+            helper.setTo(recipientEmail);
+            helper.setFrom(mailFrom, senderName);
+            helper.setSubject(subject != null ? subject : "Receipt");
+
+            StringBuilder body = new StringBuilder();
+            body.append("Receipt ID: ").append(receiptId).append("\n\n");
+            if (message != null && !message.isEmpty()) {
+                body.append("Note:\n").append(message).append("\n\n");
+            }
+            body.append("Sent from Receipt Scanner");
+
+            helper.setText(body.toString());
+
+            // Attach image if provided
+            if (imageData != null && !imageData.isEmpty()) {
+                try {
+                    // Extract base64 data (remove data:image/...;base64, prefix if present)
+                    String base64Data = imageData;
+                    if (base64Data.contains(",")) {
+                        base64Data = base64Data.split(",")[1];
+                    }
+
+                    byte[] imageBytes = java.util.Base64.getDecoder().decode(base64Data);
+                    String filename = "receipt-" + receiptId + ".jpg";
+
+                    helper.addAttachment(filename, new org.springframework.core.io.ByteArrayResource(imageBytes), "image/jpeg");
+                    logger.debug("Attached image to email: {}", filename);
+                } catch (Exception e) {
+                    logger.warn("Failed to attach image to email: {}", e.getMessage());
+                    // Continue sending email without attachment
+                }
+            }
+
+            mailSender.send(mimeMessage);
+
+            logger.info("Email sent successfully to {} for receipt {}", recipientEmail, receiptId);
+            return ResponseEntity.ok(Map.of("message", "Email sent successfully"));
+
+        } catch (MessagingException e) {
+            logger.error("Messaging error sending email: {}", e.getMessage(), e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body(Map.of("error", "Failed to send email: " + e.getMessage()));
+        } catch (Exception e) {
+            logger.error("Error sending email: {}", e.getMessage(), e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body(Map.of("error", "Failed to send email: " + e.getMessage()));
         }
     }
 
@@ -316,31 +397,40 @@ public class ReceiptController {
                         Map<String, Object> map = new HashMap<>();
                         map.put("id", receipt.getId());
                         map.put("receiptType", receipt.getReceiptType());
+                        map.put("shiftType", receipt.getShiftType());
                         map.put("status", receipt.getStatus());
 
-                        // Safely get cab number
+                        // Safely get cab info
                         String cabNumber = null;
+                        Long cabIdValue = null;
                         try {
                             if (receipt.getCab() != null) {
                                 cabNumber = receipt.getCab().getCabNumber();
+                                cabIdValue = receipt.getCab().getId();
                             }
                         } catch (Exception e) {
                             logger.debug("Error loading cab for receipt {}: {}", receipt.getId(), e.getMessage());
                         }
                         map.put("cabNumber", cabNumber);
+                        map.put("cabId", cabIdValue);
 
-                        // Safely get owner name
+                        // Safely get owner/driver info
                         String ownerName = null;
+                        Long ownerIdValue = null;
                         try {
                             if (receipt.getOwner() != null) {
                                 ownerName = receipt.getOwner().getFirstName() + " " + receipt.getOwner().getLastName();
+                                ownerIdValue = receipt.getOwner().getId();
                             }
                         } catch (Exception e) {
                             logger.debug("Error loading owner for receipt {}: {}", receipt.getId(), e.getMessage());
                         }
                         map.put("ownerName", ownerName);
+                        map.put("ownerId", ownerIdValue);
 
                         map.put("createdAt", receipt.getCreatedAt());
+                        map.put("updatedAt", receipt.getUpdatedAt());
+                        map.put("updatedBy", receipt.getUpdatedBy());
 
                         // Safely encode image data
                         if (receipt.getImageData() != null) {
@@ -363,6 +453,7 @@ public class ReceiptController {
                         map.put("id", receipt.getId());
                         map.put("receiptType", receipt.getReceiptType());
                         map.put("status", receipt.getStatus());
+                        map.put("updatedBy", receipt.getUpdatedBy());
                         return map;
                     }
                 })

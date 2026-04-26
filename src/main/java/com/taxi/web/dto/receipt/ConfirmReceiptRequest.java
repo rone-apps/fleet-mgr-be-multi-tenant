@@ -5,7 +5,7 @@ public class ConfirmReceiptRequest {
     private String documentType;
     private Long cabId;
     private Long ownerId;
-    private Long accountCustomerId;
+    private String shiftType;
 
     public ConfirmReceiptRequest() {}
 
@@ -41,11 +41,11 @@ public class ConfirmReceiptRequest {
         this.ownerId = ownerId;
     }
 
-    public Long getAccountCustomerId() {
-        return accountCustomerId;
+    public String getShiftType() {
+        return shiftType;
     }
 
-    public void setAccountCustomerId(Long accountCustomerId) {
-        this.accountCustomerId = accountCustomerId;
+    public void setShiftType(String shiftType) {
+        this.shiftType = shiftType;
     }
 }

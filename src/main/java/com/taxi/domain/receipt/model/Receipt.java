@@ -25,6 +25,9 @@ public class Receipt {
     @Column(name = "receipt_type", length = 50)
     private String receiptType;
 
+    @Column(name = "shift_type", length = 50)
+    private String shiftType;
+
     @Column(name = "status")
     private String status;
 
@@ -41,6 +44,9 @@ public class Receipt {
 
     @Column(name = "updated_at")
     private LocalDateTime updatedAt;
+
+    @Column(name = "updated_by", length = 255)
+    private String updatedBy;
 
     @PrePersist
     protected void onCreate() {
@@ -97,6 +103,14 @@ public class Receipt {
         this.receiptType = receiptType;
     }
 
+    public String getShiftType() {
+        return shiftType;
+    }
+
+    public void setShiftType(String shiftType) {
+        this.shiftType = shiftType;
+    }
+
     public String getStatus() {
         return status;
     }
@@ -119,6 +133,14 @@ public class Receipt {
 
     public void setUpdatedAt(LocalDateTime updatedAt) {
         this.updatedAt = updatedAt;
+    }
+
+    public String getUpdatedBy() {
+        return updatedBy;
+    }
+
+    public void setUpdatedBy(String updatedBy) {
+        this.updatedBy = updatedBy;
     }
 
     public Cab getCab() {

@@ -38,49 +38,10 @@ public class AccountChargeReceiptConverter implements ReceiptTypeConverter {
 
     @Override
     public void convert(Receipt receipt, Map<String, Object> parsedJson, ConfirmReceiptRequest request) {
-        // Only convert if accountCustomerId is provided
-        if (request.getAccountCustomerId() == null) {
-            logger.warn("No accountCustomerId provided for ACCOUNT_CHARGE receipt {}, skipping conversion", receipt.getId());
-            return;
-        }
+        logger.debug("AccountChargeReceiptConverter.convert called for receipt {}", receipt.getId());
+        // Converter for future use - currently not invoked in confirm step
+        return;
 
-        // Load customer
-        AccountCustomer customer = accountCustomerRepository.findById(request.getAccountCustomerId())
-            .orElse(null);
-        if (customer == null) {
-            logger.error("Customer not found with id: {}", request.getAccountCustomerId());
-            return;
-        }
-
-        if (parsedJson == null) {
-            logger.warn("No parsed JSON data for receipt {}, skipping conversion", receipt.getId());
-            return;
-        }
-
-        // Extract items from parsed JSON
-        List<Map<String, Object>> items = null;
-        if (parsedJson.get("items") instanceof List) {
-            items = (List<Map<String, Object>>) parsedJson.get("items");
-        }
-
-        if (items == null || items.isEmpty()) {
-            logger.warn("No items found in parsed JSON for receipt {}", receipt.getId());
-            return;
-        }
-
-        // Convert each item to an AccountCharge
-        for (Map<String, Object> item : items) {
-            try {
-                AccountCharge charge = buildAccountCharge(item, customer, request);
-                if (charge != null) {
-                    accountChargeService.createCharge(charge);
-                    logger.info("Created AccountCharge from receipt item: invoiceNo={}, amount={}",
-                        item.get("invoice_no"), item.get("amount"));
-                }
-            } catch (Exception e) {
-                logger.error("Failed to convert receipt item for receipt {}: {}", receipt.getId(), e.getMessage(), e);
-            }
-        }
     }
 
     private AccountCharge buildAccountCharge(Map<String, Object> item, AccountCustomer customer, ConfirmReceiptRequest request) {
