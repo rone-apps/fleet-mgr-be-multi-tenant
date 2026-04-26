@@ -1,11 +1,8 @@
 package com.taxi.domain.receipt.model;
 
 import jakarta.persistence.*;
-import java.math.BigDecimal;
-import java.time.LocalDate;
 import java.time.LocalDateTime;
 import com.taxi.domain.cab.model.Cab;
-import com.taxi.domain.shift.model.DriverShift;
 import com.taxi.domain.driver.model.Driver;
 
 @Entity
@@ -22,29 +19,11 @@ public class Receipt {
     @Column(name = "image_mime_type")
     private String imageMimeType;
 
-    @Column(name = "document_type")
-    private String documentType;
+    @Column(name = "parsed_data_json", columnDefinition = "LONGTEXT")
+    private String parsedDataJson;
 
-    @Column(name = "vendor_name")
-    private String vendorName;
-
-    @Column(name = "total_amount", precision = 10, scale = 2, nullable = true)
-    private BigDecimal totalAmount;
-
-    @Column(name = "tax_amount", precision = 10, scale = 2, nullable = true)
-    private BigDecimal taxAmount;
-
-    @Column(name = "receipt_date")
-    private LocalDate receiptDate;
-
-    @Column(name = "line_items_json", columnDefinition = "LONGTEXT")
-    private String lineItemsJson;
-
-    @Column(name = "raw_claude_response", columnDefinition = "LONGTEXT")
-    private String rawClaudeResponse;
-
-    @Column(name = "notes", columnDefinition = "TEXT")
-    private String notes;
+    @Column(name = "receipt_type", length = 50)
+    private String receiptType;
 
     @Column(name = "status")
     private String status;
@@ -54,18 +33,8 @@ public class Receipt {
     private Cab cab;
 
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "shift_id")
-    private DriverShift shift;
-
-    @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "owner_id")
     private Driver owner;
-
-    @Column(name = "account_customer_id")
-    private Long accountCustomerId;
-
-    @Column(name = "shift_type")
-    private String shiftType;
 
     @Column(name = "created_at")
     private LocalDateTime createdAt;
@@ -112,68 +81,20 @@ public class Receipt {
         this.imageMimeType = imageMimeType;
     }
 
-    public String getDocumentType() {
-        return documentType;
+    public String getParsedDataJson() {
+        return parsedDataJson;
     }
 
-    public void setDocumentType(String documentType) {
-        this.documentType = documentType;
+    public void setParsedDataJson(String parsedDataJson) {
+        this.parsedDataJson = parsedDataJson;
     }
 
-    public String getVendorName() {
-        return vendorName;
+    public String getReceiptType() {
+        return receiptType;
     }
 
-    public void setVendorName(String vendorName) {
-        this.vendorName = vendorName;
-    }
-
-    public BigDecimal getTotalAmount() {
-        return totalAmount;
-    }
-
-    public void setTotalAmount(BigDecimal totalAmount) {
-        this.totalAmount = totalAmount;
-    }
-
-    public BigDecimal getTaxAmount() {
-        return taxAmount;
-    }
-
-    public void setTaxAmount(BigDecimal taxAmount) {
-        this.taxAmount = taxAmount;
-    }
-
-    public LocalDate getReceiptDate() {
-        return receiptDate;
-    }
-
-    public void setReceiptDate(LocalDate receiptDate) {
-        this.receiptDate = receiptDate;
-    }
-
-    public String getLineItemsJson() {
-        return lineItemsJson;
-    }
-
-    public void setLineItemsJson(String lineItemsJson) {
-        this.lineItemsJson = lineItemsJson;
-    }
-
-    public String getRawClaudeResponse() {
-        return rawClaudeResponse;
-    }
-
-    public void setRawClaudeResponse(String rawClaudeResponse) {
-        this.rawClaudeResponse = rawClaudeResponse;
-    }
-
-    public String getNotes() {
-        return notes;
-    }
-
-    public void setNotes(String notes) {
-        this.notes = notes;
+    public void setReceiptType(String receiptType) {
+        this.receiptType = receiptType;
     }
 
     public String getStatus() {
@@ -208,35 +129,11 @@ public class Receipt {
         this.cab = cab;
     }
 
-    public DriverShift getShift() {
-        return shift;
-    }
-
-    public void setShift(DriverShift shift) {
-        this.shift = shift;
-    }
-
     public Driver getOwner() {
         return owner;
     }
 
     public void setOwner(Driver owner) {
         this.owner = owner;
-    }
-
-    public Long getAccountCustomerId() {
-        return accountCustomerId;
-    }
-
-    public void setAccountCustomerId(Long accountCustomerId) {
-        this.accountCustomerId = accountCustomerId;
-    }
-
-    public String getShiftType() {
-        return shiftType;
-    }
-
-    public void setShiftType(String shiftType) {
-        this.shiftType = shiftType;
     }
 }

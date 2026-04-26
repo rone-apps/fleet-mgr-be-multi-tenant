@@ -1,12 +1,16 @@
 package com.taxi.web.controller;
 
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.taxi.domain.account.repository.AccountCustomerRepository;
+import com.taxi.domain.receipt.converter.ReceiptTypeConverterRegistry;
 import com.taxi.domain.receipt.dto.LineItem;
 import com.taxi.domain.receipt.dto.ReceiptAnalysisResult;
 import com.taxi.domain.receipt.model.Receipt;
+import com.taxi.domain.receipt.model.ReceiptType;
 import com.taxi.domain.receipt.repository.ReceiptRepository;
+import com.taxi.domain.receipt.service.GeminiAnalysisService;
 import com.taxi.domain.receipt.service.ReceiptAnalysisService;
+import com.taxi.domain.receipt.service.ReceiptClassifierService;
 import com.taxi.web.dto.receipt.ConfirmReceiptRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -40,21 +44,29 @@ public class ReceiptController {
 
     private final ReceiptRepository receiptRepository;
     private final ReceiptAnalysisService receiptAnalysisService;
+    private final GeminiAnalysisService geminiAnalysisService;
     private final ObjectMapper objectMapper;
-    private final AccountCustomerRepository accountCustomerRepository;
+    private final ReceiptClassifierService receiptClassifierService;
+    private final ReceiptTypeConverterRegistry converterRegistry;
 
     public ReceiptController(ReceiptRepository receiptRepository,
                             ReceiptAnalysisService receiptAnalysisService,
+                            GeminiAnalysisService geminiAnalysisService,
                             ObjectMapper objectMapper,
-                            AccountCustomerRepository accountCustomerRepository) {
+                            ReceiptClassifierService receiptClassifierService,
+                            ReceiptTypeConverterRegistry converterRegistry) {
         this.receiptRepository = receiptRepository;
         this.receiptAnalysisService = receiptAnalysisService;
+        this.geminiAnalysisService = geminiAnalysisService;
         this.objectMapper = objectMapper;
-        this.accountCustomerRepository = accountCustomerRepository;
+        this.receiptClassifierService = receiptClassifierService;
+        this.converterRegistry = converterRegistry;
     }
 
     @PostMapping("/analyze")
-    public ResponseEntity<?> analyzeReceipt(@RequestParam("image") MultipartFile imageFile) {
+    public ResponseEntity<?> analyzeReceipt(@RequestParam("image") MultipartFile imageFile,
+                                           @RequestParam(value = "model", defaultValue = "claude") String model,
+                                           @RequestParam(value = "fallbackToClaude", defaultValue = "true") boolean fallbackToClaude) {
         try {
             // Validate file
             if (imageFile.isEmpty()) {
@@ -72,27 +84,79 @@ public class ReceiptController {
                 return ResponseEntity.badRequest().body(Map.of("error", "Image file too large (max 10MB)"));
             }
 
+            // Validate model choice
+            model = model.toLowerCase().trim();
+            if (!model.equals("claude") && !model.equals("gemini")) {
+                return ResponseEntity.badRequest().body(Map.of("error", "Model must be 'claude' or 'gemini'"));
+            }
+
             // Create pending receipt record
             Receipt receipt = new Receipt();
             receipt.setImageData(imageData);
             receipt.setImageMimeType(mimeType);
             receipt.setStatus("PENDING");
-            receipt.setTotalAmount(BigDecimal.ZERO);
-            receipt.setTaxAmount(BigDecimal.ZERO);
             Receipt savedReceipt = receiptRepository.save(receipt);
 
-            // Call Claude API to analyze
-            ReceiptAnalysisResult analysisResult = receiptAnalysisService.analyzeReceipt(
-                savedReceipt.getId(),
-                imageData,
-                mimeType
-            );
+            // Call AI API to analyze (Claude or Gemini)
+            ReceiptAnalysisResult analysisResult;
+            String usedModel = model;
 
-            // Store raw Claude response for debugging
-            savedReceipt.setRawClaudeResponse(objectMapper.writeValueAsString(analysisResult));
+            if ("gemini".equals(model)) {
+                try {
+                    logger.info("Analyzing receipt with Gemini: {}", savedReceipt.getId());
+                    analysisResult = geminiAnalysisService.analyzeReceipt(
+                        savedReceipt.getId(),
+                        imageData,
+                        mimeType
+                    );
+                } catch (RuntimeException e) {
+                    if (fallbackToClaude && e.getMessage() != null && e.getMessage().contains("429")) {
+                        logger.warn("Gemini quota exceeded, falling back to Claude for receipt: {}", savedReceipt.getId());
+                        usedModel = "claude";
+                        analysisResult = receiptAnalysisService.analyzeReceipt(
+                            savedReceipt.getId(),
+                            imageData,
+                            mimeType
+                        );
+                    } else {
+                        throw e;
+                    }
+                }
+            } else {
+                logger.info("Analyzing receipt with Claude: {}", savedReceipt.getId());
+                analysisResult = receiptAnalysisService.analyzeReceipt(
+                    savedReceipt.getId(),
+                    imageData,
+                    mimeType
+                );
+            }
+
+            // Classify receipt type and store parsed JSON
+            logger.info("📊 Before classification - rawJsonData: {}, documentType: {}",
+                analysisResult.getRawJsonData() != null ? "✓ present" : "✗ null",
+                analysisResult.getDocumentType());
+
+            ReceiptType detectedType = receiptClassifierService.classify(
+                analysisResult.getDocumentType(),
+                analysisResult.getRawJsonData()
+            );
+            analysisResult.setClassifiedType(detectedType.name());
+
+            logger.info("✅ Classification result: {} (raw JSON size: {} bytes)",
+                detectedType.name(),
+                analysisResult.getRawJsonData() != null ? objectMapper.writeValueAsString(analysisResult.getRawJsonData()).length() : 0);
+
+            if (analysisResult.getRawJsonData() != null) {
+                String jsonStr = objectMapper.writeValueAsString(analysisResult.getRawJsonData());
+                savedReceipt.setParsedDataJson(jsonStr);
+                logger.info("💾 Stored parsed JSON: {} bytes", jsonStr.length());
+            }
+            savedReceipt.setReceiptType(detectedType.name());
             receiptRepository.save(savedReceipt);
 
-            logger.info("Receipt analyzed successfully: {}", savedReceipt.getId());
+            logger.info("📤 Returning analysis result with classifiedType: {}", analysisResult.getClassifiedType());
+
+            logger.info("Receipt analyzed successfully with {}: {}", usedModel.toUpperCase(), savedReceipt.getId());
             return ResponseEntity.ok(analysisResult);
 
         } catch (IOException e) {
@@ -140,37 +204,37 @@ public class ReceiptController {
                 return ResponseEntity.notFound().build();
             }
 
-            // Update receipt with confirmed data
-            receipt.setDocumentType(request.getDocumentType());
-            receipt.setVendorName(request.getVendorName());
-            receipt.setReceiptDate(request.getReceiptDate());
-            receipt.setTaxAmount(request.getTaxAmount());
-            receipt.setTotalAmount(request.getTotalAmount());
-            receipt.setNotes(request.getNotes());
-            receipt.setAccountCustomerId(request.getAccountCustomerId());
-            receipt.setShiftType(request.getShiftType());
+            // Update receipt with confirmed data (minimal fields only)
+            receipt.setReceiptType(request.getDocumentType());
             receipt.setStatus("CONFIRMED");
 
-            // Serialize line items to JSON
-            if (request.getLineItems() != null) {
-                String lineItemsJson = objectMapper.writeValueAsString(request.getLineItems());
-                receipt.setLineItemsJson(lineItemsJson);
-            }
-
-            // Set cab and owner if provided (these are optional)
+            // Set cab and owner if provided
             if (request.getCabId() != null) {
-                // Note: We're setting the ID only; the entity will be lazy-loaded if needed
                 receipt.setCab(new com.taxi.domain.cab.model.Cab());
                 receipt.getCab().setId(request.getCabId());
             }
 
             if (request.getOwnerId() != null) {
-                // Note: We're setting the ID only; the entity will be lazy-loaded if needed
                 receipt.setOwner(new com.taxi.domain.driver.model.Driver());
                 receipt.getOwner().setId(request.getOwnerId());
             }
 
             Receipt updatedReceipt = receiptRepository.save(receipt);
+
+            // Run type-specific converter (Step 2 of the two-step flow)
+            ReceiptType type = ReceiptType.fromString(updatedReceipt.getReceiptType());
+            converterRegistry.getConverter(type).ifPresent(converter -> {
+                try {
+                    Map<String, Object> parsedJson = null;
+                    if (updatedReceipt.getParsedDataJson() != null) {
+                        parsedJson = objectMapper.readValue(updatedReceipt.getParsedDataJson(), new TypeReference<Map<String, Object>>() {});
+                    }
+                    converter.convert(updatedReceipt, parsedJson, request);
+                    logger.info("Converter ran for receipt {} type {}", updatedReceipt.getId(), type);
+                } catch (Exception e) {
+                    logger.error("Converter failed for receipt {}: {}", updatedReceipt.getId(), e.getMessage(), e);
+                }
+            });
 
             logger.info("Receipt confirmed: {}", updatedReceipt.getId());
 
@@ -199,25 +263,16 @@ public class ReceiptController {
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int size) {
         try {
-            logger.info("GET /api/receipts - Filters: ownerId={}, vendorName={}, documentType={}, startDate={}, endDate={}",
-                ownerId, vendorName, documentType, startDate, endDate);
+            logger.info("GET /api/receipts - Filters: ownerId={}, documentType={}",
+                ownerId, documentType);
 
             Pageable pageable = PageRequest.of(page, size, Sort.by("createdAt").descending());
 
             Specification<Receipt> spec = (root, query, cb) -> {
                 var predicates = new java.util.ArrayList<>();
 
-                if (startDate != null) {
-                    predicates.add(cb.greaterThanOrEqualTo(root.get("receiptDate"), startDate));
-                }
-                if (endDate != null) {
-                    predicates.add(cb.lessThanOrEqualTo(root.get("receiptDate"), endDate));
-                }
                 if (cabId != null) {
                     predicates.add(cb.equal(root.get("cab").get("id"), cabId));
-                }
-                if (shiftId != null) {
-                    predicates.add(cb.equal(root.get("shift").get("id"), shiftId));
                 }
                 if (ownerId != null) {
                     // Filter by owner ID, excluding null owners
@@ -226,11 +281,8 @@ public class ReceiptController {
                         cb.equal(root.get("owner").get("id"), ownerId)
                     ));
                 }
-                if (vendorName != null && !vendorName.isEmpty()) {
-                    predicates.add(cb.like(cb.lower(root.get("vendorName")), "%" + vendorName.toLowerCase() + "%"));
-                }
                 if (documentType != null && !documentType.isEmpty()) {
-                    predicates.add(cb.equal(root.get("documentType"), documentType));
+                    predicates.add(cb.equal(root.get("receiptType"), documentType));
                 }
 
                 return cb.and(predicates.toArray(new jakarta.persistence.criteria.Predicate[0]));
@@ -263,11 +315,7 @@ public class ReceiptController {
                     try {
                         Map<String, Object> map = new HashMap<>();
                         map.put("id", receipt.getId());
-                        map.put("vendorName", receipt.getVendorName());
-                        map.put("totalAmount", receipt.getTotalAmount());
-                        map.put("taxAmount", receipt.getTaxAmount());
-                        map.put("receiptDate", receipt.getReceiptDate());
-                        map.put("documentType", receipt.getDocumentType());
+                        map.put("receiptType", receipt.getReceiptType());
                         map.put("status", receipt.getStatus());
 
                         // Safely get cab number
@@ -281,17 +329,6 @@ public class ReceiptController {
                         }
                         map.put("cabNumber", cabNumber);
 
-                        // Safely get driver number from shift
-                        String driverNumber = null;
-                        try {
-                            if (receipt.getShift() != null) {
-                                driverNumber = receipt.getShift().getDriverNumber();
-                            }
-                        } catch (Exception e) {
-                            logger.debug("Error loading shift for receipt {}: {}", receipt.getId(), e.getMessage());
-                        }
-                        map.put("driverNumber", driverNumber);
-
                         // Safely get owner name
                         String ownerName = null;
                         try {
@@ -303,22 +340,6 @@ public class ReceiptController {
                         }
                         map.put("ownerName", ownerName);
 
-                        map.put("accountCustomerId", receipt.getAccountCustomerId());
-
-                        // Safely get account name
-                        String accountName = null;
-                        if (receipt.getAccountCustomerId() != null) {
-                            try {
-                                accountName = accountCustomerRepository.findById(receipt.getAccountCustomerId())
-                                    .map(ac -> ac.getCompanyName())
-                                    .orElse(null);
-                            } catch (Exception e) {
-                                logger.debug("Error loading account customer for receipt {}: {}", receipt.getId(), e.getMessage());
-                            }
-                        }
-                        map.put("accountName", accountName);
-
-                        map.put("shiftType", receipt.getShiftType());
                         map.put("createdAt", receipt.getCreatedAt());
 
                         // Safely encode image data
@@ -340,8 +361,7 @@ public class ReceiptController {
                         // Return minimal response for this receipt
                         Map<String, Object> map = new HashMap<>();
                         map.put("id", receipt.getId());
-                        map.put("vendorName", receipt.getVendorName());
-                        map.put("totalAmount", receipt.getTotalAmount());
+                        map.put("receiptType", receipt.getReceiptType());
                         map.put("status", receipt.getStatus());
                         return map;
                     }
