@@ -52,6 +52,9 @@ dependencies {
     implementation 'com.itextpdf:itextpdf:5.5.13.3'
     implementation 'com.itextpdf:html2pdf:5.0.4'
 
+    // PDF Text Extraction (Apache PDFBox)
+    implementation 'org.apache.pdfbox:pdfbox:2.0.30'
+
     // AI/ML APIs for Receipt Scanning
     // Note: Gemini uses REST API calls, no SDK dependency needed
 

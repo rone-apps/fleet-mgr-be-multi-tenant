@@ -5,6 +5,9 @@ import org.springframework.boot.web.server.WebServerFactoryCustomizer;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.CacheControl;
+import org.springframework.http.client.BufferingClientHttpRequestFactory;
+import org.springframework.http.client.ClientHttpRequestFactory;
+import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.web.servlet.config.annotation.AsyncSupportConfigurer;
 import org.springframework.web.servlet.config.annotation.ResourceHandlerRegistry;
@@ -40,10 +43,20 @@ public class WebConfig implements WebMvcConfigurer {
     }
 
     /**
-     * RestTemplate bean for external API calls
+     * RestTemplate bean for external API calls with increased timeouts for Claude API
      */
     @Bean
     public RestTemplate restTemplate() {
-        return new RestTemplate();
+        return new RestTemplate(clientHttpRequestFactory());
+    }
+
+    private ClientHttpRequestFactory clientHttpRequestFactory() {
+        SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
+        // Connection timeout: 5 minutes for establishing connection
+        factory.setConnectTimeout(300000);
+        // Read timeout: 10 minutes for waiting on response (Claude can take time for multi-page PDFs)
+        factory.setReadTimeout(600000);
+        factory.setBufferRequestBody(true);
+        return new BufferingClientHttpRequestFactory(factory);
     }
 }

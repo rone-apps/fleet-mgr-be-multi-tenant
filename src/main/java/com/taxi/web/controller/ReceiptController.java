@@ -11,6 +11,7 @@ import com.taxi.domain.receipt.repository.ReceiptRepository;
 import com.taxi.domain.receipt.service.GeminiAnalysisService;
 import com.taxi.domain.receipt.service.ReceiptAnalysisService;
 import com.taxi.domain.receipt.service.ReceiptClassifierService;
+import com.taxi.domain.receipt.service.PdfTextExtractorService;
 import com.taxi.web.dto.receipt.ConfirmReceiptRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -58,6 +59,7 @@ public class ReceiptController {
     private final ObjectMapper objectMapper;
     private final ReceiptClassifierService receiptClassifierService;
     private final ReceiptTypeConverterRegistry converterRegistry;
+    private final PdfTextExtractorService pdfTextExtractorService;
 
     @Autowired(required = false)
     private JavaMailSender mailSender;
@@ -73,13 +75,15 @@ public class ReceiptController {
                             GeminiAnalysisService geminiAnalysisService,
                             ObjectMapper objectMapper,
                             ReceiptClassifierService receiptClassifierService,
-                            ReceiptTypeConverterRegistry converterRegistry) {
+                            ReceiptTypeConverterRegistry converterRegistry,
+                            PdfTextExtractorService pdfTextExtractorService) {
         this.receiptRepository = receiptRepository;
         this.receiptAnalysisService = receiptAnalysisService;
         this.geminiAnalysisService = geminiAnalysisService;
         this.objectMapper = objectMapper;
         this.receiptClassifierService = receiptClassifierService;
         this.converterRegistry = converterRegistry;
+        this.pdfTextExtractorService = pdfTextExtractorService;
     }
 
     @PostMapping("/analyze")
@@ -93,14 +97,19 @@ public class ReceiptController {
             }
 
             String mimeType = imageFile.getContentType();
-            if (mimeType == null || !mimeType.startsWith("image/")) {
-                return ResponseEntity.badRequest().body(Map.of("error", "File must be an image"));
+            boolean isPdf = "application/pdf".equals(mimeType);
+            boolean isImage = mimeType != null && mimeType.startsWith("image/");
+
+            if (!isPdf && !isImage) {
+                return ResponseEntity.badRequest().body(Map.of("error", "File must be an image or PDF"));
             }
 
-            // Read image data
-            byte[] imageData = imageFile.getBytes();
-            if (imageData.length > 10 * 1024 * 1024) { // 10MB limit
-                return ResponseEntity.badRequest().body(Map.of("error", "Image file too large (max 10MB)"));
+            // Read file data
+            byte[] fileData = imageFile.getBytes();
+            int maxBytes = isPdf ? 30 * 1024 * 1024 : 10 * 1024 * 1024;  // 30 MB for PDF, 10 MB for images
+            if (fileData.length > maxBytes) {
+                String limitLabel = isPdf ? "30MB" : "10MB";
+                return ResponseEntity.badRequest().body(Map.of("error", "File too large (max " + limitLabel + ")"));
             }
 
             // Validate model choice
@@ -110,22 +119,49 @@ public class ReceiptController {
             }
 
             // Create pending receipt record
+            // IMPORTANT: Store original file data (PDF or image) - never overwrite with rendered JPEGs
             Receipt receipt = new Receipt();
-            receipt.setImageData(imageData);
-            receipt.setImageMimeType(mimeType);
+            receipt.setImageData(fileData); // Original PDF/image binary data
+            receipt.setImageMimeType(mimeType); // Original MIME type (application/pdf or image/*)
             receipt.setStatus("PENDING");
             Receipt savedReceipt = receiptRepository.save(receipt);
 
-            // Call AI API to analyze (Claude or Gemini)
+            logger.info("Receipt {} created: mimeType={}, dataSize={}MB",
+                savedReceipt.getId(), mimeType, fileData.length / (1024*1024));
+
+            // Call AI API to analyze (Claude or Gemini, or PDF text-mode)
             ReceiptAnalysisResult analysisResult;
             String usedModel = model;
 
-            if ("gemini".equals(model)) {
+            if (isPdf) {
+                // PDF path: always use Claude text-mode (or multi-page image fallback for scanned PDFs)
+                usedModel = "claude";
+                try {
+                    String extractedText = pdfTextExtractorService.extract(fileData);
+                    if (extractedText.length() >= PdfTextExtractorService.MIN_TEXT_LENGTH) {
+                        logger.info("PDF text mode: {} chars extracted for receipt {}", extractedText.length(), savedReceipt.getId());
+                        analysisResult = receiptAnalysisService.analyzeText(savedReceipt.getId(), extractedText);
+                    } else {
+                        // Scanned PDF: render ALL pages and analyze multi-page
+                        logger.info("PDF image fallback (multi-page scanned PDF) for receipt {}", savedReceipt.getId());
+                        java.util.List<byte[]> pageImages = pdfTextExtractorService.renderAllPages(fileData);
+                        if (pageImages.isEmpty()) {
+                            return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                                .body(Map.of("error", "Could not extract pages from PDF"));
+                        }
+                        analysisResult = receiptAnalysisService.analyzeMultiPagePdfInBatches(savedReceipt.getId(), pageImages);
+                    }
+                } catch (IOException e) {
+                    logger.error("PDF extraction failed for receipt {}: {}", savedReceipt.getId(), e.getMessage(), e);
+                    return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                        .body(Map.of("error", "Could not read PDF file: " + e.getMessage()));
+                }
+            } else if ("gemini".equals(model)) {
                 try {
                     logger.info("Analyzing receipt with Gemini: {}", savedReceipt.getId());
                     analysisResult = geminiAnalysisService.analyzeReceipt(
                         savedReceipt.getId(),
-                        imageData,
+                        fileData,
                         mimeType
                     );
                 } catch (RuntimeException e) {
@@ -134,7 +170,7 @@ public class ReceiptController {
                         usedModel = "claude";
                         analysisResult = receiptAnalysisService.analyzeReceipt(
                             savedReceipt.getId(),
-                            imageData,
+                            fileData,
                             mimeType
                         );
                     } else {
@@ -145,7 +181,7 @@ public class ReceiptController {
                 logger.info("Analyzing receipt with Claude: {}", savedReceipt.getId());
                 analysisResult = receiptAnalysisService.analyzeReceipt(
                     savedReceipt.getId(),
-                    imageData,
+                    fileData,
                     mimeType
                 );
             }
@@ -223,6 +259,26 @@ public class ReceiptController {
                 return ResponseEntity.notFound().build();
             }
 
+            // Pre-validate for type-specific fields BEFORE saving
+            Map<String, Object> parsedJsonMap = null;
+            if (receipt.getParsedDataJson() != null) {
+                try {
+                    parsedJsonMap = objectMapper.readValue(receipt.getParsedDataJson(), new TypeReference<>() {});
+                } catch (Exception e) {
+                    logger.warn("Could not deserialize parsedDataJson for receipt {}", request.getReceiptId());
+                }
+            }
+
+            ReceiptType confirmedType = ReceiptType.fromString(request.getDocumentType());
+            java.util.Optional<com.taxi.domain.receipt.converter.ReceiptTypeConverter> converterOpt = converterRegistry.getConverter(confirmedType);
+
+            if (converterOpt.isPresent()) {
+                java.util.List<String> validationErrors = converterOpt.get().validate(parsedJsonMap);
+                if (!validationErrors.isEmpty()) {
+                    return ResponseEntity.unprocessableEntity().body(Map.of("errors", validationErrors));
+                }
+            }
+
             // Update receipt with confirmed data
             receipt.setReceiptType(request.getDocumentType());
             receipt.setShiftType(request.getShiftType());
@@ -247,11 +303,37 @@ public class ReceiptController {
 
             Receipt updatedReceipt = receiptRepository.save(receipt);
 
+            // Run type-specific converter (Step 2 of the two-step flow)
+            final Map<String, Object> finalParsedJson = parsedJsonMap;
+            Map<String, Object> conversionDetails = null;
+
+            if (converterOpt.isPresent()) {
+                try {
+                    com.taxi.domain.receipt.converter.ReceiptTypeConverter converter = converterOpt.get();
+                    converter.convert(updatedReceipt, finalParsedJson, request);
+                    logger.info("Converter ran for receipt {} type {}", updatedReceipt.getId(), confirmedType);
+
+                    // If WCB converter, get detailed processing result
+                    if (converter instanceof com.taxi.domain.receipt.converter.WcbRemittanceReceiptConverter) {
+                        com.taxi.domain.wcb.dto.WcbProcessingResult result =
+                            ((com.taxi.domain.receipt.converter.WcbRemittanceReceiptConverter) converter).getLastProcessingResult();
+                        conversionDetails = result.toMap();
+                    }
+                } catch (Exception e) {
+                    logger.error("Converter failed for receipt {}: {}", updatedReceipt.getId(), e.getMessage(), e);
+                    return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                        .body(Map.of("error", "Failed to process receipt: " + e.getMessage()));
+                }
+            }
+
             logger.info("Receipt confirmed: {}", updatedReceipt.getId());
 
             Map<String, Object> response = new HashMap<>();
             response.put("id", updatedReceipt.getId());
             response.put("status", updatedReceipt.getStatus());
+            if (conversionDetails != null) {
+                response.put("conversionDetails", conversionDetails);
+            }
 
             return ResponseEntity.ok(response);
 
@@ -356,9 +438,9 @@ public class ReceiptController {
                     predicates.add(cb.equal(root.get("cab").get("id"), cabId));
                 }
                 if (ownerId != null) {
-                    // Filter by owner ID, excluding null owners
-                    predicates.add(cb.and(
-                        cb.isNotNull(root.get("owner")),
+                    // Filter by owner ID, BUT also include receipts with null owner (unassigned)
+                    predicates.add(cb.or(
+                        cb.isNull(root.get("owner")),
                         cb.equal(root.get("owner").get("id"), ownerId)
                     ));
                 }

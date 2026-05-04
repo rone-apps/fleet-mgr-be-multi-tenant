@@ -1,260 +1,159 @@
-# Docker Setup Guide - FareFlow Backend
+# WCB Fleet Corporate - Docker Deployment Guide
+
+This docker-compose configuration runs the WCB (Workers' Compensation Board) service as a separate multi-tenant instance using a shared MySQL database.
 
 ## Quick Start
 
-### 1. Create Environment File
-
-Copy the example environment file and fill in your values:
+### 1. Set Environment Variables on Host
 
 ```bash
-cp .env.example .env
+# MySQL Configuration (shared RDS instance, different schema)
+export MYSQL_HOST="rone2.ci2owkd8ejjp.us-west-2.rds.amazonaws.com"
+export MYSQL_USER="hpooni1"
+export MYSQL_PASSWORD="!Inder101"
+
+# API Keys (required for features)
+export ANTHROPIC_API_KEY="sk-ant-xxxxxxxxxxxxx"
+export NEW_RELIC_LICENSE_KEY="nrpe-xxxxxxxxxxxxx"
 ```
 
-Edit `.env` and add your values:
-```
-MYSQL_ROOT_PASSWORD=your-secure-password
-SPRING_MAIL_USERNAME=your-email@gmail.com
-SPRING_MAIL_PASSWORD=your-app-password
-```
+### 2. Build Docker Images
 
-### 2. Build Docker Image
-
+**Backend:**
 ```bash
-docker build -t fleet-manager-be:latest .
+cd /path/to/fleet-mgr-be-multi-tenant
+docker build -t hpooni/fleet-manager-app-backend:wcb .
+```
+
+**Frontend:**
+```bash
+cd /path/to/fleet-mgr-app-multi-tenant
+docker build -t hpooni/fleet-manager-app-frontend:wcb .
+cd ../fleet-mgr-be-multi-tenant
 ```
 
 ### 3. Start Services
 
 ```bash
-docker-compose up -d
-```
-
-Application will be available at: `http://localhost:8080`
-
----
-
-## Configuration
-
-### Email Setup (Gmail)
-
-1. **Enable 2-Factor Authentication** on your Google account
-2. **Generate App Password**:
-   - Go to https://myaccount.google.com/apppasswords
-   - Select "Mail" and your device
-   - Copy the 16-character password
-   - Paste into `.env` as `SPRING_MAIL_PASSWORD`
-
-3. **Example .env**:
-```bash
-SPRING_MAIL_USERNAME=your-email@gmail.com
-SPRING_MAIL_PASSWORD=xxxx xxxx xxxx xxxx
-SPRING_MAIL_SENDER_NAME=FareFlow - Yellow Cabs Newyork
-```
-
-### Database Setup
-
-The Docker Compose automatically creates MySQL and initializes the database:
-
-```bash
-MYSQL_ROOT_PASSWORD=your-secure-password
-MYSQL_DATABASE=fareflow
-```
-
-### JWT Configuration (Optional)
-
-Customize JWT tokens:
-```bash
-JWT_SECRET=your-secret-key
-JWT_EXPIRATION=86400000  # 24 hours in milliseconds
-```
-
----
-
-## File Structure
-
-```
-.env                    # Environment variables (DO NOT COMMIT)
-.env.example           # Template file (safe to commit)
-docker-compose.yml     # Docker Compose configuration
-Dockerfile            # Docker build instructions
-```
-
----
-
-## Running Different Scenarios
-
-### Development (Local with Database)
-
-```bash
-# Start all services
+# Start both backend and frontend
 docker-compose up -d
 
 # View logs
-docker-compose logs -f app
+docker-compose logs -f backend
+docker-compose logs -f frontend
 
-# Stop services
-docker-compose down
+# Check status
+docker-compose ps
 ```
 
-### Development (Against Local MySQL)
+### 4. Access the Service
 
-```bash
-# Start only database
-docker-compose up -d db
+- **Backend API**: http://localhost:8082
+- **Frontend UI**: http://localhost:3002
 
-# Run application locally
-./gradlew bootRun
-```
+## Configuration Details
 
-### Production
+### Database
 
-```bash
-# Use environment variables instead of .env file
-docker run \
-  -e MYSQL_ROOT_PASSWORD=prod-password \
-  -e SPRING_DATASOURCE_PASSWORD=prod-password \
-  -e SPRING_MAIL_USERNAME=prod-email@gmail.com \
-  -e SPRING_MAIL_PASSWORD=prod-app-password \
-  -e JWT_SECRET=prod-secret \
-  -p 8080:8080 \
-  fleet-manager-be:latest
-```
+- **Host**: `${MYSQL_HOST}` (environment variable from host)
+- **User**: `${MYSQL_USER}` (environment variable from host)
+- **Password**: `${MYSQL_PASSWORD}` (environment variable from host)
+- **Schema**: `fleet_corporate` (separate from main instance)
+- **Connection URL**: `jdbc:mysql://${MYSQL_HOST}:3306/fleet_corporate`
 
-### Kubernetes/Docker Swarm
+### Port Mapping
 
-Create a Kubernetes secret:
+| Service | Internal Port | External Port | Endpoint |
+|---------|---------------|---------------|----------|
+| Backend | 8080 | 8082 | http://localhost:8082 |
+| Frontend | 3000 | 3002 | http://localhost:3002 |
 
-```bash
-kubectl create secret generic fleet-mgr-secrets \
-  --from-literal=MYSQL_ROOT_PASSWORD=your-password \
-  --from-literal=SPRING_MAIL_USERNAME=your-email@gmail.com \
-  --from-literal=SPRING_MAIL_PASSWORD=your-app-password \
-  --from-literal=JWT_SECRET=your-secret
-```
+### Container Names
 
-Then reference in deployment:
-```yaml
-env:
-  - name: MYSQL_ROOT_PASSWORD
-    valueFrom:
-      secretKeyRef:
-        name: fleet-mgr-secrets
-        key: MYSQL_ROOT_PASSWORD
-```
-
----
+- Backend: `wcb-fleet-corporate-backend`
+- Frontend: `wcb-fleet-corporate-frontend`
 
 ## Troubleshooting
 
-### Email Not Sending
-
-Check logs:
-```bash
-docker-compose logs app | grep EMAIL
-```
-
-Common issues:
-- **Gmail password wrong**: Use App Password, not regular password
-- **SMTP blocked**: Make sure port 587 is not blocked by firewall
-- **Authentication failed**: Enable 2FA and generate new app password
-
-### Database Connection Failed
-
-Check MySQL is healthy:
-```bash
-docker-compose logs db
-```
-
-Verify credentials in `.env` match
-
-### Port Already in Use
-
-Change ports in `docker-compose.yml`:
-```yaml
-ports:
-  - "3307:3306"  # MySQL on 3307 instead of 3306
-  - "8081:8080"  # App on 8081 instead of 8080
-```
-
----
-
-## Security Best Practices
-
-✅ **Never commit .env file** - Already ignored by .gitignore
-✅ **Use strong passwords** - Especially for database and JWT secret
-✅ **Use Gmail App Password** - Not your regular Gmail password
-✅ **Rotate secrets regularly** - Especially in production
-✅ **Use environment variables** - Never hardcode credentials
-
----
-
-## Useful Docker Commands
+### Database Connection Fails
 
 ```bash
-# View container status
-docker-compose ps
+# Verify environment variables are set
+env | grep -E "MYSQL_|ANTHROPIC_API_KEY|NEW_RELIC_LICENSE_KEY"
 
-# View application logs
-docker-compose logs app
+# Test MySQL connectivity from host
+mysql -h $MYSQL_HOST -u $MYSQL_USER -p
 
-# View database logs
-docker-compose logs db
+# Check if fleet_corporate schema exists
+mysql -h $MYSQL_HOST -u $MYSQL_USER -p -e "SHOW DATABASES;"
+```
 
-# View logs in real-time
-docker-compose logs -f
+### Containers Won't Start
 
-# Connect to MySQL in container
-docker-compose exec db mysql -h db -u root -p
+```bash
+# View detailed logs
+docker-compose logs backend
+docker-compose logs frontend
 
-# Restart services
-docker-compose restart
+# Check if images exist
+docker images | grep fleet-manager
 
-# Stop services
+# Rebuild images
+docker-compose down -v
+docker-compose up --build
+```
+
+### API Not Responding
+
+```bash
+# Test backend health
+curl http://localhost:8082/actuator/health
+
+# Test frontend
+curl http://localhost:3002
+```
+
+### Database Schema Missing
+
+The `fleet_corporate` schema must be created beforehand. Run this on the shared MySQL instance:
+
+```sql
+CREATE SCHEMA fleet_corporate CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+```
+
+## Stopping Services
+
+```bash
+# Stop all containers
 docker-compose stop
 
-# Remove services and volumes
-docker-compose down -v
+# Stop and remove containers (data persists in RDS)
+docker-compose down
 
-# Rebuild image and restart
-docker-compose up -d --build
+# Completely remove everything including volumes
+docker-compose down -v
 ```
 
----
+## Logs
 
-## Environment Variables Reference
+```bash
+# Tail backend logs
+docker-compose logs -f backend
 
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| MYSQL_ROOT_PASSWORD | ✅ Yes | - | MySQL root user password |
-| MYSQL_ROOT_USERNAME | ❌ No | root | MySQL root username |
-| MYSQL_DATABASE | ❌ No | fareflow | Database name |
-| SPRING_DATASOURCE_URL | ❌ No | auto | Database connection URL |
-| SPRING_DATASOURCE_USERNAME | ❌ No | root | Database username |
-| SPRING_DATASOURCE_PASSWORD | ✅ Yes (same as MYSQL_ROOT_PASSWORD) | - | Database password |
-| SPRING_JPA_HIBERNATE_DDL_AUTO | ❌ No | update | Hibernate DDL strategy |
-| SPRING_MAIL_USERNAME | ✅ Yes | - | Gmail email address |
-| SPRING_MAIL_PASSWORD | ✅ Yes | - | Gmail App Password |
-| SPRING_MAIL_SENDER_NAME | ❌ No | FareFlow - Yellow Cabs Newyork | Email sender display name |
-| JWT_SECRET | ❌ No | embedded | JWT signing secret |
-| JWT_EXPIRATION | ❌ No | 86400000 | Token expiration (ms) |
+# Tail frontend logs
+docker-compose logs -f frontend
 
----
+# View all logs
+docker-compose logs -f
 
-## Next Steps
+# Last 100 lines
+docker-compose logs --tail=100 backend
+```
 
-1. ✅ Copy `.env.example` to `.env`
-2. ✅ Fill in your Gmail credentials
-3. ✅ Fill in a secure MySQL password
-4. ✅ Run `docker-compose up -d`
-5. ✅ Verify app is running: `docker-compose logs app`
-6. ✅ Test email: Send an invoice and it should arrive in your inbox
+## Important Notes
 
----
-
-## Support
-
-For issues:
-1. Check logs: `docker-compose logs app`
-2. Verify .env file has all required values
-3. Ensure Docker daemon is running
-4. Check port availability (8080, 3306)
+- The MySQL instance is **shared** with other applications
+- Each application uses a **separate schema** (`fleet_corporate` for WCB)
+- Environment variables must be set **before** running `docker-compose`
+- The `.env` file is **not required** if environment variables are exported on the host
+- See `.env.example` for a template of required variables

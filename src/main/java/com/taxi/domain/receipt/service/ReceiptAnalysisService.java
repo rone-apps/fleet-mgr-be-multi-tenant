@@ -153,7 +153,7 @@ public class ReceiptAnalysisService {
         // Build request body
         Map<String, Object> requestBody = new HashMap<>();
         requestBody.put("model", "claude-opus-4-7");
-        requestBody.put("max_tokens", 4096);
+        requestBody.put("max_tokens", 8192); // Increased from 4096 to accommodate full JSON with all line items
         List<Map<String, Object>> messages = new ArrayList<>();
         messages.add(message);
         requestBody.put("messages", messages);
@@ -391,6 +391,263 @@ public class ReceiptAnalysisService {
         }
 
         return fields;
+    }
+
+    public ReceiptAnalysisResult analyzeText(Long receiptId, String rawText) {
+        if (anthropicApiKey == null || anthropicApiKey.trim().isEmpty()) {
+            throw new IllegalStateException("ANTHROPIC_API_KEY is not configured");
+        }
+
+        try {
+            logger.info("Analyzing PDF text for receipt {} - {} characters", receiptId, rawText.length());
+            Map<String, Object> requestBody = buildClaudeTextRequest(rawText);
+
+            HttpHeaders headers = new HttpHeaders();
+            headers.setContentType(MediaType.APPLICATION_JSON);
+            headers.set("x-api-key", anthropicApiKey);
+            headers.set("anthropic-version", "2023-06-01");
+
+            HttpEntity<Map<String, Object>> httpEntity = new HttpEntity<>(requestBody, headers);
+            JsonNode response = restTemplate.postForObject(
+                "https://api.anthropic.com/v1/messages",
+                httpEntity,
+                JsonNode.class
+            );
+
+            if (response == null) {
+                throw new RuntimeException("No response from Claude API");
+            }
+
+            String responseText = extractResponseText(response);
+            return parseClaudeResponse(receiptId, responseText);
+
+        } catch (RestClientException e) {
+            logger.error("Failed to call Claude API for text analysis: {}", e.getMessage(), e);
+            throw new RuntimeException("Failed to analyze PDF text with Claude API: " + e.getMessage(), e);
+        } catch (Exception e) {
+            logger.error("Unexpected error during PDF text analysis: {}", e.getMessage(), e);
+            throw new RuntimeException("Unexpected error during PDF text analysis: " + e.getMessage(), e);
+        }
+    }
+
+    public ReceiptAnalysisResult analyzeMultiPagePdf(Long receiptId, java.util.List<byte[]> pageImages) {
+        if (anthropicApiKey == null || anthropicApiKey.trim().isEmpty()) {
+            throw new IllegalStateException("ANTHROPIC_API_KEY is not configured");
+        }
+
+        try {
+            logger.info("Analyzing multi-page PDF for receipt {} - {} pages", receiptId, pageImages.size());
+
+            // Build content array with all pages as images + prompt
+            java.util.List<Map<String, Object>> content = new java.util.ArrayList<>();
+
+            // Add all page images
+            for (int i = 0; i < pageImages.size(); i++) {
+                String imageBase64 = Base64.getEncoder().encodeToString(pageImages.get(i));
+                if (!imageBase64.matches("^[A-Za-z0-9+/]*={0,2}$")) {
+                    throw new IllegalArgumentException("Invalid Base64 encoding for page " + (i + 1));
+                }
+
+                Map<String, Object> imageContent = new HashMap<>();
+                imageContent.put("type", "image");
+                Map<String, Object> imageData = new HashMap<>();
+                imageData.put("type", "base64");
+                imageData.put("media_type", "image/jpeg");
+                imageData.put("data", imageBase64);
+                imageContent.put("source", imageData);
+                content.add(imageContent);
+            }
+
+            // Add the analysis prompt (after all images)
+            String analysisPrompt = "PARSE THIS MULTI-PAGE DOCUMENT INTO STRUCTURED JSON.\n\n" +
+                "This is a " + pageImages.size() + "-page document. You are seeing ALL pages.\n" +
+                "Extract information from ALL pages - do not stop after the first page.\n\n" +
+                "The document has TWO sections:\n" +
+                "1. HEADER - Usually on the first page with summary/metadata information\n" +
+                "2. ITEMS - Table or list of detailed line items/rows (may span multiple pages)\n\n" +
+                "JSON STRUCTURE (REQUIRED):\n" +
+                "{\n" +
+                "  \"header\": {\n" +
+                "    \"field_name\": \"value\",\n" +
+                "    \"total_paid_amount\": \"$1,234.56\",\n" +
+                "    \"cheque_date\": \"Jan 15 2026\"\n" +
+                "  },\n" +
+                "  \"items\": [\n" +
+                "    {\"invoice_no\": \"ABC-123\", \"name\": \"John Doe\", \"service_date\": \"Jan 01 2026\", \"service_code\": \"1100546\", \"description\": \"Service Type\", \"units\": \"1.0\", \"rate\": \"$100.00\", \"amount\": \"$100.00\", \"explanation\": null}\n" +
+                "  ]\n" +
+                "}\n\n" +
+                "CRITICAL INSTRUCTIONS:\n" +
+                "1. Extract header information from page 1 (or first page with header data)\n" +
+                "2. Extract ALL items/rows from ALL pages - go page by page and collect every row\n" +
+                "3. Do NOT stop after the first page - continue reading pages 2, 3, etc.\n" +
+                "4. Standardize column names: use lowercase with underscores\n" +
+                "5. Format ALL currency/money values as strings: \"$1,234.56\"\n" +
+                "6. Format ALL dates as readable text: \"Jan 15 2026\" (NOT ISO format)\n" +
+                "7. Use null for truly missing/empty values\n" +
+                "8. Return ONLY valid JSON (no markdown, no code blocks, no extra text)\n" +
+                "9. Close all brackets and braces properly";
+
+            Map<String, Object> textContent = new HashMap<>();
+            textContent.put("type", "text");
+            textContent.put("text", analysisPrompt);
+            content.add(textContent);
+
+            // Build message
+            Map<String, Object> message = new HashMap<>();
+            message.put("role", "user");
+            message.put("content", content);
+
+            // Build request body
+            Map<String, Object> requestBody = new HashMap<>();
+            requestBody.put("model", "claude-opus-4-7");
+            requestBody.put("max_tokens", 16384); // Increased from 8192 to accommodate full JSON response with all line items
+            List<Map<String, Object>> messages = new ArrayList<>();
+            messages.add(message);
+            requestBody.put("messages", messages);
+
+            // Call Claude API
+            HttpHeaders headers = new HttpHeaders();
+            headers.setContentType(MediaType.APPLICATION_JSON);
+            headers.set("x-api-key", anthropicApiKey);
+            headers.set("anthropic-version", "2023-06-01");
+
+            HttpEntity<Map<String, Object>> httpEntity = new HttpEntity<>(requestBody, headers);
+            JsonNode response = restTemplate.postForObject(
+                "https://api.anthropic.com/v1/messages",
+                httpEntity,
+                JsonNode.class
+            );
+
+            if (response == null) {
+                throw new RuntimeException("No response from Claude API");
+            }
+
+            String responseText = extractResponseText(response);
+            return parseClaudeResponse(receiptId, responseText);
+
+        } catch (RestClientException e) {
+            logger.error("Failed to call Claude API for multi-page PDF analysis: {}", e.getMessage(), e);
+            throw new RuntimeException("Failed to analyze PDF with Claude API: " + e.getMessage(), e);
+        } catch (Exception e) {
+            logger.error("Unexpected error during multi-page PDF analysis: {}", e.getMessage(), e);
+            throw new RuntimeException("Unexpected error during PDF analysis: " + e.getMessage(), e);
+        }
+    }
+
+    private Map<String, Object> buildClaudeTextRequest(String rawText) {
+        String textPrompt = "PARSE THIS DOCUMENT INTO STRUCTURED JSON.\n\n" +
+            "The document has TWO sections:\n" +
+            "1. HEADER - Top section with summary/metadata information\n" +
+            "2. ITEMS - Table or list of detailed line items/rows\n\n" +
+            "CRITICAL: This document may contain MANY rows (20–100+). " +
+            "Extract EVERY SINGLE ROW as a separate object in the items[] array. " +
+            "Do NOT aggregate, summarize, or skip any rows. Preserve each row individually.\n\n" +
+            "JSON STRUCTURE (REQUIRED):\n" +
+            "{\n" +
+            "  \"header\": {\n" +
+            "    \"field_name\": \"value\",\n" +
+            "    \"total_paid_amount\": \"$1,234.56\",\n" +
+            "    \"cheque_date\": \"Jan 15 2026\"\n" +
+            "  },\n" +
+            "  \"items\": [\n" +
+            "    {\"invoice_no\": \"ABC-123\", \"name\": \"John Doe\", \"service_date\": \"Jan 01 2026\", " +
+            "\"service_code\": \"1100546\", \"description\": \"Service Type\", \"units\": \"1.0\", " +
+            "\"rate\": \"$100.00\", \"amount\": \"$100.00\", \"explanation\": null},\n" +
+            "    ... (ALL rows)\n" +
+            "  ]\n" +
+            "}\n\n" +
+            "EXTRACTION INSTRUCTIONS:\n" +
+            "1. Extract ALL header fields from the top/summary section\n" +
+            "2. Extract ALL items/rows — DO NOT STOP EARLY\n" +
+            "3. Standardize column names: use lowercase with underscores\n" +
+            "4. Format ALL currency/money values as strings: \"$1,234.56\"\n" +
+            "5. Format ALL dates as readable text: \"Jan 15 2026\"\n" +
+            "6. Keep all text values as strings\n" +
+            "7. Use null for truly missing/empty values\n" +
+            "8. Return ONLY valid JSON — no markdown, no code blocks, no extra text\n" +
+            "9. Close all brackets and braces properly\n\n" +
+            "DOCUMENT TEXT:\n" + rawText;
+
+        Map<String, Object> textContent = new HashMap<>();
+        textContent.put("type", "text");
+        textContent.put("text", textPrompt);
+
+        Map<String, Object> message = new HashMap<>();
+        message.put("role", "user");
+        message.put("content", List.of(textContent));
+
+        Map<String, Object> requestBody = new HashMap<>();
+        requestBody.put("model", "claude-opus-4-7");
+        requestBody.put("max_tokens", 16384); // Increased from 8192 to accommodate full JSON response with all line items
+        List<Map<String, Object>> messages = new ArrayList<>();
+        messages.add(message);
+        requestBody.put("messages", messages);
+
+        return requestBody;
+    }
+
+    /**
+     * Analyze multi-page PDF in batches to avoid token limits while extracting all items.
+     * Processes 3 pages at a time, merges results by keeping header from first batch
+     * and combining all items from all batches.
+     */
+    public ReceiptAnalysisResult analyzeMultiPagePdfInBatches(Long receiptId, java.util.List<byte[]> pageImages) {
+        final int BATCH_SIZE = 3;
+        logger.info("Analyzing {} pages in batches of {} for receipt {}", pageImages.size(), BATCH_SIZE, receiptId);
+
+        Map<String, Object> mergedHeader = null;
+        java.util.List<Map<String, Object>> mergedItems = new java.util.ArrayList<>();
+
+        for (int i = 0; i < pageImages.size(); i += BATCH_SIZE) {
+            int endIdx = Math.min(i + BATCH_SIZE, pageImages.size());
+            java.util.List<byte[]> batch = pageImages.subList(i, endIdx);
+            int batchNum = (i / BATCH_SIZE) + 1;
+            int totalBatches = (pageImages.size() + BATCH_SIZE - 1) / BATCH_SIZE;
+
+            logger.info("Processing batch {}/{} (pages {} to {})", batchNum, totalBatches, i + 1, endIdx);
+
+            try {
+                ReceiptAnalysisResult batchResult = analyzeMultiPagePdf(receiptId, batch);
+
+                if (batchResult != null && batchResult.getRawJsonData() != null) {
+                    Map<String, Object> batchData = batchResult.getRawJsonData();
+
+                    // Keep header from first batch only
+                    if (mergedHeader == null && batchData.containsKey("header")) {
+                        mergedHeader = (Map<String, Object>) batchData.get("header");
+                    }
+
+                    // Merge all items from all batches
+                    if (batchData.containsKey("items")) {
+                        @SuppressWarnings("unchecked")
+                        java.util.List<Map<String, Object>> batchItems =
+                            (java.util.List<Map<String, Object>>) batchData.get("items");
+                        if (batchItems != null) {
+                            mergedItems.addAll(batchItems);
+                            logger.debug("Added {} items from batch {}", batchItems.size(), batchNum);
+                        }
+                    }
+                }
+            } catch (Exception e) {
+                logger.warn("Error processing batch {}: {}", batchNum, e.getMessage());
+                // Continue with next batch instead of failing completely
+            }
+        }
+
+        logger.info("Batch processing complete for receipt {}. Total items extracted: {}", receiptId, mergedItems.size());
+
+        // Build final result with merged data
+        Map<String, Object> finalJson = new HashMap<>();
+        if (mergedHeader != null) {
+            finalJson.put("header", mergedHeader);
+        }
+        finalJson.put("items", mergedItems);
+
+        ReceiptAnalysisResult result = new ReceiptAnalysisResult();
+        result.setReceiptId(receiptId);
+        result.setRawJsonData(finalJson);
+        result.setDocumentType("WCB_REMITTANCE"); // Will be classified based on content
+        return result;
     }
 
 }

@@ -3,6 +3,8 @@ package com.taxi.domain.receipt.model;
 import java.util.List;
 
 public enum ReceiptType {
+    WCB_REMITTANCE("WCB Remittance",
+        List.of("workers compensation board", "wcb remittance", "remittance advice", "payee number", "cheque no", "chq no", "chq number")),
     GAS_RECEIPT("Gas Receipt",
         List.of("fuel", "gas", "petrol", "liters", "litres", "gallons", "pump", "unleaded")),
     PARKING("Parking",
