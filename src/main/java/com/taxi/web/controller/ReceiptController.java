@@ -151,6 +151,16 @@ public class ReceiptController {
                         }
                         analysisResult = receiptAnalysisService.analyzeMultiPagePdfInBatches(savedReceipt.getId(), pageImages);
                     }
+
+                    // CRITICAL FIX: Replace PDF bytes with rendered JPEG for display
+                    // PDFs cannot be displayed in <img> tags, so we render the first page as JPEG
+                    logger.info("Converting PDF to JPEG for display purposes (receipt {})", savedReceipt.getId());
+                    byte[] renderedJpeg = pdfTextExtractorService.renderFirstPage(fileData);
+                    savedReceipt.setImageData(renderedJpeg);
+                    savedReceipt.setImageMimeType("image/jpeg");
+                    receiptRepository.save(savedReceipt);
+                    logger.info("✅ PDF converted to JPEG: {} bytes (receipt {})", renderedJpeg.length, savedReceipt.getId());
+
                 } catch (IOException e) {
                     logger.error("PDF extraction failed for receipt {}: {}", savedReceipt.getId(), e.getMessage(), e);
                     return ResponseEntity.status(HttpStatus.BAD_REQUEST)
@@ -515,16 +525,25 @@ public class ReceiptController {
                         map.put("updatedBy", receipt.getUpdatedBy());
 
                         // Safely encode image data
-                        if (receipt.getImageData() != null) {
+                        if (receipt.getImageData() != null && receipt.getImageData().length > 0) {
                             try {
-                                String imageDataBase64 = "data:" + receipt.getImageMimeType() + ";base64," +
+                                int dataSize = receipt.getImageData().length;
+                                String mimeType = receipt.getImageMimeType() != null ? receipt.getImageMimeType() : "image/jpeg";
+                                String imageDataBase64 = "data:" + mimeType + ";base64," +
                                     java.util.Base64.getEncoder().encodeToString(receipt.getImageData());
                                 map.put("imageData", imageDataBase64);
+                                logger.debug("✅ Image encoded for receipt {}: {} bytes, mimeType: {}",
+                                    receipt.getId(), dataSize, mimeType);
                             } catch (Exception e) {
-                                logger.debug("Error encoding image for receipt {}: {}", receipt.getId(), e.getMessage());
+                                logger.warn("❌ Error encoding image for receipt {}: {}", receipt.getId(), e.getMessage());
                                 map.put("imageData", null);
                             }
                         } else {
+                            if (receipt.getImageData() == null) {
+                                logger.warn("⚠️ Receipt {} has NULL imageData in database", receipt.getId());
+                            } else {
+                                logger.warn("⚠️ Receipt {} has EMPTY imageData (0 bytes)", receipt.getId());
+                            }
                             map.put("imageData", null);
                         }
                         return map;

@@ -470,6 +470,47 @@ public class DbMigrationService {
         return val;
     }
 
+    /**
+     * Transform value based on destination data type.
+     * Handles conversions like DATETIME -> TIME, DATETIME -> DATE, etc.
+     */
+    private Object transformValueForType(Object value, String destType, String destColumn) {
+        if (value == null) return null;
+
+        String typeLower = destType != null ? destType.toLowerCase() : "";
+
+        try {
+            // DATETIME/TIMESTAMP -> TIME conversion
+            if (typeLower.contains("time") && !typeLower.contains("datetime") && !typeLower.contains("timestamp")) {
+                if (value instanceof java.sql.Timestamp) {
+                    java.sql.Timestamp ts = (java.sql.Timestamp) value;
+                    return new java.sql.Time(ts.getTime());
+                } else if (value instanceof java.util.Date) {
+                    java.util.Date date = (java.util.Date) value;
+                    return new java.sql.Time(date.getTime());
+                }
+            }
+
+            // DATETIME/TIMESTAMP -> DATE conversion
+            if (typeLower.equals("date")) {
+                if (value instanceof java.sql.Timestamp) {
+                    java.sql.Timestamp ts = (java.sql.Timestamp) value;
+                    return new java.sql.Date(ts.getTime());
+                } else if (value instanceof java.util.Date) {
+                    java.util.Date date = (java.util.Date) value;
+                    return new java.sql.Date(date.getTime());
+                }
+            }
+
+            // Apply legacy cab_number transformation
+            return transformValue(value, destColumn);
+
+        } catch (Exception e) {
+            log.warn("Failed to transform value for column {} (type: {}): {}", destColumn, destType, e.getMessage());
+            return value;
+        }
+    }
+
     private String sanitizeIdentifier(String identifier) {
         // Only allow alphanumeric and underscores to prevent SQL injection
         return identifier.replaceAll("[^a-zA-Z0-9_]", "");
@@ -487,5 +528,471 @@ public class DbMigrationService {
             case "like" -> "LIKE";
             default -> "=";
         };
+    }
+
+    // ========== EXPORT METHODS (Local -> External) ==========
+
+    /**
+     * Count source records that will be exported based on filters.
+     */
+    public Map<String, Object> countExportRecords(String sourceTable, List<Map<String, String>> filters) throws Exception {
+        String sanitizedSource = sanitizeIdentifier(sourceTable);
+        StringBuilder sql = new StringBuilder("SELECT COUNT(*) FROM " + sanitizedSource);
+
+        log.info("Counting records from {} with {} filters", sourceTable, filters != null ? filters.size() : 0);
+        if (filters != null && !filters.isEmpty()) {
+            for (Map<String, String> filter : filters) {
+                log.info("Filter: column={}, operator={}, value={}",
+                    filter.get("column"), filter.get("operator"), filter.get("value"));
+            }
+        }
+
+        // Build WHERE clause from filters
+        List<String> conditions = new ArrayList<>();
+        List<String> paramValues = new ArrayList<>();
+
+        if (filters != null && !filters.isEmpty()) {
+            for (Map<String, String> filter : filters) {
+                String col = filter.get("column");
+                String operator = filter.get("operator");
+                String value = filter.get("value");
+
+                // Only add condition if we have all three: column, operator, AND value
+                if (col != null && !col.trim().isEmpty() &&
+                    operator != null && !operator.trim().isEmpty() &&
+                    value != null && !value.trim().isEmpty()) {
+                    conditions.add(sanitizeIdentifier(col) + " " + resolveOperator(operator) + " ?");
+                    paramValues.add(value);
+                } else {
+                    log.warn("Skipping incomplete filter: col={}, op={}, val={}", col, operator, value);
+                }
+            }
+        }
+
+        if (!conditions.isEmpty()) {
+            sql.append(" WHERE ").append(String.join(" AND ", conditions));
+        }
+
+        log.info("Count SQL: {}", sql);
+        log.info("Parameters: {}", paramValues);
+
+        try (Connection conn = localDataSource.getConnection();
+             PreparedStatement stmt = conn.prepareStatement(sql.toString())) {
+
+            // Set filter parameters
+            for (int i = 0; i < paramValues.size(); i++) {
+                stmt.setString(i + 1, paramValues.get(i));
+                log.debug("Setting param {}: {}", i + 1, paramValues.get(i));
+            }
+
+            ResultSet rs = stmt.executeQuery();
+            if (rs.next()) {
+                int count = rs.getInt(1);
+                log.info("Found {} records to export from {} (with {} active filters)",
+                    count, sourceTable, paramValues.size());
+
+                Map<String, Object> result = new LinkedHashMap<>();
+                result.put("count", count);
+                result.put("sourceTable", sourceTable);
+                result.put("query", sql.toString());
+                result.put("parameters", paramValues);
+                return result;
+            }
+
+            Map<String, Object> result = new LinkedHashMap<>();
+            result.put("count", 0);
+            result.put("sourceTable", sourceTable);
+            result.put("query", sql.toString());
+            result.put("parameters", paramValues);
+            return result;
+        }
+    }
+
+    /**
+     * Preview local data before export with optional filters.
+     * Shows how destination table rows will look with mapped columns and transformations applied.
+     */
+    public Map<String, Object> previewLocalData(
+            String host, int port, String username, String password, String targetDatabase,
+            String sourceTable, String destTable,
+            List<Map<String, String>> columnMappings,
+            List<Map<String, String>> filters, int limit) throws Exception {
+
+        String sanitizedSource = sanitizeIdentifier(sourceTable);
+        String sanitizedDest = sanitizeIdentifier(destTable);
+
+        // External DB connection for metadata check
+        String extDbUrl = String.format("jdbc:mysql://%s:%d/%s?useSSL=false&allowPublicKeyRetrieval=true",
+                host, port, targetDatabase);
+
+        // Get destination column metadata to detect auto-increment and data types
+        Map<String, Map<String, Object>> destColumnMeta = new LinkedHashMap<>();
+        try (Connection extConn = DriverManager.getConnection(extDbUrl, username, password)) {
+            DatabaseMetaData meta = extConn.getMetaData();
+            ResultSet rsColumns = meta.getColumns(targetDatabase, null, sanitizedDest, null);
+            while (rsColumns.next()) {
+                String colName = rsColumns.getString("COLUMN_NAME");
+                String isAutoInc = rsColumns.getString("IS_AUTOINCREMENT");
+                String dataType = rsColumns.getString("TYPE_NAME");
+
+                Map<String, Object> info = new HashMap<>();
+                info.put("autoIncrement", "YES".equalsIgnoreCase(isAutoInc));
+                info.put("dataType", dataType);
+                destColumnMeta.put(colName.toLowerCase(), info);
+            }
+        }
+
+        // Build SELECT columns from mappings (skip auto-increment)
+        List<String> selectColumns = new ArrayList<>();
+        List<String> destColumns = new ArrayList<>();
+
+        for (Map<String, String> mapping : columnMappings) {
+            String srcCol = mapping.get("source");
+            String destCol = mapping.get("dest");
+
+            if (srcCol == null || srcCol.trim().isEmpty() || destCol == null || destCol.trim().isEmpty()) {
+                continue;
+            }
+
+            String sanitizedSrcCol = sanitizeIdentifier(srcCol);
+            String sanitizedDestCol = sanitizeIdentifier(destCol);
+
+            // Check if destination column is auto-increment (skip if it is)
+            Map<String, Object> destInfo = destColumnMeta.get(sanitizedDestCol.toLowerCase());
+            if (destInfo != null && Boolean.TRUE.equals(destInfo.get("autoIncrement"))) {
+                log.info("Skipping auto-increment column in preview: {}", sanitizedDestCol);
+                continue;
+            }
+
+            selectColumns.add(sanitizedSrcCol);
+            destColumns.add(sanitizedDestCol);
+        }
+
+        if (selectColumns.isEmpty()) {
+            throw new IllegalArgumentException("No valid column mappings provided");
+        }
+
+        String selectClause = String.join(", ", selectColumns);
+
+        // Build WHERE clause with proper validation (same logic as countExportRecords)
+        List<String> conditions = new ArrayList<>();
+        List<String> paramValues = new ArrayList<>();
+
+        if (filters != null && !filters.isEmpty()) {
+            for (Map<String, String> filter : filters) {
+                String col = filter.get("column");
+                String operator = filter.get("operator");
+                String value = filter.get("value");
+
+                // Only add condition if we have all three: column, operator, AND value
+                if (col != null && !col.trim().isEmpty() &&
+                    operator != null && !operator.trim().isEmpty() &&
+                    value != null && !value.trim().isEmpty()) {
+                    conditions.add(sanitizeIdentifier(col) + " " + resolveOperator(operator) + " ?");
+                    paramValues.add(value);
+                } else {
+                    log.warn("Skipping incomplete filter in preview: col={}, op={}, val={}", col, operator, value);
+                }
+            }
+        }
+
+        // Build SELECT SQL
+        StringBuilder sql = new StringBuilder("SELECT " + selectClause + " FROM " + sanitizedSource);
+        if (!conditions.isEmpty()) {
+            sql.append(" WHERE ").append(String.join(" AND ", conditions));
+        }
+        sql.append(" LIMIT ?");
+
+        log.info("Preview SQL: {}", sql);
+        log.info("Preview Parameters: {}", paramValues);
+
+        try (Connection conn = localDataSource.getConnection();
+             PreparedStatement stmt = conn.prepareStatement(sql.toString())) {
+
+            int paramIdx = 1;
+            // Set filter parameters
+            for (String value : paramValues) {
+                stmt.setString(paramIdx++, value);
+            }
+            // Set limit
+            stmt.setInt(paramIdx, limit);
+
+            ResultSet rs = stmt.executeQuery();
+
+            List<Map<String, Object>> rows = new ArrayList<>();
+            while (rs.next()) {
+                Map<String, Object> row = new LinkedHashMap<>();
+
+                // Map each source column to destination column with transformations
+                for (int i = 0; i < selectColumns.size(); i++) {
+                    Object value = rs.getObject(i + 1);
+                    String destCol = destColumns.get(i);
+
+                    // Apply type transformations
+                    Map<String, Object> destInfo = destColumnMeta.get(destCol.toLowerCase());
+                    if (destInfo != null) {
+                        String destType = (String) destInfo.get("dataType");
+                        value = transformValueForType(value, destType, destCol);
+                    }
+
+                    // Use destination column name (this is how it will appear in dest table)
+                    row.put(destCol, value);
+                }
+                rows.add(row);
+            }
+
+            return Map.of(
+                    "rows", rows,
+                    "count", rows.size(),
+                    "columns", destColumns  // Return destination column names for frontend
+            );
+        }
+    }
+
+    /**
+     * Execute export from local FareFlow DB to external database with optional filters.
+     * Supports one-to-many column mappings (one source column can map to multiple destination columns).
+     */
+    public Map<String, Object> executeExport(
+            String host, int port, String username, String password, String targetDatabase,
+            String sourceTable, String destTable, List<Map<String, String>> columnMappings, List<Map<String, String>> filters) throws Exception {
+
+        log.info("Starting export: local.{} -> {}:{}/{}.{}",
+                sourceTable, host, port, targetDatabase, destTable);
+
+        String sanitizedSource = sanitizeIdentifier(sourceTable);
+        String sanitizedDest = sanitizeIdentifier(destTable);
+
+        // External DB connection for metadata check
+        String extDbUrl = String.format("jdbc:mysql://%s:%d/%s?useSSL=false&allowPublicKeyRetrieval=true",
+                host, port, targetDatabase);
+
+        // Get destination column metadata to detect auto-increment and data types
+        Map<String, Map<String, Object>> destColumnMeta = new LinkedHashMap<>();
+        try (Connection extConn = DriverManager.getConnection(extDbUrl, username, password)) {
+            DatabaseMetaData meta = extConn.getMetaData();
+            ResultSet rsColumns = meta.getColumns(targetDatabase, null, sanitizedDest, null);
+            while (rsColumns.next()) {
+                String colName = rsColumns.getString("COLUMN_NAME");
+                String isAutoInc = rsColumns.getString("IS_AUTOINCREMENT");
+                String dataType = rsColumns.getString("TYPE_NAME");
+
+                Map<String, Object> info = new HashMap<>();
+                info.put("autoIncrement", "YES".equalsIgnoreCase(isAutoInc));
+                info.put("dataType", dataType);
+                destColumnMeta.put(colName.toLowerCase(), info);
+            }
+        }
+
+        // Build SELECT columns from mappings (support one-to-many)
+        List<String> selectColumns = new ArrayList<>();
+        List<String> destColumns = new ArrayList<>();
+
+        for (Map<String, String> mapping : columnMappings) {
+            String srcCol = mapping.get("source");
+            String destCol = mapping.get("dest");
+
+            // Skip empty or invalid mappings
+            if (srcCol == null || srcCol.trim().isEmpty()) {
+                log.warn("Skipping invalid source column: '{}'", srcCol);
+                continue;
+            }
+            if (destCol == null || destCol.trim().isEmpty()) {
+                log.warn("Skipping invalid destination column: '{}'", destCol);
+                continue;
+            }
+
+            String sanitizedSrcCol = sanitizeIdentifier(srcCol);
+            String sanitizedDestCol = sanitizeIdentifier(destCol);
+
+            // Check if destination column is auto-increment (skip if it is)
+            Map<String, Object> destInfo = destColumnMeta.get(sanitizedDestCol.toLowerCase());
+            if (destInfo != null && Boolean.TRUE.equals(destInfo.get("autoIncrement"))) {
+                log.info("Skipping auto-increment column: {}", sanitizedDestCol);
+                continue;
+            }
+
+            selectColumns.add(sanitizedSrcCol);
+            destColumns.add(sanitizedDestCol);
+            log.debug("Column mapping: {} -> {} (type: {})", sanitizedSrcCol, sanitizedDestCol,
+                destInfo != null ? destInfo.get("dataType") : "unknown");
+        }
+
+        if (selectColumns.isEmpty()) {
+            throw new IllegalArgumentException("No valid column mappings provided");
+        }
+
+        log.info("Export column mappings: {} columns mapped", selectColumns.size());
+
+        String selectClause = String.join(", ", selectColumns);
+        String insertClause = String.join(", ", destColumns);
+        String placeholders = String.join(", ", Collections.nCopies(destColumns.size(), "?"));
+
+        // Build WHERE clause with proper validation (same logic as countExportRecords)
+        List<String> conditions = new ArrayList<>();
+        List<String> paramValues = new ArrayList<>();
+
+        if (filters != null && !filters.isEmpty()) {
+            for (Map<String, String> filter : filters) {
+                String col = filter.get("column");
+                String operator = filter.get("operator");
+                String value = filter.get("value");
+
+                // Only add condition if we have all three: column, operator, AND value
+                if (col != null && !col.trim().isEmpty() &&
+                    operator != null && !operator.trim().isEmpty() &&
+                    value != null && !value.trim().isEmpty()) {
+                    conditions.add(sanitizeIdentifier(col) + " " + resolveOperator(operator) + " ?");
+                    paramValues.add(value);
+                } else {
+                    log.warn("Skipping incomplete filter in export: col={}, op={}, val={}", col, operator, value);
+                }
+            }
+        }
+
+        // Build SELECT SQL
+        StringBuilder selectSqlBuilder = new StringBuilder("SELECT " + selectClause + " FROM " + sanitizedSource);
+        if (!conditions.isEmpty()) {
+            selectSqlBuilder.append(" WHERE ").append(String.join(" AND ", conditions));
+        }
+
+        String selectSql = selectSqlBuilder.toString();
+        String insertSql = "INSERT INTO " + sanitizedDest + " (" + insertClause + ") VALUES (" + placeholders + ")";
+        log.info("Export SELECT SQL: {}", selectSql);
+        log.info("Export INSERT SQL: {}", insertSql);
+        log.info("Export Parameters: {}", paramValues);
+
+        // Count total records to export
+        int totalRecords = 0;
+        try {
+            Map<String, Object> countResult = countExportRecords(sourceTable, filters);
+            totalRecords = (int) countResult.get("count");
+            log.info("Total records to export: {}", totalRecords);
+        } catch (Exception e) {
+            log.warn("Failed to count records: {}", e.getMessage());
+        }
+
+        int rowsExported = 0;
+        int rowsFailed = 0;
+        Map<String, Integer> failureReasons = new LinkedHashMap<>();
+        List<String> sampleErrors = new ArrayList<>();
+        int maxSampleErrors = 10;
+
+        try (Connection localConn = localDataSource.getConnection();
+             Connection extConn = DriverManager.getConnection(extDbUrl, username, password)) {
+
+            // Read from local
+            PreparedStatement selectStmt = localConn.prepareStatement(selectSql);
+
+            // Set filter parameters
+            for (int i = 0; i < paramValues.size(); i++) {
+                selectStmt.setString(i + 1, paramValues.get(i));
+                log.debug("Setting export param {}: {}", i + 1, paramValues.get(i));
+            }
+
+            ResultSet rs = selectStmt.executeQuery();
+
+            // Write to external - individual row processing for detailed error tracking
+            PreparedStatement insertStmt = extConn.prepareStatement(insertSql);
+            extConn.setAutoCommit(true); // Auto-commit each row to isolate failures
+
+            int processedCount = 0;
+            while (rs.next()) {
+                processedCount++;
+                try {
+                    // Set values for this row
+                    for (int i = 1; i <= selectColumns.size(); i++) {
+                        Object value = rs.getObject(i);
+                        String destCol = destColumns.get(i - 1);
+
+                        // Transform value based on destination column type
+                        Map<String, Object> destInfo = destColumnMeta.get(destCol.toLowerCase());
+                        if (destInfo != null) {
+                            String destType = (String) destInfo.get("dataType");
+                            value = transformValueForType(value, destType, destCol);
+                        }
+
+                        insertStmt.setObject(i, value);
+                    }
+
+                    // Execute insert for this row
+                    insertStmt.executeUpdate();
+                    rowsExported++;
+
+                    // Log progress every 100 rows
+                    if (processedCount % 100 == 0) {
+                        log.info("Processed {} / {} rows (success: {}, failed: {})",
+                                processedCount, totalRecords > 0 ? totalRecords : "?", rowsExported, rowsFailed);
+                    }
+
+                } catch (SQLException e) {
+                    rowsFailed++;
+
+                    // Categorize the error
+                    String errorCategory = categorizeError(e);
+                    failureReasons.merge(errorCategory, 1, Integer::sum);
+
+                    // Store sample error messages
+                    if (sampleErrors.size() < maxSampleErrors) {
+                        sampleErrors.add(String.format("Row %d: %s", processedCount, e.getMessage()));
+                    }
+
+                    log.debug("Failed to insert row {}: {} - {}", processedCount, errorCategory, e.getMessage());
+                }
+            }
+
+            log.info("Export completed: {} rows exported, {} failed out of {} total",
+                    rowsExported, rowsFailed, processedCount);
+
+            // Build detailed result
+            Map<String, Object> result = new LinkedHashMap<>();
+            result.put("success", true);
+            result.put("totalRecords", totalRecords > 0 ? totalRecords : processedCount);
+            result.put("processedRecords", processedCount);
+            result.put("successfulRecords", rowsExported);
+            result.put("failedRecords", rowsFailed);
+            result.put("sourceTable", sourceTable);
+            result.put("destTable", destTable);
+
+            if (!failureReasons.isEmpty()) {
+                result.put("failureReasons", failureReasons);
+            }
+            if (!sampleErrors.isEmpty()) {
+                result.put("sampleErrors", sampleErrors);
+            }
+
+            return result;
+
+        } catch (Exception e) {
+            log.error("Export failed: {}", e.getMessage(), e);
+            throw new RuntimeException("Export failed: " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Categorize SQL error for reporting.
+     */
+    private String categorizeError(SQLException e) {
+        String message = e.getMessage().toLowerCase();
+        int errorCode = e.getErrorCode();
+
+        // MySQL error codes
+        if (errorCode == 1062 || message.contains("duplicate")) {
+            return "Duplicate Key";
+        } else if (errorCode == 1452 || message.contains("foreign key")) {
+            return "Foreign Key Constraint";
+        } else if (errorCode == 1048 || message.contains("cannot be null")) {
+            return "NULL Constraint Violation";
+        } else if (errorCode == 1406 || message.contains("data too long")) {
+            return "Data Too Long";
+        } else if (errorCode == 1264 || message.contains("out of range")) {
+            return "Value Out of Range";
+        } else if (message.contains("constraint")) {
+            return "Constraint Violation";
+        } else if (message.contains("truncated")) {
+            return "Data Truncation";
+        } else {
+            return "Other Error";
+        }
     }
 }

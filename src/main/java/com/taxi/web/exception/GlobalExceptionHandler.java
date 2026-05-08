@@ -47,6 +47,32 @@ public class GlobalExceptionHandler {
         return buildErrorResponse(HttpStatus.BAD_REQUEST, message);
     }
 
+    /**
+     * Catch-all exception handler to ensure ALL exceptions return JSON instead of HTML error pages.
+     * This prevents "Unexpected token '<', "<html>..." errors on the frontend.
+     */
+    @ExceptionHandler(Exception.class)
+    public ResponseEntity<Map<String, Object>> handleAllExceptions(Exception ex) {
+        log.error("Unhandled exception: {}", ex.getMessage(), ex);
+
+        // Provide user-friendly messages for common error types
+        String message = ex.getMessage();
+        if (message == null || message.isEmpty()) {
+            message = "An unexpected error occurred while processing your request";
+        }
+
+        // Handle specific error patterns with user-friendly messages
+        if (message.contains("OutOfMemoryError") || message.contains("memory")) {
+            message = "File too large to process. Please try a smaller file or contact support.";
+        } else if (message.contains("timeout") || message.contains("Timeout")) {
+            message = "Request timed out. The file may be too complex. Please try again or contact support.";
+        } else if (message.contains("PDFBox") || message.contains("PDF")) {
+            message = "Unable to process PDF file. The file may be corrupted or password-protected.";
+        }
+
+        return buildErrorResponse(HttpStatus.INTERNAL_SERVER_ERROR, message);
+    }
+
     private ResponseEntity<Map<String, Object>> buildErrorResponse(HttpStatus status, String message) {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("timestamp", LocalDateTime.now());

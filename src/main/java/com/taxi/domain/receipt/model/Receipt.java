@@ -13,6 +13,7 @@ public class Receipt {
     private Long id;
 
     @Lob
+    @Basic(fetch = FetchType.EAGER)
     @Column(name = "image_data", columnDefinition = "MEDIUMBLOB")
     private byte[] imageData;
 
