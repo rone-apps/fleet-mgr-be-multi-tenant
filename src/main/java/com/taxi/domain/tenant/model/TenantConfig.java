@@ -39,6 +39,11 @@ public class TenantConfig {
     @Builder.Default
     private String taxicallerBaseUrl = "https://api.taxicaller.net";
 
+    // Feature Flags
+    @Column(name = "use_legacy_charge_system", nullable = false)
+    @Builder.Default
+    private boolean useLegacyChargeSystem = false;  // Default to modern system
+
     // Audit fields
     @Column(name = "created_at")
     @Builder.Default

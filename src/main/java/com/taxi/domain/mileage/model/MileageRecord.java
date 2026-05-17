@@ -57,7 +57,7 @@ public class MileageRecord {
     @Column(name = "mileage_c", precision = 10, scale = 3)
     private BigDecimal mileageC;
 
-    // Calculated total mileage
+    // Calculated total mileage (B + C only)
     @Column(name = "total_mileage", precision = 10, scale = 3)
     private BigDecimal totalMileage;
 

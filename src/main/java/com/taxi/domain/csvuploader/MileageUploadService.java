@@ -239,11 +239,10 @@ public class MileageUploadService {
         dto.setLogonTime(parseDateTime(logonStr));
         dto.setLogoffTime(parseDateTime(logoffStr));
 
-        // Calculate totals
-        BigDecimal a = dto.getMileageA() != null ? dto.getMileageA() : BigDecimal.ZERO;
+        // Calculate totals (B + C only, excluding A)
         BigDecimal b = dto.getMileageB() != null ? dto.getMileageB() : BigDecimal.ZERO;
         BigDecimal c = dto.getMileageC() != null ? dto.getMileageC() : BigDecimal.ZERO;
-        dto.setTotalMileage(a.add(b).add(c));
+        dto.setTotalMileage(b.add(c));
 
         if (dto.getLogonTime() != null && dto.getLogoffTime() != null) {
             long minutes = Duration.between(dto.getLogonTime(), dto.getLogoffTime()).toMinutes();

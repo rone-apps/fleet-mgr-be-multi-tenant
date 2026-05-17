@@ -53,7 +53,7 @@ public class TenantConfigService {
      */
     private Optional<TenantConfig> getTenantConfigFromDefaultSchema(String tenantId) {
         String sql = "SELECT id, tenant_id, company_name, taxicaller_api_key, taxicaller_company_id, " +
-                     "taxicaller_base_url, created_at, updated_at " +
+                     "taxicaller_base_url, use_legacy_charge_system, created_at, updated_at " +
                      "FROM " + DEFAULT_SCHEMA + ".tenant_config WHERE tenant_id = ?";
 
         log.info("Querying tenant_config for tenantId: {} with SQL: {}", tenantId, sql);
@@ -77,6 +77,7 @@ public class TenantConfigService {
                             .taxicallerApiKey(apiKey)
                             .taxicallerCompanyId(companyId)
                             .taxicallerBaseUrl(rs.getString("taxicaller_base_url"))
+                            .useLegacyChargeSystem(rs.getBoolean("use_legacy_charge_system"))
                             .build();
                     return Optional.of(config);
                 } else {

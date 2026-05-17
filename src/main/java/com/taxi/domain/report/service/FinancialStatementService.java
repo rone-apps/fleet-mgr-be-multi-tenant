@@ -31,6 +31,9 @@ import com.taxi.domain.revenue.repository.OtherRevenueRepository;
 import com.taxi.domain.account.repository.AccountChargeRepository;
 import com.taxi.domain.payment.repository.CreditCardTransactionRepository;
 import com.taxi.domain.report.service.DriverFinancialCalculationService;
+import com.taxi.domain.charges.service.CustomerChargeProviderFactory;
+import com.taxi.domain.charges.service.CustomerChargeDataProvider;
+import com.taxi.domain.charges.dto.CustomerChargeDTO;
 import com.taxi.web.dto.report.LeaseRevenueDTO;
 import com.taxi.web.dto.report.LeaseExpenseDTO;
 import com.taxi.domain.shift.model.CabShift;
@@ -93,6 +96,7 @@ public class FinancialStatementService {
     private final CabAttributeTypeRepository cabAttributeTypeRepository;
     private final AirportTripRepository airportTripRepository;
     private final AirportTripDriverRepository airportTripDriverRepository;
+    private final CustomerChargeProviderFactory chargeProviderFactory;
     /**
      * Generate a financial statement for a driver for a date period
      * Shows all applicable recurring (prorated) and one-time charges
@@ -760,47 +764,41 @@ public class FinancialStatementService {
 
         // 6. Add account charge revenues (uses same previous-month logic as credit cards for active owners)
         try {
-            List<com.taxi.domain.account.model.AccountCharge> accountCharges =
-                accountChargeRepository.findByDriverIdAndDateRange(personId, ccFrom, ccTo);
-            log.info("Found {} account charges for person {} between {} and {}",
-                accountCharges.size(), personId, ccFrom, ccTo);
+            CustomerChargeDataProvider chargeProvider = chargeProviderFactory.getProvider();
+            List<CustomerChargeDTO> customerCharges = chargeProvider.findChargesByDriverId(personId, ccFrom, ccTo);
 
-            for (com.taxi.domain.account.model.AccountCharge charge : accountCharges) {
+            log.info("Found {} customer charges for person {} between {} and {} (using {} system)",
+                customerCharges.size(), personId, ccFrom, ccTo, chargeProvider.getImplementationType());
+
+            for (CustomerChargeDTO charge : customerCharges) {
                 if (charge == null) continue;
 
-                String accountName = "Account Charge";
-                if (charge.getAccountCustomer() != null) {
-                    if (charge.getAccountCustomer().getCompanyName() != null) {
-                        accountName = charge.getAccountCustomer().getCompanyName();
-                    }
-                }
-
-                BigDecimal fareAmount = charge.getFareAmount() != null ? charge.getFareAmount() : BigDecimal.ZERO;
-                BigDecimal tipAmount = charge.getTipAmount() != null ? charge.getTipAmount() : BigDecimal.ZERO;
-                BigDecimal totalAmount = fareAmount.add(tipAmount);
+                String accountName = charge.getCustomerName() != null
+                    ? charge.getCustomerName()
+                    : "Account Charge";
 
                 OwnerReportDTO.RevenueLineItem item = OwnerReportDTO.RevenueLineItem.builder()
                     .categoryName("Account Charges")
                     .accountName(accountName)
-                    .revenueDate(charge.getTripDate())
+                    .revenueDate(charge.getChargeDate())
                     .description(accountName)
                     .revenueType("CHARGE_ACCOUNT")
                     .revenueSubType("ACCOUNT_REVENUE")
-                    .cabNumber(charge.getCab() != null ? charge.getCab().getCabNumber() : null)
-                    .amount(totalAmount)
+                    .cabNumber(charge.getCabNumber())
+                    .amount(charge.getTotalAmount())
                     .pickupAddress(charge.getPickupAddress() != null ? charge.getPickupAddress() : "")
                     .dropoffAddress(charge.getDropoffAddress() != null ? charge.getDropoffAddress() : "")
-                    .tipAmount(tipAmount)
-                    .fareAmount(fareAmount)
+                    .tipAmount(charge.getTipAmount())
+                    .fareAmount(charge.getFareAmount())
                     .build();
 
                 report.getRevenues().add(item);
                 log.debug("Added account charge: {} - {} to {} (Fare: ${}, Tip: ${}, Total: ${})",
                     accountName, charge.getPickupAddress(), charge.getDropoffAddress(),
-                    fareAmount, tipAmount, totalAmount);
+                    charge.getFareAmount(), charge.getTipAmount(), charge.getTotalAmount());
             }
         } catch (Exception e) {
-            log.error("Error fetching account charges for person {}: {}", personId, e.getMessage(), e);
+            log.error("Error fetching customer charges for person {}: {}", personId, e.getMessage(), e);
         }
 
         // 7. Add lease revenue (for owners only - drivers renting their shifts)

@@ -1,0 +1,102 @@
+[
+  {
+    "name": "User Signed Up",
+    "description": "Fires when a new user account is successfully registered via /auth/signup."
+  },
+  {
+    "name": "User Logged In",
+    "description": "Fires when a user successfully authenticates via /auth/login."
+  },
+  {
+    "name": "Login Failed",
+    "description": "Fires when a login attempt fails due to bad credentials or inactive account."
+  },
+  {
+    "name": "Driver Created",
+    "description": "Fires when a new driver record is saved, including auto-generated driver number."
+  },
+  {
+    "name": "Shift Created",
+    "description": "Fires when a new cab shift is created via POST /shifts."
+  },
+  {
+    "name": "Shift Activated",
+    "description": "Fires when a shift transitions to active status via PUT /shifts/{id}/activate."
+  },
+  {
+    "name": "Shift Deactivated",
+    "description": "Fires when a shift is deactivated via PUT /shifts/{id}/deactivate."
+  },
+  {
+    "name": "Shift Ownership Transferred",
+    "description": "Fires when a shift's cab ownership is transferred to a different driver."
+  },
+  {
+    "name": "Invoice Generated",
+    "description": "Fires when a new invoice is created for an account customer."
+  },
+  {
+    "name": "Invoice Sent",
+    "description": "Fires when an invoice is marked as sent via PUT /invoices/{id}/send."
+  },
+  {
+    "name": "Invoice Cancelled",
+    "description": "Fires when an invoice is cancelled via PUT /invoices/{id}/cancel."
+  },
+  {
+    "name": "Invoice Emailed",
+    "description": "Fires when an invoice PDF is emailed to the customer."
+  },
+  {
+    "name": "Credit Card Transactions Uploaded",
+    "description": "Fires when a credit card transaction CSV is successfully processed and saved."
+  },
+  {
+    "name": "Airport Trips Uploaded",
+    "description": "Fires when an airport trip CSV is successfully uploaded and processed."
+  },
+  {
+    "name": "Mileage Records Uploaded",
+    "description": "Fires when a mileage CSV is successfully uploaded and records are persisted."
+  },
+  {
+    "name": "Taxi Caller Import Triggered",
+    "description": "Fires when a manual TaxiCaller API import is initiated by a user."
+  },
+  {
+    "name": "Taxi Caller Import Completed",
+    "description": "Fires when a TaxiCaller scheduled or manual import finishes with success or error."
+  },
+  {
+    "name": "EFT File Generated",
+    "description": "Fires when an EFT (Electronic Funds Transfer) file is generated for payroll."
+  },
+  {
+    "name": "Report Downloaded",
+    "description": "Fires when any financial or driver report PDF is downloaded by a user."
+  },
+  {
+    "name": "Lease Rate Override Created",
+    "description": "Fires when a driver- or cab-specific lease rate override is saved."
+  },
+  {
+    "name": "Recurring Expense Created",
+    "description": "Fires when a new recurring expense (e.g. dispatch fee, insurance) is saved."
+  },
+  {
+    "name": "One Time Expense Created",
+    "description": "Fires when a one-time expense is added to a shift or driver."
+  },
+  {
+    "name": "Payment Recorded",
+    "description": "Fires when a payment is recorded against an account or invoice."
+  },
+  {
+    "name": "Receipt Analysed",
+    "description": "Fires when an uploaded receipt is processed by the Gemini AI classifier."
+  },
+  {
+    "name": "User Created By Admin",
+    "description": "Fires when an admin creates a new user account for another person."
+  }
+]

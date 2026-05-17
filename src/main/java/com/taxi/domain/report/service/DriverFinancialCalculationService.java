@@ -2,6 +2,9 @@ package com.taxi.domain.report.service;
 
 import com.taxi.domain.account.model.AccountCharge;
 import com.taxi.domain.account.repository.AccountChargeRepository;
+import com.taxi.domain.charges.service.CustomerChargeProviderFactory;
+import com.taxi.domain.charges.service.CustomerChargeDataProvider;
+import com.taxi.domain.charges.dto.CustomerChargeDTO;
 import com.taxi.domain.cab.model.Cab;
 import com.taxi.domain.cab.model.CabAttributeType;
 import com.taxi.domain.cab.model.CabAttributeValue;
@@ -98,6 +101,7 @@ public class DriverFinancialCalculationService {
     private final MileageRecordRepository mileageRecordRepository;
 
     // Attribute repositories for resolving airport trip rates per attribute
+    private final CustomerChargeProviderFactory chargeProviderFactory;
     private final CabAttributeTypeRepository cabAttributeTypeRepository;
     private final CabAttributeValueRepository cabAttributeValueRepository;
 
@@ -527,71 +531,66 @@ public class DriverFinancialCalculationService {
             LocalDate startDate,
             LocalDate endDate) {
         
-        log.info("📊 [CHARGES REVENUE] Driver: {} | Dates: {} to {}", 
+        log.info("📊 [CHARGES REVENUE] Driver: {} | Dates: {} to {}",
                 driverNumber, startDate, endDate);
-        
+
         Driver driver = driverRepository.findByDriverNumber(driverNumber)
                 .orElseThrow(() -> new IllegalArgumentException("Driver not found: " + driverNumber));
-        
-        List<AccountCharge> charges = accountChargeRepository
-                .findByDriverNumberAndDateRange(driverNumber, startDate, endDate);
-        
-        log.debug("   ✓ Found {} charges", charges.size());
-        
+
+        CustomerChargeDataProvider chargeProvider = chargeProviderFactory.getProvider();
+        List<CustomerChargeDTO> charges = chargeProvider.findChargesByDriverNumber(driverNumber, startDate, endDate);
+
+        log.debug("   ✓ Found {} charges (using {} system)", charges.size(), chargeProvider.getImplementationType());
+
         ChargesRevenueReportDTO report = ChargesRevenueReportDTO.builder()
                 .driverNumber(driverNumber)
                 .driverName(driver.getFullName())
                 .startDate(startDate)
                 .endDate(endDate)
                 .build();
-        
+
         BigDecimal runningTotal = BigDecimal.ZERO;
-        
-        for (AccountCharge charge : charges) {
-            BigDecimal fareAmount = charge.getFareAmount() != null ? charge.getFareAmount() : BigDecimal.ZERO;
-            BigDecimal tipAmount = charge.getTipAmount() != null ? charge.getTipAmount() : BigDecimal.ZERO;
-            BigDecimal totalAmount = fareAmount.add(tipAmount);
-            
-            runningTotal = runningTotal.add(totalAmount);
-            
+
+        for (CustomerChargeDTO charge : charges) {
+            runningTotal = runningTotal.add(charge.getTotalAmount());
+
             ChargesRevenueDTO item = ChargesRevenueDTO.builder()
                     .chargeId(charge.getId())
-                    .tripDate(charge.getTripDate())
+                    .tripDate(charge.getChargeDate())
                     .startTime(charge.getStartTime())
                     .endTime(charge.getEndTime())
-                    .customerName(charge.getAccountCustomer() != null ? 
-                            charge.getAccountCustomer().getCompanyName() : null)
+                    .customerName(charge.getCustomerName())
                     .accountId(charge.getAccountId())
-                    .subAccount(charge.getSubAccount())
+                    .subAccount(null)  // Legacy system doesn't have subAccount
                     .jobCode(charge.getJobCode())
                     .pickupAddress(charge.getPickupAddress())
                     .dropoffAddress(charge.getDropoffAddress())
                     .passengerName(charge.getPassengerName())
-                    .cabNumber(charge.getCab() != null ? charge.getCab().getCabNumber() : null)
-                    .driverNumber(charge.getDriver() != null ? charge.getDriver().getDriverNumber() : driverNumber)
-                    .driverName(charge.getDriver() != null ? charge.getDriver().getFullName() : driver.getFullName())
-                    .fareAmount(fareAmount)
-                    .tipAmount(tipAmount)
-                    .totalAmount(totalAmount)
-                    .isPaid(charge.isPaid())
+                    .cabNumber(charge.getCabNumber())
+                    .driverNumber(charge.getDriverNumber() != null ? charge.getDriverNumber() : driverNumber)
+                    .driverName(charge.getDriverName() != null ? charge.getDriverName() : driver.getFullName())
+                    .fareAmount(charge.getFareAmount())
+                    .tipAmount(charge.getTipAmount())
+                    .totalAmount(charge.getTotalAmount())
+                    .isPaid(charge.getIsPaid())
                     .paidDate(charge.getPaidDate())
                     .invoiceNumber(charge.getInvoiceNumber())
                     .notes(charge.getNotes())
                     .build();
             report.addChargeItem(item);
         }
-        
+
         report.calculateSummary();
-        
+
         log.info("   ✅ RESULT: {} charges, Running Total: ${}, Calculated Total: ${}",
                 charges.size(), runningTotal, report.getGrandTotal());
-        
+
         // VALIDATION: Check if running total matches calculated total
         if (runningTotal.compareTo(report.getGrandTotal()) != 0) {
-            log.error("   ❌ DISCREPANCY! Running: ${}, Calculated: ${}", 
+            log.error("   ❌ DISCREPANCY! Running: ${}, Calculated: ${}",
                     runningTotal, report.getGrandTotal());
         }
-        
+
         return report;
     }
 
