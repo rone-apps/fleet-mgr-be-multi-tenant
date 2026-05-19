@@ -13,6 +13,11 @@ import java.util.Optional;
 public interface LegacyAccountCustomerRepository extends JpaRepository<LegacyAccountCustomer, Long> {
 
     /**
+     * Find customer by db_id (original database ID from legacy system)
+     */
+    Optional<LegacyAccountCustomer> findByDbId(Long dbId);
+
+    /**
      * Find customer by customer ID (legacy identifier)
      */
     Optional<LegacyAccountCustomer> findByCustomerId(String customerId);

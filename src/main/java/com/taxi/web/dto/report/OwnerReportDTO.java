@@ -38,6 +38,11 @@ public class OwnerReportDTO {
     private List<RevenueLineItem> revenues = new ArrayList<>();
     private BigDecimal totalRevenues;
 
+    // Revenue Holding (for owners only - current month revenues held by company)
+    @Builder.Default
+    private List<RevenueLineItem> holdingRevenues = new ArrayList<>();
+    private BigDecimal totalHoldingRevenues;
+
     // Recurring Expenses
     @Builder.Default
     private List<StatementLineItem> recurringExpenses = new ArrayList<>();
@@ -79,6 +84,10 @@ public class OwnerReportDTO {
 
     public void calculateTotals() {
         totalRevenues = revenues.stream()
+                .map(RevenueLineItem::getAmount)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+
+        totalHoldingRevenues = holdingRevenues.stream()
                 .map(RevenueLineItem::getAmount)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
 

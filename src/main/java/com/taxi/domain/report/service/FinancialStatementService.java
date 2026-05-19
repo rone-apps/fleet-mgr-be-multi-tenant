@@ -57,6 +57,7 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.temporal.ChronoUnit;
+import java.time.temporal.TemporalAdjusters;
 import java.util.*;
 
 @Service
@@ -97,6 +98,8 @@ public class FinancialStatementService {
     private final AirportTripRepository airportTripRepository;
     private final AirportTripDriverRepository airportTripDriverRepository;
     private final CustomerChargeProviderFactory chargeProviderFactory;
+    private final com.taxi.domain.statement.service.StatementBalanceTransferService statementBalanceTransferService;
+    private final com.taxi.domain.statement.service.TransferExecutionService transferExecutionService;
     /**
      * Generate a financial statement for a driver for a date period
      * Shows all applicable recurring (prorated) and one-time charges
@@ -207,6 +210,16 @@ public class FinancialStatementService {
      * Shows revenues, expenses (recurring and one-time), and net amount
      */
     public OwnerReportDTO generateOwnerReport(Long personId, LocalDate from, LocalDate to) {
+        return generateOwnerReport(personId, from, to, true);
+    }
+
+    /**
+     * Generate a comprehensive financial report for a driver or owner
+     *
+     * @param includePendingTransfers If true, includes APPROVED transfer executions (for statement generation).
+     *                                If false, only includes APPLIED/FINALIZED (for balance calculation)
+     */
+    public OwnerReportDTO generateOwnerReport(Long personId, LocalDate from, LocalDate to, boolean includePendingTransfers) {
         Driver person = driverRepository.findById(personId)
             .orElseThrow(() -> new RuntimeException("Driver/Owner not found: " + personId));
 
@@ -732,7 +745,7 @@ public class FinancialStatementService {
         LocalDate ccTo = to;
         if (isActiveOwner) {
             ccFrom = from.minusMonths(1);
-            ccTo = to.minusMonths(1);
+            ccTo = ccFrom.with(TemporalAdjusters.lastDayOfMonth());
             log.info("Active owner {} — using previous month for CC revenues and account charges: {} to {}", personId, ccFrom, ccTo);
         }
 
@@ -799,6 +812,74 @@ public class FinancialStatementService {
             }
         } catch (Exception e) {
             log.error("Error fetching customer charges for person {}: {}", personId, e.getMessage(), e);
+        }
+
+        // 6b. For active owners, also calculate CURRENT month revenues (held by company)
+        // This shows owners what they earned in the current month that the company is holding
+        if (isActiveOwner) {
+            log.info("Calculating holding revenues for owner {} (current month: {} to {})", personId, from, to);
+
+            // Credit card revenues from CURRENT month
+            if (person.getDriverNumber() != null) {
+                List<com.taxi.domain.payment.model.CreditCardTransaction> currentMonthCC =
+                    creditCardTransactionRepository.findByDriverNumberAndDateRange(person.getDriverNumber(), from, to);
+                log.info("Found {} current month credit card transactions for holding revenues", currentMonthCC.size());
+
+                for (com.taxi.domain.payment.model.CreditCardTransaction transaction : currentMonthCC) {
+                    String cardDesc = transaction.getCardholderNumber() != null
+                        ? transaction.getCardholderNumber()
+                        : (transaction.getCardLastFour() != null ? "****" + transaction.getCardLastFour() : "Credit Card");
+                    if (transaction.getCardType() != null) {
+                        cardDesc += " (" + transaction.getCardType() + ")";
+                    }
+
+                    report.getHoldingRevenues().add(OwnerReportDTO.RevenueLineItem.builder()
+                        .categoryName("Credit Card Revenue")
+                        .revenueDate(transaction.getTransactionDate())
+                        .description(cardDesc)
+                        .revenueType("CREDIT_CARD")
+                        .revenueSubType("CARD_REVENUE")
+                        .cabNumber(transaction.getCabNumber())
+                        .amount(transaction.getTotalAmount())
+                        .build());
+                }
+            }
+
+            // Account charge revenues from CURRENT month
+            try {
+                CustomerChargeDataProvider chargeProvider = chargeProviderFactory.getProvider();
+                List<CustomerChargeDTO> currentMonthCharges = chargeProvider.findChargesByDriverId(personId, from, to);
+
+                log.info("Found {} current month customer charges for holding revenues (using {} system)",
+                    currentMonthCharges.size(), chargeProvider.getImplementationType());
+
+                for (CustomerChargeDTO charge : currentMonthCharges) {
+                    if (charge == null) continue;
+
+                    String accountName = charge.getCustomerName() != null
+                        ? charge.getCustomerName()
+                        : "Account Charge";
+
+                    report.getHoldingRevenues().add(OwnerReportDTO.RevenueLineItem.builder()
+                        .categoryName("Account Charges")
+                        .accountName(accountName)
+                        .revenueDate(charge.getChargeDate())
+                        .description(accountName)
+                        .revenueType("CHARGE_ACCOUNT")
+                        .revenueSubType("ACCOUNT_REVENUE")
+                        .cabNumber(charge.getCabNumber())
+                        .amount(charge.getTotalAmount())
+                        .pickupAddress(charge.getPickupAddress() != null ? charge.getPickupAddress() : "")
+                        .dropoffAddress(charge.getDropoffAddress() != null ? charge.getDropoffAddress() : "")
+                        .tipAmount(charge.getTipAmount())
+                        .fareAmount(charge.getFareAmount())
+                        .build());
+                }
+            } catch (Exception e) {
+                log.error("Error fetching current month customer charges for holding revenues: {}", e.getMessage(), e);
+            }
+
+            log.info("Added {} holding revenue items for owner {}", report.getHoldingRevenues().size(), personId);
         }
 
         // 7. Add lease revenue (for owners only - drivers renting their shifts)
@@ -1074,45 +1155,101 @@ public class FinancialStatementService {
         }
 
         // ═══════════════════════════════════════════════════════════════════════
-        // COMMISSIONS ON REVENUE
-        // Credit card commission: 2% on each credit card revenue item + total
+        // CREDIT CARD MERCHANT FEE (charged to drivers on CC transactions)
+        // Calculates merchant fee for each transaction and stamps it on revenue item.
+        // Also aggregates total merchant fee in commission expenses section.
+        // Uses date-aware rate lookup for historical accuracy.
         // ═══════════════════════════════════════════════════════════════════════
         try {
-            BigDecimal ccCommissionRate = new BigDecimal("2");
-            BigDecimal totalCreditCardRevenue = BigDecimal.ZERO;
-            BigDecimal totalCommission = BigDecimal.ZERO;
+            // Collect all credit card revenue items
+            List<OwnerReportDTO.RevenueLineItem> ccRevenueItems = report.getRevenues().stream()
+                    .filter(rev -> "CREDIT_CARD".equals(rev.getRevenueType()))
+                    .toList();
 
-            // Calculate per-item commission on each credit card revenue
-            for (OwnerReportDTO.RevenueLineItem rev : report.getRevenues()) {
-                if ("CREDIT_CARD".equals(rev.getRevenueType())) {
-                    BigDecimal amt = rev.getAmount() != null ? rev.getAmount() : BigDecimal.ZERO;
-                    BigDecimal itemCommission = amt.multiply(ccCommissionRate)
-                            .divide(new BigDecimal("100"), 2, java.math.RoundingMode.HALF_UP);
-                    BigDecimal netAmt = amt.subtract(itemCommission);
+            if (ccRevenueItems.isEmpty()) {
+                log.debug("No credit card revenue items found for merchant fee calculation");
+            } else {
+                // Look up CREDIT_CARD_DISCOUNT commission type (stores merchant fee rates)
+                var commissionTypeOpt = commissionRateRepository.findAll().stream()
+                        .filter(r -> r.getCommissionType().getCode().equals("CREDIT_CARD_DISCOUNT"))
+                        .findFirst()
+                        .map(r -> r.getCommissionType());
 
-                    rev.setCommissionRate(ccCommissionRate);
-                    rev.setCommissionAmount(itemCommission);
-                    rev.setNetAmount(netAmt);
+                if (commissionTypeOpt.isEmpty()) {
+                    log.warn("No CREDIT_CARD_DISCOUNT commission type found — credit card merchant fees will not be charged");
+                } else {
+                    var commissionType = commissionTypeOpt.get();
+                    log.info("Credit card merchant fee calculation: {} CC transactions, period {}-{}",
+                            ccRevenueItems.size(), from, to);
 
-                    totalCreditCardRevenue = totalCreditCardRevenue.add(amt);
-                    totalCommission = totalCommission.add(itemCommission);
+                    BigDecimal totalCreditCardRevenue = BigDecimal.ZERO;
+                    BigDecimal totalMerchantFee = BigDecimal.ZERO;
+                    BigDecimal appliedRate = null;
+
+                    // Calculate merchant fee for each credit card transaction
+                    for (OwnerReportDTO.RevenueLineItem rev : ccRevenueItems) {
+                        BigDecimal amt = rev.getAmount() != null ? rev.getAmount() : BigDecimal.ZERO;
+                        if (amt.compareTo(BigDecimal.ZERO) <= 0) continue;
+
+                        LocalDate transactionDate = rev.getRevenueDate() != null ? rev.getRevenueDate() : to;
+
+                        // Look up merchant fee rate active on this transaction's date
+                        var rateOpt = commissionRateRepository.findActiveRateOnDate(
+                                commissionType.getId(), transactionDate);
+
+                        if (rateOpt.isEmpty()) {
+                            log.warn("No merchant fee rate found for CREDIT_CARD_DISCOUNT on date {} — skipping fee on ${}",
+                                    transactionDate, amt);
+                            continue;
+                        }
+
+                        var rate = rateOpt.get();
+                        BigDecimal merchantFee = amt.multiply(rate.getRate())
+                                .divide(new BigDecimal("100"), 2, java.math.RoundingMode.HALF_UP);
+                        BigDecimal netAmount = amt.subtract(merchantFee);
+
+                        // Stamp merchant fee info on revenue item for display
+                        rev.setCommissionRate(rate.getRate());
+                        rev.setCommissionAmount(merchantFee);
+                        rev.setNetAmount(netAmount);
+
+                        totalCreditCardRevenue = totalCreditCardRevenue.add(amt);
+                        totalMerchantFee = totalMerchantFee.add(merchantFee);
+
+                        // Store rate for summary (use most recent rate)
+                        appliedRate = rate.getRate();
+
+                        log.debug("Charged {}% merchant fee on CC transaction ${} (date: {}) = ${}, net = ${}",
+                                rate.getRate(), amt, transactionDate, merchantFee, netAmount);
+                    }
+
+                    log.info("Credit card merchant fees: ${} revenue, ${} total fees charged",
+                            totalCreditCardRevenue, totalMerchantFee);
+
+                    // Add merchant fee summary to commission expenses section
+                    if (totalMerchantFee.compareTo(BigDecimal.ZERO) > 0 && appliedRate != null) {
+                        report.getCommissionExpenses().add(OwnerReportDTO.CommissionLineItem.builder()
+                                .commissionTypeCode("CREDIT_CARD_DISCOUNT")
+                                .commissionTypeName("Merchant Fee")
+                                .commissionRate(appliedRate)
+                                .revenueCategoryName("Credit Card Revenue")
+                                .baseAmount(totalCreditCardRevenue)
+                                .amount(totalMerchantFee)
+                                .build());
+                    }
                 }
             }
-
-            log.info("Commission calculation: total CC revenue = ${}, total commission = ${}", totalCreditCardRevenue, totalCommission);
-
-            if (totalCommission.compareTo(BigDecimal.ZERO) > 0) {
-                report.getCommissionExpenses().add(OwnerReportDTO.CommissionLineItem.builder()
-                        .commissionTypeCode("CC_COMMISSION")
-                        .commissionTypeName("Credit Card Commission")
-                        .commissionRate(ccCommissionRate)
-                        .revenueCategoryName("Credit Card Revenue")
-                        .baseAmount(totalCreditCardRevenue)
-                        .amount(totalCommission)
-                        .build());
-            }
         } catch (Exception e) {
-            log.error("Error calculating commission expenses: {}", e.getMessage(), e);
+            log.error("Error calculating credit card merchant fee: {}", e.getMessage(), e);
+        }
+
+        // Apply transfer executions (if any)
+        try {
+            transferExecutionService.applyExecutionsToReport(report, personId, from, to, includePendingTransfers);
+            log.info("Applied transfer executions for person {} in period {} to {} (includePending={})",
+                    personId, from, to, includePendingTransfers);
+        } catch (Exception e) {
+            log.error("Error applying transfer executions for person {}: {}", personId, e.getMessage(), e);
         }
 
         report.calculateTotals();
@@ -1157,6 +1294,31 @@ public class FinancialStatementService {
 
             statement = statementRepository.save(statement);
             log.info("Finalized statement ID {} for person {} with net due {}", statement.getId(), statement.getPersonId(), statement.getNetDue());
+
+            // Mark transfer executions as applied
+            try {
+                transferExecutionService.markExecutionsApplied(
+                    statement.getId(),
+                    statement.getPersonId(),
+                    statement.getPeriodFrom(),
+                    statement.getPeriodTo(),
+                    1L // TODO: Get current user ID from security context
+                );
+                log.info("Marked transfer executions as applied for statement {}", statement.getId());
+            } catch (Exception e) {
+                log.error("Error marking transfer executions as applied for statement {}: {}", statement.getId(), e.getMessage(), e);
+            }
+
+            // Finalize transfer executions when statement is finalized
+            if (statement.getStatus() == StatementStatus.FINALIZED || statement.getStatus() == StatementStatus.PAID) {
+                try {
+                    transferExecutionService.finalizeExecutionsForStatement(statement.getId());
+                    log.info("Finalized transfer executions for statement {}", statement.getId());
+                } catch (Exception e) {
+                    log.error("Error finalizing transfer executions for statement {}: {}", statement.getId(), e.getMessage(), e);
+                }
+            }
+
             return statement;
 
         } catch (Exception e) {

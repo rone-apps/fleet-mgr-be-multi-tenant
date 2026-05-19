@@ -331,6 +331,19 @@ public class OtherRevenueService {
             RevenueCategory category = categoryRepository.findById(request.getCategoryId())
                 .orElseThrow(() -> new RuntimeException("Revenue category not found with id: " + request.getCategoryId()));
             revenue.setCategory(category);
+        } else {
+            // ✅ If no category provided, use default "Other Revenue" category
+            // Find or create a default category for revenues without specific category
+            RevenueCategory defaultCategory = categoryRepository.findByCategoryCode("OTHER")
+                .or(() -> categoryRepository.findByCategoryName("Other Revenue"))
+                .orElseGet(() -> {
+                    log.warn("No default revenue category found, using first available active category");
+                    return categoryRepository.findByIsActiveTrue().stream()
+                        .findFirst()
+                        .orElseThrow(() -> new RuntimeException("No revenue categories available. Please create at least one revenue category."));
+                });
+            revenue.setCategory(defaultCategory);
+            log.info("Using default category '{}' for revenue without specified category", defaultCategory.getCategoryName());
         }
 
         // Set application type fields (new system)

@@ -33,4 +33,6 @@ public interface StatementRepository extends JpaRepository<Statement, Long> {
 
     @Query("SELECT s FROM Statement s WHERE s.periodFrom <= :to AND s.periodTo >= :from AND s.status = :status ORDER BY s.generatedDate DESC")
     List<Statement> findByPeriodAndStatus(@Param("from") LocalDate from, @Param("to") LocalDate to, @Param("status") StatementStatus status);
+
+    List<Statement> findByPeriodFromAndPeriodToAndStatus(LocalDate periodFrom, LocalDate periodTo, StatementStatus status);
 }
