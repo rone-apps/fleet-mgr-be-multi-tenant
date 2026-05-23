@@ -10,6 +10,7 @@ import org.springframework.http.client.ClientHttpRequestFactory;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.web.servlet.config.annotation.AsyncSupportConfigurer;
+import org.springframework.web.servlet.config.annotation.CorsRegistry;
 import org.springframework.web.servlet.config.annotation.ResourceHandlerRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 
@@ -17,6 +18,23 @@ import java.time.Duration;
 
 @Configuration
 public class WebConfig implements WebMvcConfigurer {
+
+    /**
+     * Configure CORS to allow frontend (localhost:3000) to access backend API
+     */
+    @Override
+    public void addCorsMappings(CorsRegistry registry) {
+        registry.addMapping("/api/**")
+                .allowedOrigins(
+                    "http://localhost:3000",
+                    "http://localhost:3001",
+                    "http://34.216.199.38:3000"  // Production frontend if needed
+                )
+                .allowedMethods("GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS")
+                .allowedHeaders("*")
+                .allowCredentials(true)
+                .maxAge(3600);
+    }
 
     /**
      * Increase async request timeout to 30 minutes for large CSV uploads

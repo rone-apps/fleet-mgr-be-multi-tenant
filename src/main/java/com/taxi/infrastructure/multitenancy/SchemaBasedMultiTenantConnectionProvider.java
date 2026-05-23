@@ -21,14 +21,17 @@ import java.util.Map;
  */
 @Component
 @Slf4j
-public class SchemaBasedMultiTenantConnectionProvider 
+public class SchemaBasedMultiTenantConnectionProvider
         implements MultiTenantConnectionProvider, HibernatePropertiesCustomizer {
-    
+
     private final DataSource dataSource;
-    
+    private final TenantSchemaMapper schemaMapper;
+
     @Autowired
-    public SchemaBasedMultiTenantConnectionProvider(DataSource dataSource) {
+    public SchemaBasedMultiTenantConnectionProvider(DataSource dataSource,
+                                                     TenantSchemaMapper schemaMapper) {
         this.dataSource = dataSource;
+        this.schemaMapper = schemaMapper;
     }
     
     @Override
@@ -47,8 +50,12 @@ public class SchemaBasedMultiTenantConnectionProvider
 
         Connection connection = dataSource.getConnection();
 
-        // Determine the schema to use
-        String schema = sanitizeSchemaName(tenantIdentifier);
+        // Map tenant ID to schema name (e.g., "maclures" -> "fareflow_maclures")
+        String mappedSchema = schemaMapper.getSchemaName(tenantIdentifier);
+        log.info("MULTI_TENANT: Tenant '{}' mapped to schema: {}", tenantIdentifier, mappedSchema);
+
+        // Sanitize the mapped schema name
+        String schema = sanitizeSchemaName(mappedSchema);
         log.info("MULTI_TENANT: Sanitized schema name: {}", schema);
         
         // If schema is empty or null, use the default

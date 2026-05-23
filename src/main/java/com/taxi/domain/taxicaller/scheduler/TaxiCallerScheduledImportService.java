@@ -75,7 +75,9 @@ public class TaxiCallerScheduledImportService {
 
         try {
             // Set tenant context for scheduled (non-HTTP) execution
-            TenantContext.setSystemTenant();
+            // IMPORTANT: This sets which tenant schema the import data goes into
+            TenantContext.setCurrentTenant("maclures");
+            log.info("   Tenant: maclures (imports will go to fareflow_maclures schema)");
 
             // Calculate date range (previous day by default)
             LocalDate endDate = LocalDate.now().minusDays(1);
@@ -312,7 +314,8 @@ public class TaxiCallerScheduledImportService {
             TenantContext.getCurrentTenant();
             tenantWasSet = true;
         } catch (IllegalStateException e) {
-            TenantContext.setSystemTenant();
+            // If no tenant set, use maclures (imports go to fareflow_maclures schema)
+            TenantContext.setCurrentTenant("maclures");
         }
 
         try {

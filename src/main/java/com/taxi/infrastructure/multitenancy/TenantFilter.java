@@ -28,10 +28,17 @@ public class TenantFilter extends OncePerRequestFilter {
     ) throws ServletException, IOException {
 
         try {
+            log.error("=== TENANT FILTER DEBUG ===");
+            log.error("Request URI: {}", request.getRequestURI());
+            log.error("X-Tenant-ID header: {}", request.getHeader("X-Tenant-ID"));
+            log.error("All headers: {}", java.util.Collections.list(request.getHeaderNames()));
+
             String tenantId = resolveTenant(request);
+            log.error("Resolved tenant: {}", tenantId);
 
             if (tenantId == null || tenantId.isBlank()) {
                 String uri = request.getRequestURI();
+                log.error("TENANT IS NULL OR BLANK! URI: {}", uri);
                 // Only system endpoints should bypass tenant requirement
                 // All business endpoints including drivers/cabs require a tenant
                 throw new ServletException(
@@ -85,7 +92,8 @@ public class TenantFilter extends OncePerRequestFilter {
 
     private String sanitizeTenantId(String tenantId) {
         tenantId = tenantId.toLowerCase().trim();
-        tenantId = tenantId.replaceAll("[^a-z0-9_]", "");
+        // Allow hyphens in tenant IDs (e.g., "mac-cabs")
+        tenantId = tenantId.replaceAll("[^a-z0-9_-]", "");
 
         if (tenantId.length() > 63) {
             tenantId = tenantId.substring(0, 63);
@@ -97,6 +105,13 @@ public class TenantFilter extends OncePerRequestFilter {
     @Override
     protected boolean shouldNotFilter(HttpServletRequest request) {
         String uri = request.getRequestURI();
+        String method = request.getMethod();
+
+        // Allow CORS preflight requests (OPTIONS) to pass through
+        if ("OPTIONS".equalsIgnoreCase(method)) {
+            return true;
+        }
+
         // Endpoints that should bypass tenant filtering
         // NOTE: /api/auth/* should NOT be bypassed - users need X-Tenant-ID to login
         return uri.startsWith("/actuator") ||
