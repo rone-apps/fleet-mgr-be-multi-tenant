@@ -36,12 +36,9 @@ public class ChasePlugin implements PaymentPlugin {
                 .type(PluginType.PAYMENT)
                 .capabilities(Set.of("CREDIT_CARD_SYNC", "TRANSACTION_IMPORT"))
                 .configFields(Arrays.asList(
-                        new ConfigField("merchantId", "Merchant ID", FieldType.TEXT, true, null,
-                                "Your Chase merchant account ID"),
-                        new ConfigField("apiKey", "API Key", FieldType.SECRET, true, null,
-                                "Chase API key for authentication"),
-                        new ConfigField("environment", "Environment", FieldType.SELECT, true, "PROD",
-                                "Production or test environment", Arrays.asList("PROD", "TEST"))
+                        new ConfigField("merchantId", "Merchant ID", FieldType.STRING, true, null, null),
+                        new ConfigField("apiKey", "API Key", FieldType.SECRET, true, null, null),
+                        new ConfigField("environment", "Environment", FieldType.STRING, true, "PROD", null)
                 ))
                 .description("Sync credit card transactions from Chase payment terminals")
                 .vendor("Chase")
@@ -60,11 +57,11 @@ public class ChasePlugin implements PaymentPlugin {
 
         try {
             // Get date range from context parameters
-            LocalDate startDate = context.getParameter("startDate") != null ?
-                    LocalDate.parse(context.getParameter("startDate").toString()) :
+            LocalDate startDate = context.getParameter("startDate", String.class) != null ?
+                    LocalDate.parse(context.getParameter("startDate", String.class)) :
                     LocalDate.now().minusDays(1);
-            LocalDate endDate = context.getParameter("endDate") != null ?
-                    LocalDate.parse(context.getParameter("endDate").toString()) :
+            LocalDate endDate = context.getParameter("endDate", String.class) != null ?
+                    LocalDate.parse(context.getParameter("endDate", String.class)) :
                     LocalDate.now();
 
             // Sync transactions
@@ -72,7 +69,6 @@ public class ChasePlugin implements PaymentPlugin {
 
             return PluginExecutionResult.builder()
                     .status(ExecutionStatus.SUCCESS)
-                    .message(String.format("Synced %d Chase transactions", transactions.size()))
                     .recordsProcessed(transactions.size())
                     .recordsSuccess(transactions.size())
                     .recordsFailed(0)
@@ -82,8 +78,7 @@ public class ChasePlugin implements PaymentPlugin {
             log.error("Chase plugin execution failed for tenant: {}", tenantId, e);
             return PluginExecutionResult.builder()
                     .status(ExecutionStatus.FAILED)
-                    .message("Failed to sync Chase transactions: " + e.getMessage())
-                    .errorMessage(e.getMessage())
+                    .error("Failed to sync Chase transactions: " + e.getMessage())
                     .build();
         }
     }

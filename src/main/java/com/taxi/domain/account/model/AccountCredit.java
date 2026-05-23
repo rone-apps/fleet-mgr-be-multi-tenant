@@ -37,6 +37,7 @@ public class AccountCredit {
     private BigDecimal creditAmount;
 
     @Column(name = "used_amount")
+    @Builder.Default
     private BigDecimal usedAmount = BigDecimal.ZERO;
 
     @Column(name = "remaining_amount", nullable = false)
@@ -58,12 +59,14 @@ public class AccountCredit {
     private Long paymentId;
 
     @Column(name = "created_date", nullable = false)
+    @Builder.Default
     private LocalDateTime createdDate = LocalDateTime.now();
 
     @Column(name = "created_by")
     private Long createdBy;
 
     @Column(name = "is_active")
+    @Builder.Default
     private Boolean isActive = true;
 
     // Helper methods

@@ -80,6 +80,7 @@ public class TransferExecution {
     // Status workflow
     @Enumerated(EnumType.STRING)
     @Column(name = "status", nullable = false, length = 20)
+    @Builder.Default
     private ExecutionStatus status = ExecutionStatus.PENDING;
 
     // Approval tracking
