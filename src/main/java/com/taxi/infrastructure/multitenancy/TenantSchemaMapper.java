@@ -23,19 +23,24 @@ public class TenantSchemaMapper {
         // Format: tenantId -> schemaName
 
         // Maclure's Cabs - maps to fareflow_maclures
-        tenantToSchemaMap.put("maclures", "fareflow_maclures");
-        tenantToSchemaMap.put("mac-cabs", "fareflow_maclures");
-        tenantToSchemaMap.put("maclures_cabs", "fareflow_maclures");
+        tenantToSchemaMap.put("mac-cabs", "fareflow_maclures");     // Primary login ID
+        tenantToSchemaMap.put("maclures", "fareflow_maclures");     // Alias
+        tenantToSchemaMap.put("maclures_cabs", "fareflow_maclures");// Alias
 
         // Bonny's Taxi - maps to fareflow_bonny
-        tenantToSchemaMap.put("bonnys", "fareflow_bonny");
-        tenantToSchemaMap.put("bonny", "fareflow_bonny");
-        tenantToSchemaMap.put("bonnys_taxi", "fareflow_bonny");
+        tenantToSchemaMap.put("bonny-taxi", "fareflow_bonny");      // Primary login ID
+        tenantToSchemaMap.put("bonny", "fareflow_bonny");           // Alias
+        tenantToSchemaMap.put("bonnys", "fareflow_bonny");          // Alias
+        tenantToSchemaMap.put("bonnys_taxi", "fareflow_bonny");     // Alias
 
-        // Yellow Cabs - maps to fareflow_yellowcabs
-        tenantToSchemaMap.put("yellowcabs", "fareflow_yellowcabs");
-        tenantToSchemaMap.put("yellow", "fareflow_yellowcabs");
-        tenantToSchemaMap.put("yellow_cabs", "fareflow_yellowcabs");
+        // Yellow Cabs - maps to fareflow_yellow
+        tenantToSchemaMap.put("yellow-cabs", "fareflow_yellow");    // Primary login ID
+        tenantToSchemaMap.put("yellow", "fareflow_yellow");         // Alias
+        tenantToSchemaMap.put("yellowcabs", "fareflow_yellow");     // Alias
+        tenantToSchemaMap.put("yellow_cabs", "fareflow_yellow");    // Alias
+
+        // Demo Tenant - maps to fareflow_demo
+        tenantToSchemaMap.put("demo", "fareflow_demo");
 
         log.info("TenantSchemaMapper initialized with {} mappings", tenantToSchemaMap.size());
         tenantToSchemaMap.forEach((tenant, schema) ->
