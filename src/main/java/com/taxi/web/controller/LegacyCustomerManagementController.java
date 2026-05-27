@@ -309,6 +309,69 @@ public class LegacyCustomerManagementController {
     }
 
     /**
+     * Update an existing legacy charge
+     * PUT /legacy-customers/charges/{id}
+     */
+    @PutMapping("/charges/{id}")
+    public ResponseEntity<?> updateLegacyCharge(@PathVariable Long id, @Valid @RequestBody UpdateChargeRequest request) {
+        log.info("Updating legacy charge ID {}: {}", id, request);
+
+        try {
+            // Find existing charge
+            LegacyCustomerCharge existingCharge = legacyCustomerChargeRepository.findById(id)
+                    .orElseThrow(() -> new IllegalArgumentException("Charge not found with ID: " + id));
+
+            // Validate required fields
+            if (request.getDate() == null) {
+                return ResponseEntity.badRequest().body(createError("Date is required"));
+            }
+            if (request.getAmount() == null || request.getAmount() < 0) {
+                return ResponseEntity.badRequest().body(createError("Amount must be 0 or greater"));
+            }
+            if (request.getPayment() != null && request.getPayment() < 0) {
+                return ResponseEntity.badRequest().body(createError("Payment must be 0 or greater"));
+            }
+            if (request.getCustomerDbId() == null) {
+                return ResponseEntity.badRequest().body(createError("Customer is required"));
+            }
+            if (request.getDriverNumber() == null || request.getDriverNumber().trim().isEmpty()) {
+                return ResponseEntity.badRequest().body(createError("Driver is required"));
+            }
+
+            // Find customer by db_id
+            LegacyAccountCustomer customer = legacyAccountCustomerRepository.findByDbId(request.getCustomerDbId())
+                    .orElseThrow(() -> new IllegalArgumentException("Customer not found with db_id: " + request.getCustomerDbId()));
+
+            // Find driver by driver number
+            LegacyDriver driver = legacyDriverRepository.findByDriverNumber(request.getDriverNumber())
+                    .orElseThrow(() -> new IllegalArgumentException("Driver not found with number: " + request.getDriverNumber()));
+
+            // Update charge fields
+            existingCharge.setDate(request.getDate());
+            existingCharge.setAmount(request.getAmount());
+            existingCharge.setPayment(request.getPayment() != null ? request.getPayment() : 0.0);
+            existingCharge.setCabId(request.getCabId());
+            existingCharge.setCustomer(customer);
+            existingCharge.setDriver(driver);
+            existingCharge.setNotes(request.getNotes());
+            existingCharge.setType(request.getType() != null ? request.getType() : "CHARGE");
+
+            LegacyCustomerCharge updated = legacyCustomerChargeRepository.save(existingCharge);
+            log.info("Updated legacy charge with ID: {}", updated.getId());
+
+            LegacyCustomerChargeDTO dto = mapToDTO(updated);
+            return ResponseEntity.ok(dto);
+
+        } catch (IllegalArgumentException e) {
+            log.error("Validation error updating legacy charge: {}", e.getMessage());
+            return ResponseEntity.badRequest().body(createError(e.getMessage()));
+        } catch (Exception e) {
+            log.error("Error updating legacy charge", e);
+            return ResponseEntity.status(500).body(createError("An unexpected error occurred"));
+        }
+    }
+
+    /**
      * DTO for creating a new charge
      */
     @Data
@@ -330,6 +393,34 @@ public class LegacyCustomerManagementController {
         private Double tip; // Optional, defaults to 0
 
         private String notes; // Optional
+    }
+
+    /**
+     * DTO for updating an existing charge
+     */
+    @Data
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class UpdateChargeRequest {
+        @NotNull(message = "Date is required")
+        private LocalDate date;
+
+        @NotNull(message = "Customer ID is required")
+        private Long customerDbId;
+
+        @NotNull(message = "Driver number is required")
+        private String driverNumber;
+
+        @NotNull(message = "Amount is required")
+        private Double amount;
+
+        private Double payment; // Payment amount (defaults to 0)
+
+        private Long cabId; // Optional cab ID
+
+        private String type; // Optional type (defaults to "CHARGE")
+
+        private String notes; // Optional notes
     }
 
     /**
