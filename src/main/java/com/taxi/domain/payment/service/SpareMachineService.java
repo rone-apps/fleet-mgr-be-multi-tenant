@@ -156,8 +156,57 @@ public class SpareMachineService {
             }
         }
 
-        log.warn("No active assignment found for spare {} at time {}", spare.getId(), transactionTime);
-        return null;  // Return null if no active assignment (merchant should be looked up in merchant2cab instead)
+        log.warn("No active assignment found for spare {} at time {} - returning virtual cab ID as fallback", spare.getId(), transactionTime);
+        return spare.getVirtualCabId();  // Return virtual cab ID if no active assignment
+    }
+
+    /**
+     * Given a virtual cab ID and transaction time, resolve to the real cab it was assigned to.
+     * Used during credit card transaction enrichment to swap virtual cabs to real cabs.
+     *
+     * @param virtualCabId The virtual cab number (10000-11000 range)
+     * @param transactionTime When the transaction occurred
+     * @return Real cab number if active assignment exists, null otherwise
+     */
+    @Transactional(readOnly = true)
+    public Integer resolveVirtualToRealCab(Integer virtualCabId, LocalDateTime transactionTime) {
+        log.debug("Resolving virtual cab {} to real cab at time: {}", virtualCabId, transactionTime);
+
+        if (virtualCabId == null || transactionTime == null) {
+            log.warn("Virtual cab ID or transaction time is null");
+            return null;
+        }
+
+        // Check if this is actually a virtual cab
+        if (!isVirtualCabId(virtualCabId)) {
+            log.debug("Cab {} is not in virtual range", virtualCabId);
+            return null;
+        }
+
+        // Find spare machine by virtual cab ID
+        SpareMachine spare = spareMachineRepository.findByVirtualCabId(virtualCabId)
+            .orElse(null);
+
+        if (spare == null) {
+            log.warn("No spare machine found with virtual cab ID {}", virtualCabId);
+            return null;
+        }
+
+        log.debug("Found spare machine {} for virtual cab {}", spare.getId(), virtualCabId);
+
+        // Find active assignment at transaction time
+        List<SpareMachineAssignment> assignments = assignmentRepository.findBySpareMachineIdOrderByAssignedAtDesc(spare.getId());
+
+        for (SpareMachineAssignment assignment : assignments) {
+            if (assignment.isActive(transactionTime)) {
+                log.debug("Resolved virtual cab {} to real cab {} via assignment {}",
+                    virtualCabId, assignment.getRealCabNumber(), assignment.getId());
+                return assignment.getRealCabNumber();
+            }
+        }
+
+        log.debug("No active assignment found for virtual cab {} at time {}", virtualCabId, transactionTime);
+        return null;
     }
 
     /**
@@ -232,6 +281,14 @@ public class SpareMachineService {
 
         log.info("Spare machine {} activated", id);
         return spare;
+    }
+
+    /**
+     * Check if a cab number is in the virtual cab range (spare machines)
+     * Public method for use by transaction enrichment logic
+     */
+    public boolean isVirtualCabNumber(Integer cabNumber) {
+        return isVirtualCabId(cabNumber);
     }
 
     /**

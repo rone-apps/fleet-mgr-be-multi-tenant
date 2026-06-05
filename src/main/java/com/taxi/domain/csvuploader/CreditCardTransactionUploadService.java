@@ -498,34 +498,87 @@ public class CreditCardTransactionUploadService {
 
         List<CreditCardTransaction> transactions = transactionRepository.findByTransactionDateBetween(startDate, endDate);
 
-        int cabUpdated = 0;
-        int driverUpdated = 0;
+        int cabsSwapped = 0;        // NEW: Virtual → Real swaps
+        int cabsFilled = 0;         // Empty → filled
+        int driversUpdated = 0;     // Empty or post-swap updated
         int totalChecked = 0;
 
         for (CreditCardTransaction txn : transactions) {
             boolean changed = false;
+            boolean cabWasSwapped = false;
             totalChecked++;
 
-            // Step 1: Try to fill missing cab number from merchant mapping
+            // PHASE 1: Swap virtual cabs to real cabs
+            if (txn.getCabNumber() != null && !txn.getCabNumber().trim().isEmpty()) {
+                try {
+                    Integer currentCabId = Integer.parseInt(txn.getCabNumber());
+
+                    // Check if current cab is virtual (10000-11000 range)
+                    if (spareMachineService.isVirtualCabNumber(currentCabId)) {
+                        LocalDateTime txnDateTime = LocalDateTime.of(
+                            txn.getTransactionDate(),
+                            txn.getTransactionTime() != null ? txn.getTransactionTime() : LocalTime.MIDNIGHT
+                        );
+
+                        // Attempt to resolve to real cab
+                        Integer realCabId = spareMachineService.resolveVirtualToRealCab(currentCabId, txnDateTime);
+
+                        if (realCabId != null) {
+                            log.debug("Swapping virtual cab {} to real cab {} for transaction {}",
+                                currentCabId, realCabId, txn.getId());
+                            txn.setCabNumber(String.valueOf(realCabId));
+                            changed = true;
+                            cabWasSwapped = true;
+                            cabsSwapped++;
+                        } else {
+                            log.debug("Virtual cab {} has no active assignment at transaction time for txn {}",
+                                currentCabId, txn.getId());
+                        }
+                    }
+                } catch (NumberFormatException e) {
+                    // Cab number is not numeric, skip virtual cab check
+                    log.debug("Cab number {} is not numeric, skipping virtual check", txn.getCabNumber());
+                }
+            }
+
+            // PHASE 2: Fill missing cab numbers (same as before)
             if ((txn.getCabNumber() == null || txn.getCabNumber().trim().isEmpty())
                     && txn.getMerchantId() != null && txn.getTransactionDate() != null) {
                 String cabNumber = lookupCabNumber(txn.getMerchantId(), txn.getTransactionDate(), txn.getTransactionTime());
                 if (cabNumber != null) {
+                    log.debug("Filling missing cab for transaction {}: merchant {} → cab {}",
+                        txn.getId(), txn.getMerchantId(), cabNumber);
                     txn.setCabNumber(cabNumber);
                     changed = true;
-                    cabUpdated++;
+                    cabsFilled++;
                 }
             }
 
-            // Step 2: Try to fill missing driver from shift data
-            if ((txn.getDriverNumber() == null || txn.getDriverNumber().trim().isEmpty())
-                    && txn.getCabNumber() != null && !txn.getCabNumber().trim().isEmpty()
+            // PHASE 3: Re-enrich drivers (for empty drivers OR if cab was swapped)
+            if (txn.getCabNumber() != null && !txn.getCabNumber().trim().isEmpty()
                     && txn.getTransactionDate() != null && txn.getTransactionTime() != null) {
-                DriverInfo driverInfo = lookupDriver(txn.getCabNumber(), txn.getTransactionDate(), txn.getTransactionTime());
-                if (driverInfo != null) {
-                    txn.setDriverNumber(driverInfo.getDriverNumber());
-                    changed = true;
-                    driverUpdated++;
+
+                // Re-check driver if:
+                // 1. Driver is currently missing/empty, OR
+                // 2. Cab was just swapped (driver may now be different)
+                boolean shouldCheckDriver = (txn.getDriverNumber() == null || txn.getDriverNumber().trim().isEmpty())
+                    || cabWasSwapped;
+
+                if (shouldCheckDriver) {
+                    DriverInfo driverInfo = lookupDriver(txn.getCabNumber(), txn.getTransactionDate(), txn.getTransactionTime());
+                    if (driverInfo != null) {
+                        // Only update if different from current value
+                        if (!driverInfo.getDriverNumber().equals(txn.getDriverNumber())) {
+                            log.debug("Updating driver for transaction {}: cab {} → driver {}",
+                                txn.getId(), txn.getCabNumber(), driverInfo.getDriverNumber());
+                            txn.setDriverNumber(driverInfo.getDriverNumber());
+                            changed = true;
+                            driversUpdated++;
+                        }
+                    } else {
+                        log.debug("No driver shift found for cab {} at transaction time for txn {}",
+                            txn.getCabNumber(), txn.getId());
+                    }
                 }
             }
 
@@ -534,12 +587,14 @@ public class CreditCardTransactionUploadService {
             }
         }
 
-        log.info("Re-enrich complete: checked={}, cabsUpdated={}, driversUpdated={}", totalChecked, cabUpdated, driverUpdated);
+        log.info("Re-enrich complete: checked={}, cabsSwapped={}, cabsFilled={}, driversUpdated={}",
+            totalChecked, cabsSwapped, cabsFilled, driversUpdated);
 
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("totalChecked", totalChecked);
-        result.put("cabsUpdated", cabUpdated);
-        result.put("driversUpdated", driverUpdated);
+        result.put("cabsSwapped", cabsSwapped);     // NEW
+        result.put("cabsFilled", cabsFilled);       // RENAMED from cabsUpdated
+        result.put("driversUpdated", driversUpdated);
         return result;
     }
 
@@ -563,16 +618,46 @@ public class CreditCardTransactionUploadService {
             }
         }
 
-        // Step 2: Driver - skip lookup if already provided from input file
+        // Step 2: Virtual cab swapping - resolve virtual cab to real cab for driver lookup
+        String cabForDriverLookup = dto.getCabNumber();
+        if (cabForDriverLookup != null) {
+            try {
+                Integer cabId = Integer.parseInt(cabForDriverLookup);
+                if (spareMachineService.isVirtualCabNumber(cabId)) {
+                    LocalDateTime txnDateTime = LocalDateTime.of(
+                        dto.getTransactionDate(),
+                        dto.getTransactionTime() != null ? dto.getTransactionTime() : LocalTime.MIDNIGHT
+                    );
+                    Integer realCabId = spareMachineService.resolveVirtualToRealCab(cabId, txnDateTime);
+                    if (realCabId != null) {
+                        cabForDriverLookup = String.valueOf(realCabId);
+                        lookupMsg.append("Virtual cab ")
+                            .append(cabId)
+                            .append(" swapped to real cab ")
+                            .append(realCabId)
+                            .append(". ");
+                    } else {
+                        lookupMsg.append("Virtual cab ")
+                            .append(cabId)
+                            .append(" has no active assignment at transaction time. ");
+                    }
+                }
+            } catch (NumberFormatException e) {
+                // cabNumber is not numeric, skip virtual cab check
+                log.debug("Cab number {} is not numeric, skipping virtual cab check", cabForDriverLookup);
+            }
+        }
+
+        // Step 3: Driver - skip lookup if already provided from input file
         if (dto.getDriverNumber() != null && !dto.getDriverNumber().trim().isEmpty()) {
             dto.setDriverLookupSuccess(true);
             lookupMsg.append("Driver: ").append(dto.getDriverNumber()).append(" (from input file). ");
-        } else if (dto.getCabNumber() != null &&
+        } else if (cabForDriverLookup != null &&
             dto.getTransactionDate() != null &&
             dto.getTransactionTime() != null) {
 
             DriverInfo driverInfo = lookupDriver(
-                dto.getCabNumber(),
+                cabForDriverLookup,
                 dto.getTransactionDate(),
                 dto.getTransactionTime()
             );
@@ -591,6 +676,14 @@ public class CreditCardTransactionUploadService {
         dto.setLookupMessage(lookupMsg.toString().trim());
     }
     
+    /**
+     * Lookup cab number for a transaction based on merchant ID.
+     * Returns real cab number from merchant2cab mapping, or virtual/real cab from spare machine.
+     *
+     * Note: This method may return a virtual cab number (10000-11000 range) if the merchant
+     * is associated with a spare machine that has no active assignment. Caller is responsible
+     * for swapping virtual → real cab if needed for driver lookup.
+     */
     private String lookupCabNumber(String merchantId, LocalDate transactionDate, LocalTime transactionTime) {
         try {
             // First try regular merchant2cab lookup (for standard cabs)
@@ -602,6 +695,7 @@ public class CreditCardTransactionUploadService {
             }
 
             // If not found in merchant2cab, check if this merchant belongs to a spare machine
+            // This may return either a real cab (if actively assigned) or virtual cab (if not assigned)
             LocalDateTime transactionDateTime = LocalDateTime.of(transactionDate, transactionTime != null ? transactionTime : LocalTime.MIDNIGHT);
             Integer resolvedCabId = spareMachineService.resolveTransactionCab(merchantId, transactionDateTime);
 
