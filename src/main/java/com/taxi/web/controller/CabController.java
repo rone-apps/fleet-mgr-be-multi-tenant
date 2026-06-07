@@ -5,6 +5,8 @@ import com.taxi.domain.cab.model.CabType;
 import com.taxi.domain.cab.service.CabService;
 import com.taxi.web.dto.cab.CabDTO;
 import com.taxi.web.dto.cab.CreateCabRequest;
+import com.taxi.web.dto.cab.DeactivateCabRequest;
+import com.taxi.web.dto.cab.ReactivateCabRequest;
 import com.taxi.web.dto.cab.UpdateCabRequest;
 import com.taxi.web.dto.cab.CabOwnerHistoryDTO;
 import jakarta.validation.Valid;
@@ -34,17 +36,24 @@ public class CabController {
 
     /**
      * Get all cabs or cabs by owner
-     * GET /api/cabs?ownerId={ownerId}
+     * GET /api/cabs?ownerId={ownerId}&includeInactive={true|false}
      */
     @GetMapping
     @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER', 'DISPATCHER', 'DRIVER')")
-    public ResponseEntity<List<CabDTO>> getAllCabs(@RequestParam(required = false) Long ownerId) {
-        log.info("GET /api/cabs - Get all cabs" + (ownerId != null ? " for owner: " + ownerId : ""));
+    public ResponseEntity<List<CabDTO>> getAllCabs(
+            @RequestParam(required = false) Long ownerId,
+            @RequestParam(required = false, defaultValue = "false") boolean includeInactive) {
+        log.info("GET /api/cabs - Get all cabs" +
+                (ownerId != null ? " for owner: " + ownerId : "") +
+                (includeInactive ? " (including inactive)" : " (active only)"));
+
         List<CabDTO> cabs;
         if (ownerId != null) {
             cabs = cabService.getCabsByOwnerId(ownerId);
-        } else {
+        } else if (includeInactive) {
             cabs = cabService.getAllCabs();
+        } else {
+            cabs = cabService.getActiveCabs();
         }
         return ResponseEntity.ok(cabs);
     }
@@ -220,15 +229,65 @@ public class CabController {
     }
 
     /**
-     * Deactivate cab (and all its shifts)
+     * Reactivate cab with full audit trail and ownership assignment
+     * PUT /api/cabs/{id}/reactivate
+     */
+    @PutMapping("/{id}/reactivate")
+    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN', 'MANAGER')")
+    public ResponseEntity<?> reactivateCab(
+            @PathVariable Long id,
+            @RequestBody @Valid ReactivateCabRequest request) {
+        log.info("PUT /api/cabs/{}/reactivate - Reactivate cab", id);
+
+        try {
+            // Get user from security context
+            String reactivatedBy = request.getReactivatedBy();
+            if (reactivatedBy == null || reactivatedBy.isEmpty()) {
+                // TODO: Get from SecurityContextHolder
+                reactivatedBy = "admin";
+                request.setReactivatedBy(reactivatedBy);
+            }
+
+            CabDTO cab = cabService.reactivateCab(id, request);
+
+            Map<String, Object> response = new HashMap<>();
+            response.put("message", "Cab reactivated successfully");
+            response.put("cab", cab);
+
+            return ResponseEntity.ok(response);
+        } catch (RuntimeException e) {
+            log.error("Failed to reactivate cab {}: {}", id, e.getMessage());
+            Map<String, String> error = new HashMap<>();
+            error.put("error", e.getMessage());
+            return ResponseEntity.badRequest().body(error);
+        }
+    }
+
+    /**
+     * Deactivate cab (and all its shifts) with date tracking and reason
      * PUT /api/cabs/{id}/deactivate
      */
     @PutMapping("/{id}/deactivate")
-    @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER')")
-    public ResponseEntity<?> deactivate(@PathVariable Long id) {
+    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN', 'MANAGER')")
+    public ResponseEntity<?> deactivateCab(
+            @PathVariable Long id,
+            @RequestBody DeactivateCabRequest request) {
         log.info("PUT /api/cabs/{}/deactivate - Deactivate cab", id);
+
         try {
-            CabDTO cab = cabService.deactivate(id);
+            // Get user from security context (or use provided value)
+            String deactivatedBy = request.getDeactivatedBy();
+            if (deactivatedBy == null || deactivatedBy.isEmpty()) {
+                // TODO: Get from SecurityContextHolder when available
+                deactivatedBy = "admin";
+            }
+
+            CabDTO cab = cabService.deactivateCab(
+                    id,
+                    request.getDeactivationDate(),
+                    request.getReason(),
+                    deactivatedBy
+            );
 
             Map<String, Object> response = new HashMap<>();
             response.put("message", "Cab deactivated successfully");
@@ -236,7 +295,7 @@ public class CabController {
 
             return ResponseEntity.ok(response);
         } catch (RuntimeException e) {
-            log.error("Failed to deactivate cab: {}", id, e);
+            log.error("Failed to deactivate cab {}: {}", id, e.getMessage());
             Map<String, String> error = new HashMap<>();
             error.put("error", e.getMessage());
             return ResponseEntity.badRequest().body(error);
@@ -272,6 +331,64 @@ public class CabController {
             return ResponseEntity.ok(response);
         } catch (RuntimeException e) {
             log.error("Failed to delete cab: {}", id, e);
+            Map<String, String> error = new HashMap<>();
+            error.put("error", e.getMessage());
+            return ResponseEntity.badRequest().body(error);
+        }
+    }
+
+    /**
+     * PUT /api/cabs/{id}/shift-type
+     * Change cab shift type (SINGLE <-> DOUBLE) with history tracking
+     */
+    @PutMapping("/{id}/shift-type")
+    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN', 'MANAGER')")
+    public ResponseEntity<?> changeCabShiftType(
+            @PathVariable Long id,
+            @RequestBody Map<String, String> request) {
+        log.info("PUT /api/cabs/{}/shift-type - Change shift type", id);
+        try {
+            String shiftTypeStr = request.get("shiftType");
+            String reason = request.get("reason");
+            String changedBy = request.get("changedBy");
+
+            if (shiftTypeStr == null) {
+                throw new RuntimeException("shiftType is required");
+            }
+
+            com.taxi.domain.cab.model.CabShiftType newShiftType =
+                com.taxi.domain.cab.model.CabShiftType.valueOf(shiftTypeStr);
+
+            CabDTO cab = cabService.changeCabShiftType(id, newShiftType, reason, changedBy);
+
+            return ResponseEntity.ok(cab);
+        } catch (IllegalArgumentException e) {
+            log.error("Invalid shift type: {}", e.getMessage());
+            Map<String, String> error = new HashMap<>();
+            error.put("error", "Invalid shift type. Must be SINGLE or DOUBLE");
+            return ResponseEntity.badRequest().body(error);
+        } catch (RuntimeException e) {
+            log.error("Failed to change shift type for cab {}: {}", id, e.getMessage());
+            Map<String, String> error = new HashMap<>();
+            error.put("error", e.getMessage());
+            return ResponseEntity.badRequest().body(error);
+        }
+    }
+
+    /**
+     * GET /api/cabs/{id}/shift-type-history
+     * Get shift type change history for a cab
+     */
+    @GetMapping("/{id}/shift-type-history")
+    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN', 'MANAGER', 'DISPATCHER', 'ACCOUNTANT')")
+    public ResponseEntity<?> getCabShiftTypeHistory(@PathVariable Long id) {
+        log.info("GET /api/cabs/{}/shift-type-history", id);
+        try {
+            List<com.taxi.domain.cab.model.CabShiftTypeHistory> history =
+                cabService.getCabShiftTypeHistory(id);
+            return ResponseEntity.ok(history);
+        } catch (RuntimeException e) {
+            log.error("Failed to get shift type history for cab {}: {}", id, e.getMessage());
             Map<String, String> error = new HashMap<>();
             error.put("error", e.getMessage());
             return ResponseEntity.badRequest().body(error);

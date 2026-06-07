@@ -13,6 +13,7 @@ import com.taxi.domain.shift.model.ShiftOwnership;
 import com.taxi.domain.shift.repository.CabShiftRepository;
 import com.taxi.domain.shift.repository.DriverShiftRepository;
 import com.taxi.domain.shift.repository.ShiftOwnershipRepository;
+import com.taxi.domain.shift.service.ShiftValidationService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -40,6 +41,7 @@ public class LeaseReconciliationService {
     private final CabRepository cabRepository;
     private final CabShiftRepository cabShiftRepository;
     private final DriverFinancialCalculationService driverFinancialCalculationService;
+    private final ShiftValidationService shiftValidationService;
 
     /**
      * Generate lease reconciliation report for a date range.
@@ -83,9 +85,9 @@ public class LeaseReconciliationService {
                 }
                 Cab cab = cabOpt.get();
 
-                // Skip inactive cabs
-                if (cab.getStatus() != null && cab.getStatus() != CabStatus.ACTIVE) {
-                    log.debug("Skipping inactive cab {} for shift {}", cab.getCabNumber(), ds.getId());
+                // Skip cabs that were not active on the shift date
+                if (!shiftValidationService.wasCabActiveOnDate(cab, shiftDate)) {
+                    log.debug("Skipping cab {} (not active on {}) for shift {}", cab.getCabNumber(), shiftDate, ds.getId());
                     continue;
                 }
 

@@ -71,8 +71,19 @@ public class Cab {
     @Builder.Default
     private CabStatus status = CabStatus.ACTIVE;
 
+    @Enumerated(EnumType.STRING)
+    @Column(name = "shift_type", nullable = false, length = 20)
+    @Builder.Default
+    private CabShiftType shiftType = CabShiftType.DOUBLE;
+
     @Column(name = "notes", length = 1000)
     private String notes;
+
+    @Column(name = "fleet_added_date")
+    private LocalDate fleetAddedDate;
+
+    @Column(name = "deactivated_date")
+    private LocalDate deactivatedDate;
 
     @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;
@@ -84,6 +95,10 @@ public class Cab {
     protected void onCreate() {
         createdAt = LocalDateTime.now();
         updatedAt = LocalDateTime.now();
+        // Default fleet added date to today if not set
+        if (fleetAddedDate == null) {
+            fleetAddedDate = LocalDate.now();
+        }
     }
 
     @PreUpdate

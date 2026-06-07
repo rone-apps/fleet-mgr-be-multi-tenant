@@ -209,6 +209,20 @@ public class DriverFinancialCalculationService {
         List<ShiftOwnership> ownerships = shiftOwnershipRepository.findOwnershipsInRange(
                 owner.getId(), startDate, endDate);
 
+        System.out.println("=== LEASE REVENUE DEBUG ===");
+        System.out.println("Owner: " + ownerDriverNumber + " (" + owner.getFullName() + ")");
+        System.out.println("Report Period: " + startDate + " to " + endDate);
+        System.out.println("Found " + ownerships.size() + " ownerships");
+        for (ShiftOwnership so : ownerships) {
+            System.out.println("  - Shift ID: " + so.getShift().getId() +
+                             ", Cab: " + so.getShift().getCab().getCabNumber() +
+                             ", Type: " + so.getShift().getShiftType() +
+                             ", Start: " + so.getStartDate() +
+                             ", End: " + so.getEndDate() +
+                             ", Status: " + so.getShift().getStatus());
+        }
+        System.out.println("===========================");
+
         log.debug("   ✓ Driver owned {} shifts during period {} to {}",
                 ownerships.size(), startDate, endDate);
 

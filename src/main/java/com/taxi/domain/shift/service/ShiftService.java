@@ -4,6 +4,8 @@ import com.taxi.domain.cab.model.Cab;
 import com.taxi.domain.cab.repository.CabRepository;
 import com.taxi.domain.driver.model.Driver;
 import com.taxi.domain.driver.repository.DriverRepository;
+import com.taxi.domain.profile.model.ShiftProfile;
+import com.taxi.domain.profile.service.ShiftProfileService;
 import com.taxi.domain.shift.model.CabShift;
 import com.taxi.domain.shift.model.ShiftOwnership;
 import com.taxi.domain.shift.model.ShiftType;
@@ -35,6 +37,7 @@ public class ShiftService {
     private final ShiftOwnershipRepository shiftOwnershipRepository;
     private final CabRepository cabRepository;
     private final DriverRepository driverRepository;
+    private final ShiftProfileService shiftProfileService;
 
     /**
      * Get all shifts
@@ -96,7 +99,8 @@ public class ShiftService {
      */
     @Transactional
     public CabShiftDTO createShift(CreateShiftRequest request) {
-        log.info("Creating shift for cab ID: {}", request.getCabId());
+        System.out.println("=== SHIFT CREATE: cabId=" + request.getCabId() + ", createdDate=" + request.getCreatedDate() + " ===");
+        log.info("Creating shift for cab ID: {}, createdDate from request: {}", request.getCabId(), request.getCreatedDate());
 
         // Get cab
         Cab cab = cabRepository.findById(request.getCabId())
@@ -113,6 +117,30 @@ public class ShiftService {
         // Check if shift already exists for this cab
         if (cabShiftRepository.existsByCabAndShiftType(cab, shiftType)) {
             throw new RuntimeException("Shift " + shiftType + " already exists for cab " + cab.getCabNumber());
+        }
+
+        // VALIDATION: Check cab shift type
+        if (cab.getShiftType() == com.taxi.domain.cab.model.CabShiftType.SINGLE) {
+            // Single shift cabs can only have DAY shift
+            if (shiftType != ShiftType.DAY) {
+                throw new RuntimeException("Cab " + cab.getCabNumber() + " is configured for SINGLE shift. Only DAY shift is allowed.");
+            }
+
+            // Check if DAY shift already exists
+            long activeShifts = cab.getShifts().stream()
+                .filter(s -> s.getStatus() == CabShift.ShiftStatus.ACTIVE)
+                .count();
+            if (activeShifts >= 1) {
+                throw new RuntimeException("Cab " + cab.getCabNumber() + " is configured for SINGLE shift and already has an active shift.");
+            }
+        } else if (cab.getShiftType() == com.taxi.domain.cab.model.CabShiftType.DOUBLE) {
+            // Double shift cabs can have both DAY and NIGHT
+            long activeShifts = cab.getShifts().stream()
+                .filter(s -> s.getStatus() == CabShift.ShiftStatus.ACTIVE)
+                .count();
+            if (activeShifts >= 2) {
+                throw new RuntimeException("Cab " + cab.getCabNumber() + " already has 2 active shifts (maximum for DOUBLE shift type).");
+            }
         }
 
         // Get owner
@@ -138,6 +166,16 @@ public class ShiftService {
         shift = cabShiftRepository.save(shift);
         log.info("Shift created: {} for cab {}", shiftType, cab.getCabNumber());
 
+        // Auto-assign default profile if one exists
+        ShiftProfile defaultProfile = shiftProfileService.getDefaultProfile();
+        if (defaultProfile != null) {
+            shift.setCurrentProfile(defaultProfile);
+            shift = cabShiftRepository.save(shift);
+            log.info("Auto-assigned default profile '{}' to shift {}", defaultProfile.getProfileName(), shift.getId());
+        } else {
+            log.warn("No default profile set - shift created without profile assignment");
+        }
+
         // Create initial ownership record
         ShiftOwnership.AcquisitionType acquisitionType = ShiftOwnership.AcquisitionType.INITIAL_ASSIGNMENT;
         if (request.getAcquisitionType() != null) {
@@ -148,18 +186,36 @@ public class ShiftService {
             }
         }
 
+        // Use provided creation date, or default to today
+        LocalDate ownershipStartDate = request.getCreatedDate() != null
+                ? request.getCreatedDate()
+                : LocalDate.now();
+
+        System.out.println("=== OWNERSHIP DATE DEBUG ===");
+        System.out.println("request.getCreatedDate() = " + request.getCreatedDate());
+        System.out.println("ownershipStartDate = " + ownershipStartDate);
+        System.out.println("LocalDate.now() = " + LocalDate.now());
+        System.out.println("===========================");
+
         ShiftOwnership ownership = ShiftOwnership.builder()
                 .shift(shift)
                 .owner(owner)
-                .startDate(LocalDate.now())
+                .startDate(ownershipStartDate)
                 .endDate(null)  // Current owner
                 .acquisitionType(acquisitionType)
                 .acquisitionPrice(request.getAcquisitionPrice())
                 .notes(request.getNotes())
                 .build();
 
-        shiftOwnershipRepository.save(ownership);
-        log.info("Initial ownership record created for shift");
+        ownership = shiftOwnershipRepository.save(ownership);
+        System.out.println("=== OWNERSHIP SAVED ===");
+        System.out.println("Ownership ID: " + ownership.getId());
+        System.out.println("Shift ID: " + ownership.getShift().getId());
+        System.out.println("Owner: " + ownership.getOwner().getDriverNumber());
+        System.out.println("Start Date: " + ownership.getStartDate());
+        System.out.println("End Date: " + ownership.getEndDate());
+        System.out.println("=======================");
+        log.info("Initial ownership record created for shift with start date: {}", ownershipStartDate);
 
         return CabShiftDTO.fromEntity(shift);
     }

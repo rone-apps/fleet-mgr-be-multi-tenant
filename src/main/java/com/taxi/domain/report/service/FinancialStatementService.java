@@ -249,16 +249,19 @@ public class FinancialStatementService {
             List<ShiftOwnership> ownerships = shiftOwnershipRepository.findOwnershipsInRange(personId, from, to);
             log.info("Owner {} has {} shift ownerships in period {} to {}", personId, ownerships.size(), from, to);
 
-            // Extract the shifts from the ownerships, excluding inactive cabs/shifts
+            // Extract the shifts from the ownerships, including shifts that were active DURING the report period
+            // This ensures deactivated cabs still show up in historical reports
             relevantShifts = ownerships.stream()
                 .map(ShiftOwnership::getShift)
                 .filter(shift -> shift != null)
-                .filter(shiftValidationService::isCabShiftActive)
+                .filter(shift -> shiftValidationService.wasActiveDuringPeriod(shift, from, to))
                 .distinct()
                 .toList();
 
             isActiveOwner = !relevantShifts.isEmpty();
-            log.info("Owner {} has {} active shifts in period (excluded inactive cabs/shifts), isActiveOwner={}", personId, relevantShifts.size(), isActiveOwner);
+            System.out.println(">>> OWNER CHECK: Owner " + personId + " has " + relevantShifts.size() + " shifts active during period, isActiveOwner=" + isActiveOwner);
+            log.info("Owner {} has {} shifts that were active during period {} to {} (includes deactivated if active during period), isActiveOwner={}",
+                personId, relevantShifts.size(), from, to, isActiveOwner);
         } else {
             // For drivers: DO NOT fetch shifts
             // ✅ Drivers should NOT receive shift-based charges (those go to the owner)
@@ -817,6 +820,9 @@ public class FinancialStatementService {
         // 6b. For active owners, also calculate CURRENT month revenues (held by company)
         // This shows owners what they earned in the current month that the company is holding
         if (isActiveOwner) {
+            System.out.println("========================================");
+            System.out.println("HOLDING REVENUES: Calculating for owner " + personId + " (current month: " + from + " to " + to + ")");
+            System.out.println("========================================");
             log.info("Calculating holding revenues for owner {} (current month: {} to {})", personId, from, to);
 
             // Credit card revenues from CURRENT month
@@ -879,15 +885,98 @@ public class FinancialStatementService {
                 log.error("Error fetching current month customer charges for holding revenues: {}", e.getMessage(), e);
             }
 
+            // Lease revenues from CURRENT month (held by company)
+            if (person.getDriverNumber() != null) {
+                try {
+                    com.taxi.web.dto.report.LeaseRevenueReportDTO currentMonthLeaseReport =
+                        driverFinancialCalculationService.calculateLeaseRevenue(
+                            person.getDriverNumber(), from, to);  // Use CURRENT month for holding
+
+                    int leaseItemCount = currentMonthLeaseReport.getLeaseItems() != null ? currentMonthLeaseReport.getLeaseItems().size() : 0;
+                    System.out.println(">>> HOLDING LEASE: Found " + leaseItemCount + " current month lease items");
+                    log.info("Found {} current month lease items for holding revenues", leaseItemCount);
+
+                    if (currentMonthLeaseReport.getLeaseItems() != null && !currentMonthLeaseReport.getLeaseItems().isEmpty()) {
+                        System.out.println(">>> HOLDING LEASE: Processing " + leaseItemCount + " lease items - Raw DTO data:");
+                        log.info("Processing holding lease items - Raw DTO data:");
+                        for (LeaseRevenueDTO leaseItem : currentMonthLeaseReport.getLeaseItems()) {
+                            System.out.println(">>> Lease DTO: Cab=" + leaseItem.getCabNumber() +
+                                ", Driver=" + leaseItem.getDriverNumber() +
+                                ", Date=" + leaseItem.getShiftDate() +
+                                ", BaseRate=" + leaseItem.getBaseRate() +
+                                ", MileageRate=" + leaseItem.getMileageRate() +
+                                ", Miles=" + leaseItem.getMiles() +
+                                ", TotalLease=" + leaseItem.getTotalLease());
+                            log.info("  Lease DTO: Cab={}, Driver={}, Date={}, BaseRate={}, MileageRate={}, Miles={}, TotalLease={}",
+                                leaseItem.getCabNumber(), leaseItem.getDriverNumber(), leaseItem.getShiftDate(),
+                                leaseItem.getBaseRate(), leaseItem.getMileageRate(), leaseItem.getMiles(), leaseItem.getTotalLease());
+                            String description = "Lease - Cab " + leaseItem.getCabNumber() +
+                                " (" + leaseItem.getShiftType() + ") - Driver: " + leaseItem.getDriverName() +
+                                " (" + leaseItem.getDriverNumber() + ")";
+
+                            // Get fixed lease amount (base rate) - SAME as paid lease section
+                            BigDecimal fixedLeaseAmount = leaseItem.getBaseRate();
+
+                            // Get driver and calculate mileage lease for this specific shift from actual mileage records
+                            // The owner is the shift owner (the person this report is for)
+                            Driver driver = driverRepository.findByDriverNumber(leaseItem.getDriverNumber())
+                                    .orElse(null);
+                            BigDecimal mileageLeaseAmount = BigDecimal.ZERO;
+                            if (driver != null) {
+                                // Owner is the person we're generating the report for (from the shift ownership)
+                                String ownerDriverNumber = person.getDriverNumber();
+
+                                MileageCalculationResult result = calculateMileageLeaseForDay(driver, leaseItem.getLogonTime(), leaseItem.getLogoffTime(),
+                                        ownerDriverNumber, leaseItem.getCabNumber(), leaseItem.getShiftType());
+                                mileageLeaseAmount = result.mileageLease;
+                                // Note: insuranceExpense (result.insuranceExpense) is deducted as driver expense, not owner revenue
+                            }
+
+                            // Total lease = fixed + mileage
+                            BigDecimal totalLease = fixedLeaseAmount.add(mileageLeaseAmount);
+
+                            System.out.println(">>> HOLDING: BaseRate=$" + fixedLeaseAmount +
+                                ", MileageLease=$" + mileageLeaseAmount +
+                                ", TotalLease=$" + totalLease);
+
+                            // Create lease breakdown with both fixed and mileage components
+                            StatementLineItem.LeaseBreakdown breakdown = StatementLineItem.LeaseBreakdown.builder()
+                                .fixedLeaseAmount(fixedLeaseAmount)
+                                .mileageLeaseAmount(mileageLeaseAmount)
+                                .build();
+
+                            report.getHoldingRevenues().add(OwnerReportDTO.RevenueLineItem.builder()
+                                .categoryName("Lease Income")
+                                .revenueDate(leaseItem.getShiftDate())
+                                .description(description)
+                                .revenueType("LEASE_REVENUE")
+                                .revenueSubType("LEASE_INCOME")
+                                .cabNumber(leaseItem.getCabNumber())
+                                .amount(totalLease)
+                                .leaseBreakdown(breakdown)
+                                .build());
+
+                            log.debug("Added holding lease revenue: Cab {} Driver {} on {} = ${} (Fixed: ${}, Mileage: ${})",
+                                leaseItem.getCabNumber(), leaseItem.getDriverNumber(), leaseItem.getShiftDate(),
+                                totalLease, fixedLeaseAmount, mileageLeaseAmount);
+                        }
+                    }
+                } catch (Exception e) {
+                    log.warn("Error calculating current month lease revenue for holding: {}", e.getMessage());
+                    // Don't fail the whole report if lease calculation fails
+                }
+            }
+
             log.info("Added {} holding revenue items for owner {}", report.getHoldingRevenues().size(), personId);
         }
 
         // 7. Add lease revenue (for owners only - drivers renting their shifts)
+        // Uses same previous-month logic as CC transactions and charges (ccFrom/ccTo)
         if (Boolean.TRUE.equals(person.getIsOwner()) && person.getDriverNumber() != null) {
             try {
                 com.taxi.web.dto.report.LeaseRevenueReportDTO leaseReport =
                     driverFinancialCalculationService.calculateLeaseRevenue(
-                        person.getDriverNumber(), from, to);
+                        person.getDriverNumber(), ccFrom, ccTo);
 
                 log.info("Found {} lease revenue items for owner {}",
                     leaseReport.getLeaseItems() != null ? leaseReport.getLeaseItems().size() : 0, personId);
@@ -929,7 +1018,9 @@ public class FinancialStatementService {
                             .categoryName("Lease Income")
                             .revenueDate(leaseItem.getShiftDate())
                             .description(description)
+                            .revenueType("LEASE_REVENUE")
                             .revenueSubType("LEASE_INCOME")
+                            .cabNumber(leaseItem.getCabNumber())
                             .amount(totalLease)
                             .leaseBreakdown(breakdown)
                             .build());
@@ -1524,7 +1615,12 @@ public class FinancialStatementService {
             List<MileageRecord> mileageRecords = mileageRecordRepository.findByDriverNumberAndShiftTimes(
                     driver.getDriverNumber(), logonTime, logoffTime);
 
+            System.out.println(">>> calculateMileageLeaseForDay: Driver=" + driver.getDriverNumber() +
+                ", Cab=" + cabNumber + ", Shift=" + logonTime + " to " + logoffTime +
+                ", Found " + mileageRecords.size() + " mileage records");
+
             if (mileageRecords.isEmpty()) {
+                System.out.println(">>> WARNING: No mileage records found! Returning $0");
                 log.debug("No mileage record found for driver {} within shift window {} to {} (±15min tolerance)",
                     driver.getDriverNumber(), logonTime, logoffTime);
                 return new MileageCalculationResult(BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO);

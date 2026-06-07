@@ -55,6 +55,11 @@ public interface ShiftProfileRepository extends JpaRepository<ShiftProfile, Long
     List<ShiftProfile> findByShiftType(ShiftType shiftType);
 
     /**
+     * Find the default profile
+     */
+    Optional<ShiftProfile> findByIsDefaultTrue();
+
+    /**
      * Find system profiles (cannot be deleted)
      */
     List<ShiftProfile> findByIsSystemProfileTrue();

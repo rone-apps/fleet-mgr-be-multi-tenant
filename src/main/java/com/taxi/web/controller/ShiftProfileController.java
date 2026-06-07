@@ -186,6 +186,47 @@ public class ShiftProfileController {
         }
     }
 
+    /**
+     * PUT /api/shift-profiles/{id}/set-default - Set profile as default
+     * Only one profile can be default at a time
+     * Requires: ADMIN or MANAGER role
+     */
+    @PutMapping("/{id}/set-default")
+    @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER')")
+    public ResponseEntity<ShiftProfileDTO> setAsDefault(@PathVariable Long id) {
+        log.info("PUT /api/shift-profiles/{}/set-default - Set profile as default", id);
+
+        try {
+            ShiftProfileDTO profile = ShiftProfileDTO.fromEntity(
+                    shiftProfileService.setAsDefault(id)
+            );
+            return ResponseEntity.ok(profile);
+        } catch (IllegalArgumentException e) {
+            log.warn("Set default failed: {}", e.getMessage());
+            return ResponseEntity.badRequest().build();
+        }
+    }
+
+    /**
+     * PUT /api/shift-profiles/{id}/unset-default - Remove default flag from profile
+     * Requires: ADMIN or MANAGER role
+     */
+    @PutMapping("/{id}/unset-default")
+    @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER')")
+    public ResponseEntity<ShiftProfileDTO> unsetAsDefault(@PathVariable Long id) {
+        log.info("PUT /api/shift-profiles/{}/unset-default - Unset profile as default", id);
+
+        try {
+            ShiftProfileDTO profile = ShiftProfileDTO.fromEntity(
+                    shiftProfileService.unsetAsDefault(id)
+            );
+            return ResponseEntity.ok(profile);
+        } catch (IllegalArgumentException e) {
+            log.warn("Unset default failed: {}", e.getMessage());
+            return ResponseEntity.badRequest().build();
+        }
+    }
+
     // ============================================================================
     // Profile Assignment to Shifts
     // ============================================================================

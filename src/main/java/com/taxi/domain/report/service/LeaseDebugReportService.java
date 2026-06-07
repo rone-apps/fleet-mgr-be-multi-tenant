@@ -11,6 +11,7 @@ import com.taxi.domain.shift.model.ShiftOwnership;
 import com.taxi.domain.shift.repository.CabShiftRepository;
 import com.taxi.domain.shift.repository.DriverShiftRepository;
 import com.taxi.domain.shift.repository.ShiftOwnershipRepository;
+import com.taxi.domain.shift.service.ShiftValidationService;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -39,6 +40,7 @@ public class LeaseDebugReportService {
     private final CabShiftRepository cabShiftRepository;
     private final ShiftOwnershipRepository shiftOwnershipRepository;
     private final DriverFinancialCalculationService driverFinancialCalculationService;
+    private final ShiftValidationService shiftValidationService;
 
     @Data
     @Builder
@@ -114,8 +116,8 @@ public class LeaseDebugReportService {
 
                 Cab cab = cabOpt.get();
 
-                // Skip inactive cabs
-                if (cab.getStatus() != null && cab.getStatus() != CabStatus.ACTIVE) continue;
+                // Skip cabs that were not active during the report period
+                if (!shiftValidationService.wasCabActiveOnDate(cab, shiftDate)) continue;
 
                 // Find CabShift
                 com.taxi.domain.shift.model.ShiftType cabShiftType =

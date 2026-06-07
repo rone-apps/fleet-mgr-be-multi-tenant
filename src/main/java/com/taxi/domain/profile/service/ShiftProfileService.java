@@ -87,6 +87,53 @@ public class ShiftProfileService {
     }
 
     /**
+     * Get the default profile (returns null if none set)
+     */
+    public ShiftProfile getDefaultProfile() {
+        return shiftProfileRepository.findByIsDefaultTrue().orElse(null);
+    }
+
+    /**
+     * Set a profile as the default (unsets any existing default)
+     * Only one profile can be default at a time
+     */
+    public ShiftProfile setAsDefault(Long profileId) {
+        log.info("Setting profile {} as default", profileId);
+
+        ShiftProfile profile = getProfileById(profileId);
+
+        // Unset any existing default
+        Optional<ShiftProfile> existingDefault = shiftProfileRepository.findByIsDefaultTrue();
+        if (existingDefault.isPresent() && !existingDefault.get().getId().equals(profileId)) {
+            ShiftProfile oldDefault = existingDefault.get();
+            oldDefault.setIsDefault(false);
+            shiftProfileRepository.save(oldDefault);
+            log.info("Removed default flag from profile {}", oldDefault.getId());
+        }
+
+        // Set new default
+        profile.setIsDefault(true);
+        profile = shiftProfileRepository.save(profile);
+
+        log.info("Profile {} is now the default", profileId);
+        return profile;
+    }
+
+    /**
+     * Remove default flag from a profile
+     */
+    public ShiftProfile unsetAsDefault(Long profileId) {
+        log.info("Unsetting profile {} as default", profileId);
+
+        ShiftProfile profile = getProfileById(profileId);
+        profile.setIsDefault(false);
+        profile = shiftProfileRepository.save(profile);
+
+        log.info("Profile {} is no longer the default", profileId);
+        return profile;
+    }
+
+    /**
      * Create a new shift profile with static and dynamic attributes
      */
     public ShiftProfile createProfile(com.taxi.web.dto.profile.CreateShiftProfileRequest request, String currentUser) {

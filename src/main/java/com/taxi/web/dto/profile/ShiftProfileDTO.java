@@ -41,6 +41,7 @@ public class ShiftProfileDTO {
 
     // Status
     private Boolean isActive;
+    private Boolean isDefault;
     private Boolean isSystemProfile;
     private Integer usageCount;
 
@@ -80,6 +81,7 @@ public class ShiftProfileDTO {
                 .colorCode(entity.getColorCode())
                 .displayOrder(entity.getDisplayOrder())
                 .isActive(entity.getIsActive())
+                .isDefault(entity.getIsDefault())
                 .isSystemProfile(entity.getIsSystemProfile())
                 .usageCount(entity.getUsageCount())
                 .profileAttributes(attributes)

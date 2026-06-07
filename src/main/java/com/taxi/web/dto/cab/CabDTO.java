@@ -52,6 +52,8 @@ public class CabDTO {
     @JsonProperty("isCompanyOwned")
     private boolean isCompanyOwned;
 
+    private LocalDate fleetAddedDate;
+    private LocalDate deactivatedDate;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
 
@@ -73,8 +75,11 @@ public class CabDTO {
                 .year(cab.getYear())
                 .color(cab.getColor())
                 .status(cab.getStatus() != null ? cab.getStatus().name() : "ACTIVE")
+                .cabShiftType(cab.getShiftType() != null ? cab.getShiftType().name() : "DOUBLE")
                 .notes(cab.getNotes())
                 .isCompanyOwned(cab.isCompanyOwned())
+                .fleetAddedDate(cab.getFleetAddedDate())
+                .deactivatedDate(cab.getDeactivatedDate())
                 .createdAt(cab.getCreatedAt())
                 .updatedAt(cab.getUpdatedAt());
 

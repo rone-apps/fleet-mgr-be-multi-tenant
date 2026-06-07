@@ -34,6 +34,9 @@ public class CreateShiftRequest {
     // Financial information for initial ownership
     private String acquisitionType;  // PURCHASE, INITIAL_ASSIGNMENT, etc.
     private BigDecimal acquisitionPrice;
-    
+
+    // When shift ownership begins (defaults to today if not provided)
+    private LocalDate createdDate;
+
     private String notes;
 }

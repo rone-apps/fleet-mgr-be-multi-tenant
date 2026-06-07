@@ -83,7 +83,12 @@ public class ShiftStatusService {
             .build();
 
         ShiftStatusHistory saved = statusHistoryRepository.save(newStatus);
-        log.info("Successfully activated shift {} - record ID: {}, effective from: {}",
+
+        // Update the shift entity status to ACTIVE
+        shift.setStatus(CabShift.ShiftStatus.ACTIVE);
+        cabShiftRepository.save(shift);
+
+        log.info("Successfully activated shift {} - record ID: {}, effective from: {}, shift status set to ACTIVE",
             shiftId, saved.getId(), effectiveFrom);
     }
 
@@ -137,7 +142,12 @@ public class ShiftStatusService {
             .build();
 
         ShiftStatusHistory saved = statusHistoryRepository.save(newStatus);
-        log.info("Successfully deactivated shift {} - record ID: {}, effective from: {}",
+
+        // Update the shift entity status to INACTIVE
+        shift.setStatus(CabShift.ShiftStatus.INACTIVE);
+        cabShiftRepository.save(shift);
+
+        log.info("Successfully deactivated shift {} - record ID: {}, effective from: {}, shift status set to INACTIVE",
             shiftId, saved.getId(), effectiveFrom);
     }
 

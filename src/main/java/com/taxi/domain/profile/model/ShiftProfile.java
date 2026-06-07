@@ -57,6 +57,10 @@ public class ShiftProfile {
     @Column(name = "profile_name", nullable = false, length = 100)
     private String profileName;  // e.g., "Premium Sedan - Voting Share"
 
+    @Column(name = "is_default")
+    @Builder.Default
+    private Boolean isDefault = false;  // Only one profile can be default
+
     @Column(name = "description", length = 500)
     private String description;
 
