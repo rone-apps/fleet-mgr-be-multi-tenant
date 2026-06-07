@@ -2,8 +2,10 @@ package com.taxi.web.controller;
 
 import com.taxi.domain.driver.model.Driver;
 import com.taxi.domain.driver.repository.DriverRepository;
+import com.taxi.domain.user.entity.UserStatusHistory;
 import com.taxi.domain.user.model.User;
 import com.taxi.domain.user.repository.UserRepository;
+import com.taxi.domain.user.repository.UserStatusHistoryRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
@@ -19,6 +21,7 @@ import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 import java.util.List;
+import java.util.Map;
 
 /**
  * User Management Controller
@@ -34,6 +37,7 @@ public class UserController {
     private final UserRepository userRepository;
     private final DriverRepository driverRepository;
     private final PasswordEncoder passwordEncoder;
+    private final UserStatusHistoryRepository userStatusHistoryRepository;
 
     /**
      * Get all users (Admin and Super Admin only)
@@ -222,8 +226,13 @@ public class UserController {
     @PutMapping("/{id}/toggle-active")
     @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN')")
     public ResponseEntity<?> toggleActive(@PathVariable Long id,
+                                         @RequestBody(required = false) Map<String, String> requestBody,
                                          @AuthenticationPrincipal UserDetails userDetails) {
-        log.info("Toggling active status for user ID: {}", id);
+        String reason = requestBody != null && requestBody.containsKey("reason")
+            ? requestBody.get("reason")
+            : "No reason provided";
+
+        log.info("Toggling active status for user ID: {} - Reason: {}", id, reason);
 
         User targetUser = userRepository.findById(id)
                 .orElseThrow(() -> new RuntimeException("User not found with ID: " + id));
@@ -239,12 +248,65 @@ public class UserController {
                     .body(new ErrorResponse("Cannot modify super administrator accounts"));
         }
 
+        boolean previousStatus = targetUser.isActive();
         targetUser.setActive(!targetUser.isActive());
         targetUser = userRepository.save(targetUser);
 
-        log.info("User {} status changed to: {}", targetUser.getUsername(), targetUser.isActive() ? "ACTIVE" : "INACTIVE");
+        // Save to audit history
+        UserStatusHistory history = UserStatusHistory.builder()
+            .user(targetUser)
+            .changedBy(currentUser)
+            .previousStatus(previousStatus)
+            .newStatus(targetUser.isActive())
+            .reason(reason)
+            .build();
+        userStatusHistoryRepository.save(history);
+
+        String action = targetUser.isActive() ? "ACTIVATED" : "DEACTIVATED";
+        log.info("User {} status changed to: {} by {} - Reason: {}",
+            targetUser.getUsername(),
+            action,
+            currentUser.getUsername(),
+            reason);
 
         return ResponseEntity.ok(new UserResponse(targetUser));
+    }
+
+    /**
+     * Get last deactivation reason for a user
+     * GET /api/users/{id}/last-deactivation-reason
+     */
+    @GetMapping("/{id}/last-deactivation-reason")
+    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN')")
+    public ResponseEntity<?> getLastDeactivationReason(@PathVariable Long id) {
+        log.info("Fetching last deactivation reason for user ID: {}", id);
+
+        User user = userRepository.findById(id)
+                .orElseThrow(() -> new RuntimeException("User not found with ID: " + id));
+
+        // Find the most recent deactivation (new_status = false)
+        List<UserStatusHistory> history = userStatusHistoryRepository
+                .findByUserIdOrderByChangedAtDesc(id);
+
+        // Find first deactivation event
+        UserStatusHistory lastDeactivation = history.stream()
+                .filter(h -> !h.getNewStatus()) // new_status = false means deactivation
+                .findFirst()
+                .orElse(null);
+
+        if (lastDeactivation == null) {
+            return ResponseEntity.ok(Map.of(
+                "hasHistory", false,
+                "message", "No deactivation history found"
+            ));
+        }
+
+        return ResponseEntity.ok(Map.of(
+            "hasHistory", true,
+            "reason", lastDeactivation.getReason(),
+            "deactivatedAt", lastDeactivation.getChangedAt(),
+            "deactivatedBy", lastDeactivation.getChangedBy().getUsername()
+        ));
     }
 
     /**
