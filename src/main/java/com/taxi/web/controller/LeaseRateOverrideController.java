@@ -250,9 +250,8 @@ public class LeaseRateOverrideController {
         Map<String, Object> response = new HashMap<>();
 
         try {
-            LeaseRateOverrideService.OverrideRateResult result =
-                leaseRateOverrideService.getApplicableLeaseRate(
-                    ownerDriverNumber, workingDriverNumber, cabNumber, shiftType, date);
+            BigDecimal rate = leaseRateOverrideService.getApplicableLeaseRate(
+                ownerDriverNumber, workingDriverNumber, cabNumber, shiftType, date);
 
             response.put("success", true);
             response.put("ownerDriverNumber", ownerDriverNumber);
@@ -260,28 +259,17 @@ public class LeaseRateOverrideController {
             response.put("cabNumber", cabNumber);
             response.put("shiftType", shiftType);
             response.put("date", date.toString());
-
-            if (result != null) {
-                response.put("baseRate", result.getBaseRate());
-                response.put("mileageRate", result.getMileageRate());
-                response.put("isStructured", result.isStructured());
-                response.put("overrideId", result.getOverrideId());
+            
+            if (rate != null) {
+                response.put("leaseRate", rate);
                 response.put("isOverride", true);
-
-                if (result.isStructured()) {
-                    response.put("message", "Custom override rate found (base + mileage)");
-                } else {
-                    response.put("message", "Custom override rate found (flat rate)");
-                }
+                response.put("message", "Custom override rate found");
             } else {
-                response.put("baseRate", null);
-                response.put("mileageRate", null);
-                response.put("isStructured", false);
-                response.put("overrideId", null);
+                response.put("leaseRate", null);
                 response.put("isOverride", false);
                 response.put("message", "No override found - use default rate");
             }
-
+            
             return ResponseEntity.ok(response);
         } catch (Exception e) {
             response.put("success", false);
@@ -414,8 +402,6 @@ public class LeaseRateOverrideController {
             .shiftType(dto.getShiftType())
             .dayOfWeek(dto.getDayOfWeek())
             .leaseRate(dto.getLeaseRate())
-            .baseRateOverride(dto.getBaseRateOverride())
-            .mileageRateOverride(dto.getMileageRateOverride())
             .startDate(dto.getStartDate())
             .endDate(dto.getEndDate())
             .isActive(dto.getIsActive())
@@ -433,8 +419,6 @@ public class LeaseRateOverrideController {
             .shiftType(entity.getShiftType())
             .dayOfWeek(entity.getDayOfWeek())
             .leaseRate(entity.getLeaseRate())
-            .baseRateOverride(entity.getBaseRateOverride())
-            .mileageRateOverride(entity.getMileageRateOverride())
             .startDate(entity.getStartDate())
             .endDate(entity.getEndDate())
             .isActive(entity.getIsActive())

@@ -29,45 +29,6 @@ public class LeaseRateOverrideService {
     private final DriverRepository driverRepository;
 
     /**
-     * Result object for lease rate override lookup
-     * Contains both base and mileage components to support structured rates
-     */
-    @lombok.Data
-    @lombok.Builder
-    @lombok.AllArgsConstructor
-    @lombok.NoArgsConstructor
-    public static class OverrideRateResult {
-        private BigDecimal baseRate;
-        private BigDecimal mileageRate;
-        private boolean isStructured; // true = base+mileage, false = flat rate
-        private Long overrideId;
-
-        /**
-         * Create a flat rate result (no mileage component)
-         */
-        public static OverrideRateResult flatRate(BigDecimal totalRate, Long overrideId) {
-            return OverrideRateResult.builder()
-                .baseRate(totalRate)
-                .mileageRate(BigDecimal.ZERO)
-                .isStructured(false)
-                .overrideId(overrideId)
-                .build();
-        }
-
-        /**
-         * Create a structured rate result (base + mileage)
-         */
-        public static OverrideRateResult structured(BigDecimal baseRate, BigDecimal mileageRate, Long overrideId) {
-            return OverrideRateResult.builder()
-                .baseRate(baseRate)
-                .mileageRate(mileageRate)
-                .isStructured(true)
-                .overrideId(overrideId)
-                .build();
-        }
-    }
-
-    /**
      * Get the applicable lease rate for a specific shift
      *
      * Logic (two-tier priority):
@@ -83,10 +44,10 @@ public class LeaseRateOverrideService {
      * @param cabNumber The cab number
      * @param shiftType "DAY" or "NIGHT"
      * @param date The date of the shift
-     * @return OverrideRateResult with base and mileage components, or null if no override
+     * @return Custom lease rate if override exists, null otherwise
      */
     @Transactional(readOnly = true)
-    public OverrideRateResult getApplicableLeaseRate(
+    public BigDecimal getApplicableLeaseRate(
             String ownerDriverNumber,
             String workingDriverNumber,
             String cabNumber,
@@ -116,10 +77,10 @@ public class LeaseRateOverrideService {
 
             if (!beneficiaryOverrides.isEmpty()) {
                 LeaseRateOverride matched = beneficiaryOverrides.get(0);
-                log.info("✓✓✓ BENEFICIARY OVERRIDE FOUND! id={}, beneficiary={}, structured={}, priority={}",
-                    matched.getId(), matched.getBeneficiaryDriverNumber(), matched.isStructuredMode(), matched.getPriority());
+                log.info("✓✓✓ BENEFICIARY OVERRIDE FOUND! id={}, beneficiary={}, rate={}, priority={}",
+                    matched.getId(), matched.getBeneficiaryDriverNumber(), matched.getLeaseRate(), matched.getPriority());
                 log.info("=== LEASE RATE LOOKUP END (BENEFICIARY MATCH) ===");
-                return convertToResult(matched);
+                return matched.getLeaseRate();
             }
         }
 
@@ -211,14 +172,14 @@ public class LeaseRateOverrideService {
             }
 
             // All checks passed! This is the highest priority match
-            log.info("✓✓✓ MATCH FOUND! Override id={}, structured={}, priority={}, cab={}, shift={}, day={}",
-                override.getId(), override.isStructuredMode(), override.getPriority(),
+            log.info("✓✓✓ MATCH FOUND! Override id={}, rate={}, priority={}, cab={}, shift={}, day={}",
+                override.getId(), override.getLeaseRate(), override.getPriority(),
                 override.getCabNumber() != null ? override.getCabNumber() : "ALL",
                 override.getShiftType() != null ? override.getShiftType() : "ALL",
                 override.getDayOfWeek() != null ? override.getDayOfWeek() : "ALL");
             log.info("=== LEASE RATE LOOKUP END (OWNER-LEVEL MATCH) ===");
 
-            return convertToResult(override);
+            return override.getLeaseRate();
         }
 
         log.info("✗✗✗ NO MATCHING OVERRIDE FOUND after checking all {} overrides for owner='{}', driver='{}', cab='{}', shift='{}', day='{}'",
@@ -228,46 +189,17 @@ public class LeaseRateOverrideService {
     }
 
     /**
-     * Convert LeaseRateOverride entity to result object
-     */
-    private OverrideRateResult convertToResult(LeaseRateOverride override) {
-        if (override.isStructuredMode()) {
-            log.debug("Converting override {} to STRUCTURED result: base={}, mileage={}",
-                override.getId(), override.getBaseRateOverride(), override.getMileageRateOverride());
-            return OverrideRateResult.structured(
-                override.getBaseRateOverride(),
-                override.getMileageRateOverride(),
-                override.getId()
-            );
-        } else {
-            log.debug("Converting override {} to FLAT RATE result: total={}",
-                override.getId(), override.getLeaseRate());
-            return OverrideRateResult.flatRate(
-                override.getLeaseRate(),
-                override.getId()
-            );
-        }
-    }
-
-    /**
      * Create a new lease rate override
      */
     @Transactional
     public LeaseRateOverride createOverride(LeaseRateOverride override) {
-        String rateInfo = override.isStructuredMode()
-            ? String.format("base=%s, mileage=%s", override.getBaseRateOverride(), override.getMileageRateOverride())
-            : String.format("flat=%s", override.getLeaseRate());
-
-        log.info("Creating lease rate override: owner={}, beneficiary={}, cab={}, shift={}, day={}, {}",
+        log.info("Creating lease rate override: owner={}, beneficiary={}, cab={}, shift={}, day={}, rate={}",
             override.getOwnerDriverNumber(),
             override.getBeneficiaryDriverNumber() != null ? override.getBeneficiaryDriverNumber() : "ALL",
             override.getCabNumber() != null ? override.getCabNumber() : "ALL",
             override.getShiftType() != null ? override.getShiftType() : "ALL",
             override.getDayOfWeek() != null ? override.getDayOfWeek() : "ALL",
-            rateInfo);
-
-        // Validate override configuration
-        override.validate();
+            override.getLeaseRate());
 
         // Validate owner exists and is actually an owner
         validateOwner(override.getOwnerDriverNumber());
@@ -300,10 +232,6 @@ public class LeaseRateOverrideService {
             existing.setDayOfWeek(updates.getDayOfWeek());
         if (updates.getLeaseRate() != null)
             existing.setLeaseRate(updates.getLeaseRate());
-        if (updates.getBaseRateOverride() != null)
-            existing.setBaseRateOverride(updates.getBaseRateOverride());
-        if (updates.getMileageRateOverride() != null)
-            existing.setMileageRateOverride(updates.getMileageRateOverride());
         if (updates.getStartDate() != null)
             existing.setStartDate(updates.getStartDate());
         if (updates.getEndDate() != null)
@@ -312,9 +240,6 @@ public class LeaseRateOverrideService {
             existing.setIsActive(updates.getIsActive());
         if (updates.getNotes() != null)
             existing.setNotes(updates.getNotes());
-
-        // Validate updated override
-        existing.validate();
 
         existing.calculatePriority();
         return leaseRateOverrideRepository.save(existing);

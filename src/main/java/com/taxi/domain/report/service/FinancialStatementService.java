@@ -1645,14 +1645,10 @@ public class FinancialStatementService {
             // ═══════════════════════════════════════════════════════════════════════
             // GET MILEAGE LEASE RATE
             // ═══════════════════════════════════════════════════════════════════════
-            // Use date-aware query to handle multiple active rates
-            List<ItemRate> activeMileageRates = itemRateRepository.findActiveOnDate(shiftDate);
-            ItemRate baseMileageRate = activeMileageRates.stream()
-                .filter(rate -> "MILEAGE_RATE".equalsIgnoreCase(rate.getName()))
-                .findFirst()
-                .orElse(null);
+            java.util.Optional<ItemRate> mileageRateOpt = itemRateRepository.findByNameAndIsActiveTrue("MILEAGE_RATE");
 
-            if (baseMileageRate != null) {
+            if (mileageRateOpt.isPresent()) {
+                ItemRate baseMileageRate = mileageRateOpt.get();
                 BigDecimal mileageRate = baseMileageRate.getRate();
 
                 // Check for overrides

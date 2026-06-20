@@ -94,33 +94,11 @@ public class LeaseRateOverride {
     private String dayOfWeek; // "MONDAY", "TUESDAY", etc., or null for all days
 
     /**
-     * Custom lease rate (FLAT RATE MODE)
+     * Custom lease rate
      * This amount overrides the default lease rate when conditions match
-     * Used when override is a flat total (no mileage calculation)
-     *
-     * IMPORTANT: Cannot be used together with base_rate_override/mileage_rate_override
-     * Use EITHER leaseRate (flat) OR baseRateOverride+mileageRateOverride (structured)
      */
-    @Column(name = "lease_rate", nullable = true, precision = 10, scale = 2)
+    @Column(name = "lease_rate", nullable = false, precision = 10, scale = 2)
     private BigDecimal leaseRate;
-
-    /**
-     * Base rate override (STRUCTURED MODE)
-     * Fixed component of lease charge
-     * Must be used together with mileageRateOverride
-     * Total = baseRateOverride + (mileageRateOverride × miles)
-     */
-    @Column(name = "base_rate_override", precision = 10, scale = 2)
-    private BigDecimal baseRateOverride;
-
-    /**
-     * Mileage rate override (STRUCTURED MODE)
-     * Per-mile component of lease charge
-     * Must be used together with baseRateOverride
-     * Total = baseRateOverride + (mileageRateOverride × miles)
-     */
-    @Column(name = "mileage_rate_override", precision = 10, scale = 4)
-    private BigDecimal mileageRateOverride;
 
     /**
      * Start date (required)
@@ -233,73 +211,17 @@ public class LeaseRateOverride {
         if (cabNumber != null && !cabNumber.isEmpty() && !cabNumber.equals(cabNum)) {
             return false;
         }
-
+        
         // Check shift type match (null means applies to all shifts)
         if (shiftType != null && !shiftType.isEmpty() && !shiftType.equalsIgnoreCase(shift)) {
             return false;
         }
-
+        
         // Check day of week match (null means applies to all days)
         if (dayOfWeek != null && !dayOfWeek.isEmpty() && !dayOfWeek.equalsIgnoreCase(dayOfWeekStr)) {
             return false;
         }
-
+        
         return true;
-    }
-
-    /**
-     * Check if this override is in structured mode (base + mileage)
-     * @return true if using base_rate_override + mileage_rate_override
-     */
-    public boolean isStructuredMode() {
-        return baseRateOverride != null || mileageRateOverride != null;
-    }
-
-    /**
-     * Check if this override is in flat rate mode
-     * @return true if using only lease_rate field
-     */
-    public boolean isFlatRateMode() {
-        return leaseRate != null;
-    }
-
-    /**
-     * Validate that override has valid configuration
-     * @throws IllegalStateException if configuration is invalid
-     */
-    public void validate() {
-        boolean hasFlatRate = leaseRate != null;
-        boolean hasStructured = baseRateOverride != null || mileageRateOverride != null;
-
-        // Cannot mix modes
-        if (hasFlatRate && hasStructured) {
-            throw new IllegalStateException(
-                "Cannot use both lease_rate (flat) and base_rate_override/mileage_rate_override (structured). Choose one mode.");
-        }
-
-        // Must have at least one mode configured
-        if (!hasFlatRate && !hasStructured) {
-            throw new IllegalStateException(
-                "Must specify either lease_rate (flat mode) or base_rate_override + mileage_rate_override (structured mode)");
-        }
-
-        // Structured mode requires BOTH fields
-        if (hasStructured) {
-            if (baseRateOverride == null || mileageRateOverride == null) {
-                throw new IllegalStateException(
-                    "Structured mode requires BOTH base_rate_override and mileage_rate_override");
-            }
-        }
-
-        // Rates cannot be negative
-        if (leaseRate != null && leaseRate.compareTo(BigDecimal.ZERO) < 0) {
-            throw new IllegalStateException("lease_rate cannot be negative");
-        }
-        if (baseRateOverride != null && baseRateOverride.compareTo(BigDecimal.ZERO) < 0) {
-            throw new IllegalStateException("base_rate_override cannot be negative");
-        }
-        if (mileageRateOverride != null && mileageRateOverride.compareTo(BigDecimal.ZERO) < 0) {
-            throw new IllegalStateException("mileage_rate_override cannot be negative");
-        }
     }
 }
