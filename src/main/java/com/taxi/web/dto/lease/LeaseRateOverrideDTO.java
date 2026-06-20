@@ -47,9 +47,25 @@ public class LeaseRateOverrideDTO {
     private String dayOfWeek;
     
     /**
-     * Custom lease rate
+     * Custom lease rate (FLAT RATE MODE)
+     * Use this for flat total overrides (no mileage calculation)
+     * Cannot be used with baseRateOverride/mileageRateOverride
      */
     private BigDecimal leaseRate;
+
+    /**
+     * Base rate override (STRUCTURED MODE)
+     * Fixed component of lease charge
+     * Must be used together with mileageRateOverride
+     */
+    private BigDecimal baseRateOverride;
+
+    /**
+     * Mileage rate override (STRUCTURED MODE)
+     * Per-mile component of lease charge
+     * Must be used together with baseRateOverride
+     */
+    private BigDecimal mileageRateOverride;
     
     /**
      * Start date (required)
@@ -84,7 +100,17 @@ public class LeaseRateOverrideDTO {
         sb.append("Cab: ").append(cabNumber != null ? cabNumber : "All");
         sb.append(", Shift: ").append(shiftType != null ? shiftType : "Both");
         sb.append(", Day: ").append(dayOfWeek != null ? dayOfWeek : "All");
-        sb.append(", Rate: $").append(leaseRate);
+
+        // Show rate based on mode
+        if (baseRateOverride != null && mileageRateOverride != null) {
+            sb.append(", Rate: $").append(baseRateOverride).append(" + $")
+              .append(mileageRateOverride).append("/mile");
+        } else if (leaseRate != null) {
+            sb.append(", Rate: $").append(leaseRate).append(" (flat)");
+        } else {
+            sb.append(", Rate: Not configured");
+        }
+
         sb.append(", ").append(endDate != null ? startDate + " to " + endDate : "Ongoing from " + startDate);
         return sb.toString();
     }

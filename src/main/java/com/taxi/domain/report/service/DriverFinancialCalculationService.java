@@ -113,81 +113,6 @@ public class DriverFinancialCalculationService {
 
     /**
      * ═══════════════════════════════════════════════════════════════════════
-     * LEASE RATE CALCULATION - WITH OVERRIDE SUPPORT
-     * ═══════════════════════════════════════════════════════════════════════
-     *
-     * This method determines the applicable lease rate for a shift.
-     *
-     * LOGIC:
-     * 1. Check for custom override (owner-generic or driver-specific beneficiary)
-     * 2. If override exists, use it
-     * 3. If no override, fall back to default lease rate from lease_rates table
-     *
-     * This allows owners to customize rates and grant driver-specific exemptions
-     * while maintaining backwards compatibility with existing default rate system.
-     */
-    BigDecimal getApplicableLeaseRate(
-            String ownerDriverNumber,
-            String workingDriverNumber,
-            String cabNumber,
-            String shiftType,
-            LocalDateTime shiftDateTime,
-            Cab cab,
-            com.taxi.domain.cab.model.CabType cabType,
-            boolean hasAirportLicense) {
-
-        LocalDate shiftDate = shiftDateTime.toLocalDate();
-
-        // ✅ Check for override (owner-generic or driver-specific beneficiary)
-        // LeaseRateOverrideService now checks for beneficiary match first, then owner-level
-        BigDecimal overrideRate = leaseRateOverrideService.getApplicableLeaseRate(
-            ownerDriverNumber,
-            workingDriverNumber,
-            cabNumber,
-            shiftType,
-            shiftDate
-        );
-
-        if (overrideRate != null) {
-            log.debug("   💰 Using CUSTOM override rate: ${} for owner={}, driver={}, cab={}, shift={}, date={}",
-                overrideRate, ownerDriverNumber, workingDriverNumber, cabNumber, shiftType, shiftDate);
-            return overrideRate;
-        }
-
-        // ✅ No override - use default rate with CabShift attributes
-        log.debug("   💰 No override found, using DEFAULT rate for cab={}, shift={}",
-            cabNumber, shiftType);
-        return getDefaultLeaseRate(cab, shiftDateTime, cabType, hasAirportLicense);
-    }
-    
-    /**
-     * Get default lease rate from lease_rates table
-     * Uses CabShift attributes (cabType, hasAirportLicense) for correct rate lookup
-     */
-    private BigDecimal getDefaultLeaseRate(Cab cab, LocalDateTime shiftDateTime,
-                                           com.taxi.domain.cab.model.CabType cabType, boolean hasAirportLicense) {
-        try {
-            LeaseRate leaseRate = leaseCalculationService.findApplicableRate(
-                cabType, hasAirportLicense, shiftDateTime);
-
-            if (leaseRate == null) {
-                log.warn("   ⚠️ No default lease rate found for cabType={}, airport={}, using fallback $50",
-                    cabType, hasAirportLicense);
-                return new BigDecimal("50.00"); // Fallback rate
-            }
-
-            BigDecimal baseRate = leaseRate.getBaseRate();
-            log.debug("   💰 Using DEFAULT base rate: ${} (cabType={}, airport={})", baseRate, cabType, hasAirportLicense);
-            return baseRate;
-
-        } catch (Exception e) {
-            log.error("   ❌ Error getting default lease rate: {}", e.getMessage());
-            return new BigDecimal("50.00"); // Fallback on error
-        }
-    }
-
-    /**
-     * ═══════════════════════════════════════════════════════════════════════
      * LEASE REVENUE CALCULATION
      * ═══════════════════════════════════════════════════════════════════════
      */
@@ -334,26 +259,53 @@ public class DriverFinancialCalculationService {
         boolean hasAirportLicense = (cabShift != null && cabShift.getHasAirportLicense() != null)
                 ? cabShift.getHasAirportLicense() : false;
 
-        // ✅ Get applicable rate (exemption, override, or default) - now passes working driver for exemption check
-        BigDecimal baseRate = getApplicableLeaseRate(
-            owner.getDriverNumber(),
-            shift.getDriverNumber(),
-            cab.getCabNumber(),
-            shiftType,
-            shift.getLogonTime(),
-            cab,
-            cabType,
-            hasAirportLicense
-        );
+        LocalDate shiftDate = shift.getLogonTime().toLocalDate();
 
-        LeaseRate leaseRate = leaseCalculationService.findApplicableRate(
-            cabType,
-            hasAirportLicense,
-            shift.getLogonTime()
-        );
+        // ✅ Check for override (structured or flat)
+        LeaseRateOverrideService.OverrideRateResult overrideResult =
+            leaseRateOverrideService.getApplicableLeaseRate(
+                owner.getDriverNumber(),
+                shift.getDriverNumber(),
+                cab.getCabNumber(),
+                shiftType,
+                shiftDate
+            );
 
-        BigDecimal mileageRate = (leaseRate != null && leaseRate.getMileageRate() != null) ?
-            leaseRate.getMileageRate() : BigDecimal.ZERO;
+        BigDecimal baseRate;
+        BigDecimal mileageRate;
+
+        if (overrideResult != null) {
+            // Override found - use its rates
+            baseRate = overrideResult.getBaseRate();
+            mileageRate = overrideResult.getMileageRate();
+
+            if (overrideResult.isStructured()) {
+                log.debug("   💰 Using STRUCTURED override: base=${}, mileage=${}/mile (override ID={})",
+                    baseRate, mileageRate, overrideResult.getOverrideId());
+            } else {
+                log.debug("   💰 Using FLAT RATE override: total=${} (override ID={}, no mileage component)",
+                    baseRate, overrideResult.getOverrideId());
+            }
+        } else {
+            // No override - use default LeaseRate
+            LeaseRate leaseRate = leaseCalculationService.findApplicableRate(
+                cabType,
+                hasAirportLicense,
+                shift.getLogonTime()
+            );
+
+            if (leaseRate != null) {
+                baseRate = leaseRate.getBaseRate();
+                mileageRate = leaseRate.getMileageRate() != null ? leaseRate.getMileageRate() : BigDecimal.ZERO;
+                log.debug("   💰 Using DEFAULT lease rate: base=${}, mileage=${}/mile",
+                    baseRate, mileageRate);
+            } else {
+                // Fallback if no rate found
+                baseRate = new BigDecimal("50.00");
+                mileageRate = BigDecimal.ZERO;
+                log.warn("   ⚠️ No lease rate found, using fallback: base=${}, mileage=$0/mile", baseRate);
+            }
+        }
 
         // ✅ FIX: Get actual miles from DriverShift or MileageRecord
         // Do NOT default to 10 miles - use actual recorded miles or 0
