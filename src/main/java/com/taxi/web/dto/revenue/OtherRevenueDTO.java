@@ -170,12 +170,23 @@ public class OtherRevenueDTO {
 
         switch (dto.getApplicationType()) {
             case "SPECIFIC_PERSON":
+                // Show driver name if available, otherwise generic label
+                if (dto.getDriverName() != null) {
+                    return dto.getDriverName();
+                } else if (dto.getOwnerName() != null) {
+                    return dto.getOwnerName() + " (Owner)";
+                } else if (dto.getSpecificPersonId() != null) {
+                    return "Person #" + dto.getSpecificPersonId();
+                }
                 return "Specific Person";
             case "ALL_DRIVERS":
                 return "All Drivers";
             case "ALL_OWNERS":
                 return "All Owners";
             case "SPECIFIC_SHIFT":
+                if (dto.getCabNumber() != null) {
+                    return "Shift: Cab " + dto.getCabNumber();
+                }
                 return "Specific Shift";
             case "SHIFT_PROFILE":
                 return "Shift Profile";

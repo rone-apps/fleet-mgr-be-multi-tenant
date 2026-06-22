@@ -96,6 +96,12 @@ public class OneTimeExpense {
     @Transient
     private String driverNumber;
 
+    @Transient
+    private String driverName;  // Full name for SPECIFIC_PERSON display
+
+    @Transient
+    private String ownerName;  // Full name for SPECIFIC_PERSON display (when person is owner)
+
     @Column(name = "amount", nullable = false, precision = 10, scale = 2)
     private BigDecimal amount;
 
@@ -124,11 +130,11 @@ public class OneTimeExpense {
 
     @Column(name = "is_reimbursable")
     @Builder.Default
-    private boolean isReimbursable = false;
+    private Boolean isReimbursable = false;
 
     @Column(name = "is_reimbursed")
     @Builder.Default
-    private boolean isReimbursed = false;
+    private Boolean isReimbursed = false;
 
     @Column(name = "reimbursed_date")
     private LocalDate reimbursedDate;
@@ -218,7 +224,7 @@ public class OneTimeExpense {
      * Business logic: Mark as reimbursed
      */
     public void markAsReimbursed(LocalDate reimbursementDate) {
-        if (!isReimbursable) {
+        if (!Boolean.TRUE.equals(isReimbursable)) {
             throw new IllegalStateException("This expense is not marked as reimbursable");
         }
         this.isReimbursed = true;
@@ -236,7 +242,7 @@ public class OneTimeExpense {
      * Business logic: Check if reimbursement is pending
      */
     public boolean isReimbursementPending() {
-        return isReimbursable && !isReimbursed;
+        return Boolean.TRUE.equals(isReimbursable) && !Boolean.TRUE.equals(isReimbursed);
     }
 
     /**

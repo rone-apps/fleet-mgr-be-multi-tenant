@@ -383,9 +383,9 @@ public class OneTimeExpenseService {
     public void setReimbursable(Long id, boolean reimbursable) {
         log.info("Setting expense {} reimbursable={}", id, reimbursable);
         OneTimeExpense expense = getById(id);
-        expense.setReimbursable(reimbursable);
+        expense.setIsReimbursable(reimbursable);
         OneTimeExpense saved = oneTimeExpenseRepository.save(expense);
-        
+
         // ✅ Eagerly fetch relationships for response
         initializeRelationships(saved);
     }
@@ -409,6 +409,29 @@ public class OneTimeExpenseService {
      * available when serializing to JSON
      */
     private void initializeRelationships(OneTimeExpense expense) {
+        // ✅ NEW: Populate driver/owner from ApplicationType.SPECIFIC_PERSON
+        if (expense.getApplicationType() == com.taxi.domain.expense.model.ApplicationType.SPECIFIC_PERSON
+                && expense.getSpecificPersonId() != null
+                && expense.getDriver() == null
+                && expense.getOwner() == null) {
+            try {
+                Driver person = driverRepository.findById(expense.getSpecificPersonId()).orElse(null);
+                if (person != null) {
+                    String fullName = person.getFirstName() + " " + person.getLastName();
+                    if (Boolean.TRUE.equals(person.getIsOwner())) {
+                        expense.setOwner(person);
+                        expense.setOwnerName(fullName);
+                    } else {
+                        expense.setDriver(person);
+                        expense.setDriverName(fullName);
+                    }
+                    expense.setDriverNumber(person.getDriverNumber());
+                }
+            } catch (Exception e) {
+                log.warn("Failed to load person for expense {}: {}", expense.getId(), e.getMessage());
+            }
+        }
+
         // Force initialization of lazy-loaded relationships
         if (expense.getCab() != null) {
             expense.getCab().getCabNumber(); // Touch the entity to initialize

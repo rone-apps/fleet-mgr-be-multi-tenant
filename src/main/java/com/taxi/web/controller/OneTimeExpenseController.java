@@ -115,7 +115,7 @@ public class OneTimeExpenseController {
             existing.setVendor(request.getVendor());
             existing.setReceiptUrl(request.getReceiptUrl());
             existing.setInvoiceNumber(request.getInvoiceNumber());
-            existing.setReimbursable(request.getIsReimbursable() != null && request.getIsReimbursable());
+            existing.setIsReimbursable(request.getIsReimbursable() != null && request.getIsReimbursable());
             existing.setNotes(request.getNotes());
             // Application type fields
             existing.setApplicationType(request.getApplicationType());

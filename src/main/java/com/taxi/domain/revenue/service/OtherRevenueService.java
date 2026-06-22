@@ -73,7 +73,7 @@ public class OtherRevenueService {
     @Transactional(readOnly = true)
     public List<OtherRevenueDTO> getAllRevenues() {
         return revenueRepository.findAll().stream()
-            .map(OtherRevenueDTO::fromEntity)
+            .map(this::enrichAndConvertToDTO)
             .collect(Collectors.toList());
     }
     
@@ -81,7 +81,7 @@ public class OtherRevenueService {
     @Transactional(readOnly = true)
     public List<OtherRevenueDTO> getRevenuesBetweenDates(LocalDate startDate, LocalDate endDate) {
         return revenueRepository.findByRevenueDateBetween(startDate, endDate).stream()
-            .map(OtherRevenueDTO::fromEntity)
+            .map(this::enrichAndConvertToDTO)
             .collect(Collectors.toList());
     }
 
@@ -116,46 +116,46 @@ public class OtherRevenueService {
         List<OtherRevenue> results = revenueRepository.findForDriverBetweenDates(driverId, startDate, endDate);
         log.info("🔍 Filtered results for driverId={}: {} records", driverId, results.size());
         log.info("🔍 === End Debug ===");
-        
+
         return results.stream()
-            .map(OtherRevenueDTO::fromEntity)
+            .map(this::enrichAndConvertToDTO)
             .collect(Collectors.toList());
     }
-    
+
     // Get revenues by category
     @Transactional(readOnly = true)
     public List<OtherRevenueDTO> getRevenuesByCategory(Long categoryId) {
         return revenueRepository.findByCategory_Id(categoryId).stream()
-            .map(OtherRevenueDTO::fromEntity)
+            .map(this::enrichAndConvertToDTO)
             .collect(Collectors.toList());
     }
-    
+
     // Get revenues by entity
     @Transactional(readOnly = true)
     public List<OtherRevenueDTO> getRevenuesByEntity(OtherRevenue.EntityType entityType, Long entityId) {
         return revenueRepository.findByEntityTypeAndEntityId(entityType, entityId).stream()
-            .map(OtherRevenueDTO::fromEntity)
+            .map(this::enrichAndConvertToDTO)
             .collect(Collectors.toList());
     }
-    
+
     // Get revenues by payment status
     @Transactional(readOnly = true)
     public List<OtherRevenueDTO> getRevenuesByPaymentStatus(OtherRevenue.PaymentStatus paymentStatus) {
         return revenueRepository.findByPaymentStatus(paymentStatus).stream()
-            .map(OtherRevenueDTO::fromEntity)
+            .map(this::enrichAndConvertToDTO)
             .collect(Collectors.toList());
     }
     
     // Get revenues with filters
     @Transactional(readOnly = true)
     public List<OtherRevenueDTO> getRevenuesWithFilters(
-            LocalDate startDate, 
+            LocalDate startDate,
             LocalDate endDate,
             Long categoryId,
             OtherRevenue.EntityType entityType,
             OtherRevenue.PaymentStatus paymentStatus) {
         return revenueRepository.findWithFilters(startDate, endDate, categoryId, entityType, paymentStatus).stream()
-            .map(OtherRevenueDTO::fromEntity)
+            .map(this::enrichAndConvertToDTO)
             .collect(Collectors.toList());
     }
     
@@ -192,7 +192,7 @@ public class OtherRevenueService {
     @Transactional(readOnly = true)
     public List<OtherRevenueDTO> getRevenuesByApplicationType(ApplicationType applicationType) {
         return revenueRepository.findByApplicationType(applicationType).stream()
-            .map(OtherRevenueDTO::fromEntity)
+            .map(this::enrichAndConvertToDTO)
             .collect(Collectors.toList());
     }
 
@@ -203,7 +203,7 @@ public class OtherRevenueService {
             LocalDate startDate,
             LocalDate endDate) {
         return revenueRepository.findByApplicationTypeAndRevenueDateBetween(applicationType, startDate, endDate).stream()
-            .map(OtherRevenueDTO::fromEntity)
+            .map(this::enrichAndConvertToDTO)
             .collect(Collectors.toList());
     }
 
@@ -214,7 +214,7 @@ public class OtherRevenueService {
             LocalDate startDate,
             LocalDate endDate) {
         return revenueRepository.findByShiftProfileIdAndRevenueDateBetween(shiftProfileId, startDate, endDate).stream()
-            .map(OtherRevenueDTO::fromEntity)
+            .map(this::enrichAndConvertToDTO)
             .collect(Collectors.toList());
     }
 
@@ -225,7 +225,7 @@ public class OtherRevenueService {
             LocalDate startDate,
             LocalDate endDate) {
         return revenueRepository.findBySpecificShiftIdAndRevenueDateBetween(shiftId, startDate, endDate).stream()
-            .map(OtherRevenueDTO::fromEntity)
+            .map(this::enrichAndConvertToDTO)
             .collect(Collectors.toList());
     }
 
@@ -236,7 +236,7 @@ public class OtherRevenueService {
             LocalDate startDate,
             LocalDate endDate) {
         return revenueRepository.findBySpecificPersonIdAndRevenueDateBetween(personId, startDate, endDate).stream()
-            .map(OtherRevenueDTO::fromEntity)
+            .map(this::enrichAndConvertToDTO)
             .collect(Collectors.toList());
     }
 
@@ -247,7 +247,7 @@ public class OtherRevenueService {
             LocalDate startDate,
             LocalDate endDate) {
         return revenueRepository.findByAttributeTypeIdAndRevenueDateBetween(attributeTypeId, startDate, endDate).stream()
-            .map(OtherRevenueDTO::fromEntity)
+            .map(this::enrichAndConvertToDTO)
             .collect(Collectors.toList());
     }
 
@@ -259,7 +259,7 @@ public class OtherRevenueService {
             LocalDate startDate,
             LocalDate endDate) {
         return revenueRepository.findApplicableRevenuesBetween(personId, startDate, endDate).stream()
-            .map(OtherRevenueDTO::fromEntity)
+            .map(this::enrichAndConvertToDTO)
             .collect(Collectors.toList());
     }
 
@@ -326,24 +326,15 @@ public class OtherRevenueService {
             revenue.setPaymentStatus(OtherRevenue.PaymentStatus.PENDING);
         }
 
-        // Set category
+        // Set category (optional for standalone revenues)
         if (request.getCategoryId() != null) {
             RevenueCategory category = categoryRepository.findById(request.getCategoryId())
                 .orElseThrow(() -> new RuntimeException("Revenue category not found with id: " + request.getCategoryId()));
             revenue.setCategory(category);
         } else {
-            // ✅ If no category provided, use default "Other Revenue" category
-            // Find or create a default category for revenues without specific category
-            RevenueCategory defaultCategory = categoryRepository.findByCategoryCode("OTHER")
-                .or(() -> categoryRepository.findByCategoryName("Other Revenue"))
-                .orElseGet(() -> {
-                    log.warn("No default revenue category found, using first available active category");
-                    return categoryRepository.findByIsActiveTrue().stream()
-                        .findFirst()
-                        .orElseThrow(() -> new RuntimeException("No revenue categories available. Please create at least one revenue category."));
-                });
-            revenue.setCategory(defaultCategory);
-            log.info("Using default category '{}' for revenue without specified category", defaultCategory.getCategoryName());
+            // ✅ Allow NULL category for standalone revenues
+            revenue.setCategory(null);
+            log.info("Creating standalone revenue without category");
         }
 
         // Set application type fields (new system)
@@ -431,8 +422,24 @@ public class OtherRevenueService {
         revenue.setOwner(null);
         revenue.setShift(null);
 
-        // ✅ Only set entity references if using legacy entity_type system
-        // New ApplicationType system doesn't require these references
+        // ✅ Handle new ApplicationType system
+        if (revenue.getApplicationType() != null) {
+            if (revenue.getApplicationType() == ApplicationType.SPECIFIC_PERSON && revenue.getSpecificPersonId() != null) {
+                // Load the person and determine if they're a driver or owner
+                Driver person = driverRepository.findById(revenue.getSpecificPersonId())
+                    .orElseThrow(() -> new RuntimeException("Person not found with id: " + revenue.getSpecificPersonId()));
+
+                if (Boolean.TRUE.equals(person.getIsOwner())) {
+                    revenue.setOwner(person);
+                } else {
+                    revenue.setDriver(person);
+                }
+            }
+            // For other application types, we don't need to set entity references
+            return;
+        }
+
+        // ✅ Handle legacy entity_type system
         if (revenue.getEntityType() == null) {
             return;
         }
@@ -467,5 +474,55 @@ public class OtherRevenueService {
                 // No specific entity reference needed for company
                 break;
         }
+    }
+
+    /**
+     * Enrich revenue entity with driver/owner references for DTO conversion
+     * This is needed when reading existing data from DB where relationships aren't eagerly loaded
+     */
+    private OtherRevenueDTO enrichAndConvertToDTO(OtherRevenue revenue) {
+        // Enrich ApplicationType relationships
+        if (revenue.getApplicationType() == ApplicationType.SPECIFIC_PERSON && revenue.getSpecificPersonId() != null) {
+            try {
+                Driver person = driverRepository.findById(revenue.getSpecificPersonId()).orElse(null);
+                if (person != null) {
+                    if (Boolean.TRUE.equals(person.getIsOwner())) {
+                        revenue.setOwner(person);
+                    } else {
+                        revenue.setDriver(person);
+                    }
+                }
+            } catch (Exception e) {
+                log.warn("Failed to enrich person relationship for revenue {}: {}", revenue.getId(), e.getMessage());
+            }
+        }
+
+        // Enrich legacy entity type relationships if not already loaded
+        if (revenue.getEntityType() != null && revenue.getEntityId() != null) {
+            try {
+                switch (revenue.getEntityType()) {
+                    case DRIVER:
+                        if (revenue.getDriver() == null) {
+                            revenue.setDriver(driverRepository.findById(revenue.getEntityId()).orElse(null));
+                        }
+                        break;
+                    case OWNER:
+                        if (revenue.getOwner() == null) {
+                            revenue.setOwner(driverRepository.findById(revenue.getEntityId()).orElse(null));
+                        }
+                        break;
+                    case CAB:
+                        if (revenue.getCab() == null) {
+                            revenue.setCab(cabRepository.findById(revenue.getEntityId()).orElse(null));
+                        }
+                        break;
+                    // Add other types as needed
+                }
+            } catch (Exception e) {
+                log.warn("Failed to enrich entity relationship for revenue {}: {}", revenue.getId(), e.getMessage());
+            }
+        }
+
+        return OtherRevenueDTO.fromEntity(revenue);
     }
 }

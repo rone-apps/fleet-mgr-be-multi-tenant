@@ -51,10 +51,10 @@ public class OtherRevenue {
     private LocalDate revenueDate;
     
     @Enumerated(EnumType.STRING)
-    @Column(name = "entity_type", nullable = false)
+    @Column(name = "entity_type", nullable = true)
     private EntityType entityType;
-    
-    @Column(name = "entity_id", nullable = false)
+
+    @Column(name = "entity_id", nullable = true)
     private Long entityId;
     
     @Enumerated(EnumType.STRING)
@@ -83,7 +83,7 @@ public class OtherRevenue {
     
     // Foreign Keys
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "revenue_category_id", nullable = false)
+    @JoinColumn(name = "revenue_category_id", nullable = true)
     @JsonIgnoreProperties({"hibernateLazyInitializer", "handler"})
     private RevenueCategory category;
     
