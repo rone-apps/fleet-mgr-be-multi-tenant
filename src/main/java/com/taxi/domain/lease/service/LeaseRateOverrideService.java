@@ -105,9 +105,8 @@ public class LeaseRateOverrideService {
         DayOfWeek dayOfWeek = date.getDayOfWeek();
         String dayOfWeekStr = dayOfWeek.toString();
 
-        log.info("=== LEASE RATE LOOKUP START ===");
-        log.info("Searching for: owner='{}', driver='{}', cab='{}', shift='{}', date='{}' ({})",
-            ownerDriverNumber, workingDriverNumber, cabNumber, shiftType, date, dayOfWeekStr);
+        log.debug("Searching for lease rate: owner='{}', driver='{}', cab='{}', shift='{}', date='{}'",
+            ownerDriverNumber, workingDriverNumber, cabNumber, shiftType, date);
 
         // ✅ STEP 1: Check for driver-specific (beneficiary) overrides FIRST
         if (workingDriverNumber != null && !workingDriverNumber.isEmpty()) {
@@ -116,9 +115,8 @@ public class LeaseRateOverrideService {
 
             if (!beneficiaryOverrides.isEmpty()) {
                 LeaseRateOverride matched = beneficiaryOverrides.get(0);
-                log.info("✓✓✓ BENEFICIARY OVERRIDE FOUND! id={}, beneficiary={}, structured={}, priority={}",
+                log.debug("Beneficiary override found: id={}, beneficiary={}, structured={}, priority={}",
                     matched.getId(), matched.getBeneficiaryDriverNumber(), matched.isStructuredMode(), matched.getPriority());
-                log.info("=== LEASE RATE LOOKUP END (BENEFICIARY MATCH) ===");
                 return convertToResult(matched);
             }
         }
@@ -128,12 +126,11 @@ public class LeaseRateOverrideService {
             .findByOwnerDriverNumberOrderByPriorityDescCreatedAtDesc(ownerDriverNumber);
 
         if (allOwnerOverrides.isEmpty()) {
-            log.info("No overrides found for owner: '{}'", ownerDriverNumber);
-            log.info("=== LEASE RATE LOOKUP END (NOT FOUND) ===");
+            log.debug("No overrides found for owner: '{}'", ownerDriverNumber);
             return null;
         }
 
-        log.info("Found {} total overrides for owner '{}'. Checking for owner-level (non-beneficiary) matches...",
+        log.debug("Found {} total overrides for owner '{}', checking for owner-level matches",
             allOwnerOverrides.size(), ownerDriverNumber);
 
         for (LeaseRateOverride override : allOwnerOverrides) {
@@ -298,12 +295,13 @@ public class LeaseRateOverrideService {
             existing.setShiftType(updates.getShiftType());
         if (updates.getDayOfWeek() != null)
             existing.setDayOfWeek(updates.getDayOfWeek());
-        if (updates.getLeaseRate() != null)
-            existing.setLeaseRate(updates.getLeaseRate());
-        if (updates.getBaseRateOverride() != null)
-            existing.setBaseRateOverride(updates.getBaseRateOverride());
-        if (updates.getMileageRateOverride() != null)
-            existing.setMileageRateOverride(updates.getMileageRateOverride());
+
+        // ALWAYS update rate fields (including null) to support mode switching
+        // When switching from flat to structured (or vice versa), we MUST clear the opposing fields
+        existing.setLeaseRate(updates.getLeaseRate());
+        existing.setBaseRateOverride(updates.getBaseRateOverride());
+        existing.setMileageRateOverride(updates.getMileageRateOverride());
+
         if (updates.getStartDate() != null)
             existing.setStartDate(updates.getStartDate());
         if (updates.getEndDate() != null)

@@ -19,8 +19,10 @@ import java.time.LocalDate;
 
 /**
  * Domain service for calculating lease amounts
- * 
+ *
  * Lease Formula: Total Lease = Base Rate + (Miles Driven × Mileage Rate)
+ *
+ * Priority: Checks for custom overrides first, then falls back to default rates
  */
 @Service
 @RequiredArgsConstructor
@@ -30,6 +32,7 @@ public class LeaseCalculationService {
 
     private final LeasePlanRepository leasePlanRepository;
     private final LeaseRateRepository leaseRateRepository;
+    private final LeaseRateOverrideService leaseRateOverrideService;
 
     /**
      * Calculate lease amount for a shift on a specific date

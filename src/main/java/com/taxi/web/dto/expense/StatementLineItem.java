@@ -59,8 +59,10 @@ public class StatementLineItem {
     @AllArgsConstructor
     @Builder
     public static class LeaseBreakdown {
+        private BigDecimal miles;               // Miles driven during this shift
+        private BigDecimal mileageRate;         // Per-mile rate (e.g., $0.15/mile)
         private BigDecimal fixedLeaseAmount;    // Base lease amount (e.g., $50/day)
-        private BigDecimal mileageLeaseAmount;  // Mileage portion (miles × rate)
+        private BigDecimal mileageLeaseAmount;  // Mileage portion (miles × mileageRate)
         // Total is in the parent amount field
     }
 }

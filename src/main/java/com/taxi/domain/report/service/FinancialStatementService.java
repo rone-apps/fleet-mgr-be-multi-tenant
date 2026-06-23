@@ -36,6 +36,7 @@ import com.taxi.domain.charges.service.CustomerChargeDataProvider;
 import com.taxi.domain.charges.dto.CustomerChargeDTO;
 import com.taxi.web.dto.report.LeaseRevenueDTO;
 import com.taxi.web.dto.report.LeaseExpenseDTO;
+import com.taxi.domain.lease.service.LeaseRateOverrideService;
 import com.taxi.domain.shift.model.CabShift;
 import com.taxi.domain.shift.model.ShiftLog;
 import com.taxi.domain.shift.model.ShiftOwnership;
@@ -83,6 +84,7 @@ public class FinancialStatementService {
     private final ItemRateRepository itemRateRepository;
     private final ItemRateOverrideRepository itemRateOverrideRepository;
     private final MileageRecordRepository mileageRecordRepository;
+    private final LeaseRateOverrideService leaseRateOverrideService;
 
     // ═══════════════════════════════════════════════════════════════════════
     // NEW CONSOLIDATED SERVICES - SINGLE SOURCE OF TRUTH
@@ -557,8 +559,17 @@ public class FinancialStatementService {
                         // Total lease = fixed + mileage
                         BigDecimal totalLease = fixedLeaseAmount.add(mileageLeaseAmount);
 
-                        // Create lease breakdown with both fixed and mileage components
+                        // Calculate mileage rate: mileageLease / miles (if miles > 0)
+                        BigDecimal miles = (result != null && result.dayMileage != null) ? result.dayMileage : BigDecimal.ZERO;
+                        BigDecimal mileageRate = BigDecimal.ZERO;
+                        if (miles.compareTo(BigDecimal.ZERO) > 0) {
+                            mileageRate = mileageLeaseAmount.divide(miles, 4, java.math.RoundingMode.HALF_UP);
+                        }
+
+                        // Create lease breakdown with miles, rates, and amounts
                         StatementLineItem.LeaseBreakdown breakdown = StatementLineItem.LeaseBreakdown.builder()
+                            .miles(miles)
+                            .mileageRate(mileageRate)
                             .fixedLeaseAmount(fixedLeaseAmount)
                             .mileageLeaseAmount(mileageLeaseAmount)
                             .build();
@@ -605,8 +616,12 @@ public class FinancialStatementService {
 
                 // Calculate insurance for each mileage record
                 for (MileageRecord mileageRecord : mileageRecords) {
-                    BigDecimal miles = mileageRecord.getMileageA();
-                    if (miles != null && miles.compareTo(BigDecimal.ZERO) > 0) {
+                    // Use mileage B + C (Tariff 2 + Paid mileage)
+                    BigDecimal mileageB = mileageRecord.getMileageB() != null ? mileageRecord.getMileageB() : BigDecimal.ZERO;
+                    BigDecimal mileageC = mileageRecord.getMileageC() != null ? mileageRecord.getMileageC() : BigDecimal.ZERO;
+                    BigDecimal miles = mileageB.add(mileageC);
+
+                    if (miles.compareTo(BigDecimal.ZERO) > 0) {
                         // Calculate insurance for this record
                         BigDecimal insuranceExpense = miles.multiply(insuranceRate)
                                 .setScale(2, java.math.RoundingMode.HALF_UP);
@@ -626,7 +641,7 @@ public class FinancialStatementService {
                                 .isRecurring(false)
                                 .build());
 
-                        log.debug("Added insurance expense for person {}: {} miles × ${}/mile = ${}",
+                        log.debug("Added insurance expense for person {}: {} miles (B+C) × ${}/mile = ${}",
                                 personId, miles, insuranceRate, insuranceExpense);
                     }
                 }
@@ -995,11 +1010,12 @@ public class FinancialStatementService {
                         Driver driver = driverRepository.findByDriverNumber(leaseItem.getDriverNumber())
                                 .orElse(null);
                         BigDecimal mileageLeaseAmount = BigDecimal.ZERO;
+                        MileageCalculationResult result = null;
                         if (driver != null) {
                             // Owner is the person we're generating the report for (from the shift ownership)
                             String ownerDriverNumber = person.getDriverNumber();
 
-                            MileageCalculationResult result = calculateMileageLeaseForDay(driver, leaseItem.getLogonTime(), leaseItem.getLogoffTime(),
+                            result = calculateMileageLeaseForDay(driver, leaseItem.getLogonTime(), leaseItem.getLogoffTime(),
                                     ownerDriverNumber, leaseItem.getCabNumber(), leaseItem.getShiftType());
                             mileageLeaseAmount = result.mileageLease;
                             // Note: insuranceExpense (result.insuranceExpense) is deducted as driver expense, not owner revenue
@@ -1008,8 +1024,17 @@ public class FinancialStatementService {
                         // Total lease = fixed + mileage
                         BigDecimal totalLease = fixedLeaseAmount.add(mileageLeaseAmount);
 
-                        // Create lease breakdown with both fixed and mileage components
+                        // Calculate mileage rate: mileageLease / miles (if miles > 0)
+                        BigDecimal miles = (result != null && result.dayMileage != null) ? result.dayMileage : BigDecimal.ZERO;
+                        BigDecimal mileageRate = BigDecimal.ZERO;
+                        if (miles.compareTo(BigDecimal.ZERO) > 0) {
+                            mileageRate = mileageLeaseAmount.divide(miles, 4, java.math.RoundingMode.HALF_UP);
+                        }
+
+                        // Create lease breakdown with miles, rates, and amounts
                         StatementLineItem.LeaseBreakdown breakdown = StatementLineItem.LeaseBreakdown.builder()
+                            .miles(miles)
+                            .mileageRate(mileageRate)
                             .fixedLeaseAmount(fixedLeaseAmount)
                             .mileageLeaseAmount(mileageLeaseAmount)
                             .build();
@@ -1626,14 +1651,18 @@ public class FinancialStatementService {
                 return new MileageCalculationResult(BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO);
             }
 
-            // Sum all mileage A (Flag fall / Tariff 1) from all captured mileage records
+            // Sum all mileage (B + C) from all captured mileage records
+            // Mileage B = Tariff 2, Mileage C = Paid mileage
             BigDecimal dayMileage = mileageRecords.stream()
-                    .map(MileageRecord::getMileageA)
-                    .filter(Objects::nonNull)
+                    .map(record -> {
+                        BigDecimal mileageB = record.getMileageB() != null ? record.getMileageB() : BigDecimal.ZERO;
+                        BigDecimal mileageC = record.getMileageC() != null ? record.getMileageC() : BigDecimal.ZERO;
+                        return mileageB.add(mileageC);
+                    })
                     .reduce(BigDecimal.ZERO, BigDecimal::add);
 
             if (dayMileage.compareTo(BigDecimal.ZERO) <= 0) {
-                log.debug("No mileage A recorded for driver {} during shift {} to {}",
+                log.debug("No mileage (B+C) recorded for driver {} during shift {} to {}",
                     driver.getDriverNumber(), logonTime, logoffTime);
                 return new MileageCalculationResult(BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO);
             }
@@ -1645,41 +1674,66 @@ public class FinancialStatementService {
             // ═══════════════════════════════════════════════════════════════════════
             // GET MILEAGE LEASE RATE
             // ═══════════════════════════════════════════════════════════════════════
-            // Use date-aware query to handle multiple active rates
-            List<ItemRate> activeMileageRates = itemRateRepository.findActiveOnDate(shiftDate);
-            ItemRate baseMileageRate = activeMileageRates.stream()
-                .filter(rate -> "MILEAGE_RATE".equalsIgnoreCase(rate.getName()))
-                .findFirst()
-                .orElse(null);
+            BigDecimal mileageRate = BigDecimal.ZERO;
 
-            if (baseMileageRate != null) {
-                BigDecimal mileageRate = baseMileageRate.getRate();
+            // ✅ FIRST: Check for LeaseRateOverride (from lease_rate_overrides table)
+            boolean hasLeaseOverride = false;
+            if (ownerDriverNumber != null) {
+                LeaseRateOverrideService.OverrideRateResult leaseOverride =
+                    leaseRateOverrideService.getApplicableLeaseRate(
+                        ownerDriverNumber,
+                        driver.getDriverNumber(),
+                        cabNumber,
+                        shiftType,
+                        shiftDate
+                    );
 
-                // Check for overrides
-                if (ownerDriverNumber != null) {
-                    List<ItemRateOverride> applicableOverrides = itemRateOverrideRepository
-                        .findActiveOverridesForRate(baseMileageRate.getId(), ownerDriverNumber, shiftDate);
+                if (leaseOverride != null && leaseOverride.getMileageRate() != null) {
+                    mileageRate = leaseOverride.getMileageRate();
+                    hasLeaseOverride = true;
+                    log.debug("Using LeaseRateOverride mileage rate ${}/mile for owner {} cab {} {} shift (override ID={})",
+                            mileageRate, ownerDriverNumber, cabNumber, shiftType, leaseOverride.getOverrideId());
+                }
+            }
 
-                    if (!applicableOverrides.isEmpty()) {
-                        for (ItemRateOverride override : applicableOverrides) {
-                            if (override.matches(cabNumber, shiftType, dayOfWeek)) {
-                                mileageRate = override.getOverrideRate();
-                                log.debug("Using mileage override rate ${}/mile for owner {} cab {} {} shift",
-                                        mileageRate, ownerDriverNumber, cabNumber, shiftType);
-                                break;
+            // ✅ SECOND: If no LeaseRateOverride, check ItemRateOverride (from item_rate_overrides table)
+            // IMPORTANT: Only check ItemRateOverride if we didn't get a LeaseRateOverride, even if the rate is $0
+            if (!hasLeaseOverride && mileageRate.compareTo(BigDecimal.ZERO) == 0) {
+                List<ItemRate> activeMileageRates = itemRateRepository.findActiveOnDate(shiftDate);
+                ItemRate baseMileageRate = activeMileageRates.stream()
+                    .filter(rate -> "MILEAGE_RATE".equalsIgnoreCase(rate.getName()))
+                    .findFirst()
+                    .orElse(null);
+
+                if (baseMileageRate != null) {
+                    mileageRate = baseMileageRate.getRate();
+
+                    // Check for ItemRateOverride
+                    if (ownerDriverNumber != null) {
+                        List<ItemRateOverride> applicableOverrides = itemRateOverrideRepository
+                            .findActiveOverridesForRate(baseMileageRate.getId(), ownerDriverNumber, shiftDate);
+
+                        if (!applicableOverrides.isEmpty()) {
+                            for (ItemRateOverride override : applicableOverrides) {
+                                if (override.matches(cabNumber, shiftType, dayOfWeek)) {
+                                    mileageRate = override.getOverrideRate();
+                                    log.debug("Using ItemRateOverride mileage rate ${}/mile for owner {} cab {} {} shift",
+                                            mileageRate, ownerDriverNumber, cabNumber, shiftType);
+                                    break;
+                                }
                             }
                         }
                     }
+                } else {
+                    log.debug("MILEAGE_RATE not found in item_rate table");
                 }
-
-                mileageLease = dayMileage.multiply(mileageRate)
-                        .setScale(2, java.math.RoundingMode.HALF_UP);
-
-                log.debug("Calculated mileage lease for driver {}: {} miles × ${}/mile = ${}",
-                        driver.getDriverNumber(), dayMileage, mileageRate, mileageLease);
-            } else {
-                log.debug("MILAGE_RATE not found in item_rate table");
             }
+
+            mileageLease = dayMileage.multiply(mileageRate)
+                    .setScale(2, java.math.RoundingMode.HALF_UP);
+
+            log.debug("Calculated mileage lease for driver {}: {} miles × ${}/mile = ${}",
+                    driver.getDriverNumber(), dayMileage, mileageRate, mileageLease);
 
             // Insurance is now calculated separately in section 3.6 based on total period miles
             return new MileageCalculationResult(dayMileage, mileageLease, BigDecimal.ZERO);

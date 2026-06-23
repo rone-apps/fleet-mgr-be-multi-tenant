@@ -3,6 +3,8 @@ package com.taxi.web.controller;
 import com.taxi.domain.lease.model.LeaseRateOverride;
 import com.taxi.domain.lease.service.LeaseRateOverrideService;
 import com.taxi.web.dto.lease.LeaseRateOverrideDTO;
+import com.taxi.domain.driver.repository.DriverRepository;
+import com.taxi.domain.driver.model.Driver;
 import lombok.RequiredArgsConstructor;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.ResponseEntity;
@@ -26,6 +28,7 @@ import java.util.stream.Collectors;
 public class LeaseRateOverrideController {
 
     private final LeaseRateOverrideService leaseRateOverrideService;
+    private final DriverRepository driverRepository;
 
     /**
      * Create a new lease rate override
@@ -425,10 +428,30 @@ public class LeaseRateOverrideController {
     }
 
     private LeaseRateOverrideDTO convertToDTO(LeaseRateOverride entity) {
+        // Lookup owner name
+        String ownerName = null;
+        if (entity.getOwnerDriverNumber() != null) {
+            driverRepository.findByDriverNumber(entity.getOwnerDriverNumber())
+                .ifPresent(driver -> {});
+            ownerName = driverRepository.findByDriverNumber(entity.getOwnerDriverNumber())
+                .map(driver -> driver.getFirstName() + " " + driver.getLastName())
+                .orElse(null);
+        }
+
+        // Lookup beneficiary name
+        String beneficiaryName = null;
+        if (entity.getBeneficiaryDriverNumber() != null) {
+            beneficiaryName = driverRepository.findByDriverNumber(entity.getBeneficiaryDriverNumber())
+                .map(driver -> driver.getFirstName() + " " + driver.getLastName())
+                .orElse(null);
+        }
+
         return LeaseRateOverrideDTO.builder()
             .id(entity.getId())
             .ownerDriverNumber(entity.getOwnerDriverNumber())
+            .ownerName(ownerName)
             .beneficiaryDriverNumber(entity.getBeneficiaryDriverNumber())
+            .beneficiaryName(beneficiaryName)
             .cabNumber(entity.getCabNumber())
             .shiftType(entity.getShiftType())
             .dayOfWeek(entity.getDayOfWeek())

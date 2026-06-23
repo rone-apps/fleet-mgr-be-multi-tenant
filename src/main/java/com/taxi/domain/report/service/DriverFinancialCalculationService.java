@@ -322,14 +322,18 @@ public class DriverFinancialCalculationService {
                     );
 
                 if (!mileageRecords.isEmpty()) {
-                    // ✅ Sum mileageA (Tariff 1 / Flag fall) to match detail modal calculation
+                    // ✅ Sum mileageB + mileageC (Tariff 2 + Paid mileage) to match detail modal calculation
                     // This ensures lease and insurance use the same mileage value
                     miles = mileageRecords.stream()
-                        .map(m -> m.getMileageA() != null ? m.getMileageA() : BigDecimal.ZERO)
+                        .map(m -> {
+                            BigDecimal mileageB = m.getMileageB() != null ? m.getMileageB() : BigDecimal.ZERO;
+                            BigDecimal mileageC = m.getMileageC() != null ? m.getMileageC() : BigDecimal.ZERO;
+                            return mileageB.add(mileageC);
+                        })
                         .reduce(BigDecimal.ZERO, BigDecimal::add);
 
                     if (miles.compareTo(BigDecimal.ZERO) > 0) {
-                        log.debug("   Miles (mileageA) for shift {} (driver {}, cab {}): ${} from MileageRecord (not from DriverShift.TotalDistance)",
+                        log.debug("   Miles (B+C) for shift {} (driver {}, cab {}): ${} from MileageRecord (not from DriverShift.TotalDistance)",
                             shift.getId(), shift.getDriverNumber(), shift.getCabNumber(), miles);
                     }
                 }

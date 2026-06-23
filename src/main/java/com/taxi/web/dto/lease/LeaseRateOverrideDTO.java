@@ -25,11 +25,21 @@ public class LeaseRateOverrideDTO {
     private String ownerDriverNumber;
 
     /**
+     * Owner driver name (for display purposes)
+     */
+    private String ownerName;
+
+    /**
      * Beneficiary driver number (optional)
      * null = owner-level rate (applies to all drivers)
      * not null = driver-specific exemption (applies only to this driver)
      */
     private String beneficiaryDriverNumber;
+
+    /**
+     * Beneficiary driver name (for display purposes)
+     */
+    private String beneficiaryName;
 
     /**
      * Specific cab number (optional - null means all owner's cabs)
