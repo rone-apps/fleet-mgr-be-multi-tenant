@@ -38,16 +38,40 @@ public class CustomerChargeProviderFactory {
      * @return Provider instance based on tenant configuration
      */
     public CustomerChargeDataProvider getProvider() {
+        return getProvider(null);
+    }
+
+    /**
+     * Get the appropriate charge provider with optional request-scoped override.
+     *
+     * This allows per-request override of the tenant-wide configuration without
+     * modifying the tenant config itself. Useful for UI toggles that let users
+     * compare legacy vs modern charge systems.
+     *
+     * @param useModernOverride Optional override: null = use tenant config,
+     *                          true = force modern provider,
+     *                          false = force legacy provider
+     * @return Provider instance based on override or tenant configuration
+     */
+    public CustomerChargeDataProvider getProvider(Boolean useModernOverride) {
         String tenantId = TenantContext.getCurrentTenant();
 
-        boolean useLegacy = tenantConfigService.getCurrentTenantConfig()
-            .map(config -> config.isUseLegacyChargeSystem())
-            .orElse(false);  // Default to modern system if config missing
+        boolean useModern;
+        if (useModernOverride != null) {
+            // Request-scoped override takes precedence
+            useModern = useModernOverride;
+            log.debug("Tenant '{}' using {} charge provider (request override)",
+                tenantId, useModern ? "MODERN" : "LEGACY");
+        } else {
+            // Fall back to tenant config
+            boolean useLegacy = tenantConfigService.getCurrentTenantConfig()
+                .map(config -> config.isUseLegacyChargeSystem())
+                .orElse(false);  // Default to modern system if config missing
+            useModern = !useLegacy;
+            log.debug("Tenant '{}' using {} charge provider (tenant config)",
+                tenantId, useModern ? "MODERN" : "LEGACY");
+        }
 
-        CustomerChargeDataProvider selectedProvider = useLegacy ? legacyProvider : modernProvider;
-
-        log.debug("Tenant '{}' using {} charge provider", tenantId, selectedProvider.getImplementationType());
-
-        return selectedProvider;
+        return useModern ? modernProvider : legacyProvider;
     }
 }

@@ -212,7 +212,11 @@ public class FinancialStatementService {
      * Shows revenues, expenses (recurring and one-time), and net amount
      */
     public OwnerReportDTO generateOwnerReport(Long personId, LocalDate from, LocalDate to) {
-        return generateOwnerReport(personId, from, to, true);
+        return generateOwnerReport(personId, from, to, true, null);
+    }
+
+    public OwnerReportDTO generateOwnerReport(Long personId, LocalDate from, LocalDate to, Boolean useModernCharges) {
+        return generateOwnerReport(personId, from, to, true, useModernCharges);
     }
 
     /**
@@ -220,8 +224,9 @@ public class FinancialStatementService {
      *
      * @param includePendingTransfers If true, includes APPROVED transfer executions (for statement generation).
      *                                If false, only includes APPLIED/FINALIZED (for balance calculation)
+     * @param useModernCharges Optional override: null = use tenant config, true = modern, false = legacy
      */
-    public OwnerReportDTO generateOwnerReport(Long personId, LocalDate from, LocalDate to, boolean includePendingTransfers) {
+    public OwnerReportDTO generateOwnerReport(Long personId, LocalDate from, LocalDate to, boolean includePendingTransfers, Boolean useModernCharges) {
         Driver person = driverRepository.findById(personId)
             .orElseThrow(() -> new RuntimeException("Driver/Owner not found: " + personId));
 
@@ -795,7 +800,7 @@ public class FinancialStatementService {
 
         // 6. Add account charge revenues (uses same previous-month logic as credit cards for active owners)
         try {
-            CustomerChargeDataProvider chargeProvider = chargeProviderFactory.getProvider();
+            CustomerChargeDataProvider chargeProvider = chargeProviderFactory.getProvider(useModernCharges);
             List<CustomerChargeDTO> customerCharges = chargeProvider.findChargesByDriverId(personId, ccFrom, ccTo);
 
             log.info("Found {} customer charges for person {} between {} and {} (using {} system)",
@@ -868,7 +873,7 @@ public class FinancialStatementService {
 
             // Account charge revenues from CURRENT month
             try {
-                CustomerChargeDataProvider chargeProvider = chargeProviderFactory.getProvider();
+                CustomerChargeDataProvider chargeProvider = chargeProviderFactory.getProvider(useModernCharges);
                 List<CustomerChargeDTO> currentMonthCharges = chargeProvider.findChargesByDriverId(personId, from, to);
 
                 log.info("Found {} current month customer charges for holding revenues (using {} system)",

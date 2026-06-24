@@ -80,10 +80,11 @@ public class ReportController {
     public ResponseEntity<ChargesRevenueReportDTO> getChargesRevenueReport(
             @RequestParam String driverNumber,
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate startDate,
-            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate endDate) {
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate endDate,
+            @RequestParam(required = false) Boolean useModernCharges) {
         
-        log.info("📊 Charges revenue report request: driver={}, start={}, end={}", 
-                driverNumber, startDate, endDate);
+        log.info("📊 Charges revenue report request: driver={}, start={}, end={}, useModernCharges={}",
+                driverNumber, startDate, endDate, useModernCharges);
         
         try {
             // Validate date range
@@ -93,7 +94,7 @@ public class ReportController {
             }
             
             ChargesRevenueReportDTO report = reportService.generateChargesRevenueReport(
-                    driverNumber, startDate, endDate);
+                    driverNumber, startDate, endDate, useModernCharges);
             
             log.info("✅ Charges revenue report generated: {} charges", 
                     report.getTotalCharges());

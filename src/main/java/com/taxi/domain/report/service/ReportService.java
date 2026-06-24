@@ -92,13 +92,15 @@ public class ReportService {
     public ChargesRevenueReportDTO generateChargesRevenueReport(
             String driverNumber,
             LocalDate startDate,
-            LocalDate endDate) {
-        
-        log.info("Generating charges revenue report for driver: {}", driverNumber);
-        
+            LocalDate endDate,
+            Boolean useModernCharges) {
+
+        log.info("Generating charges revenue report for driver: {} (useModernCharges: {})",
+                driverNumber, useModernCharges);
+
         // ✅ DELEGATE TO SHARED SERVICE
         return driverFinancialCalculationService.calculateChargesRevenue(
-                driverNumber, startDate, endDate);
+                driverNumber, startDate, endDate, useModernCharges);
     }
 
     /**

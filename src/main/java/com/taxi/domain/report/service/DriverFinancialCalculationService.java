@@ -499,15 +499,16 @@ public class DriverFinancialCalculationService {
     public ChargesRevenueReportDTO calculateChargesRevenue(
             String driverNumber,
             LocalDate startDate,
-            LocalDate endDate) {
-        
-        log.info("📊 [CHARGES REVENUE] Driver: {} | Dates: {} to {}",
-                driverNumber, startDate, endDate);
+            LocalDate endDate,
+            Boolean useModernCharges) {
+
+        log.info("📊 [CHARGES REVENUE] Driver: {} | Dates: {} to {} | Modern Override: {}",
+                driverNumber, startDate, endDate, useModernCharges);
 
         Driver driver = driverRepository.findByDriverNumber(driverNumber)
                 .orElseThrow(() -> new IllegalArgumentException("Driver not found: " + driverNumber));
 
-        CustomerChargeDataProvider chargeProvider = chargeProviderFactory.getProvider();
+        CustomerChargeDataProvider chargeProvider = chargeProviderFactory.getProvider(useModernCharges);
         List<CustomerChargeDTO> charges = chargeProvider.findChargesByDriverNumber(driverNumber, startDate, endDate);
 
         log.debug("   ✓ Found {} charges (using {} system)", charges.size(), chargeProvider.getImplementationType());
