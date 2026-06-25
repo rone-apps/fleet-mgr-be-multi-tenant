@@ -85,6 +85,7 @@ public class FinancialStatementService {
     private final ItemRateOverrideRepository itemRateOverrideRepository;
     private final MileageRecordRepository mileageRecordRepository;
     private final LeaseRateOverrideService leaseRateOverrideService;
+    private final com.taxi.domain.statement.repository.LegacyBalanceRepository legacyBalanceRepository;
 
     // ═══════════════════════════════════════════════════════════════════════
     // NEW CONSOLIDATED SERVICES - SINGLE SOURCE OF TRUTH
@@ -212,11 +213,15 @@ public class FinancialStatementService {
      * Shows revenues, expenses (recurring and one-time), and net amount
      */
     public OwnerReportDTO generateOwnerReport(Long personId, LocalDate from, LocalDate to) {
-        return generateOwnerReport(personId, from, to, true, null);
+        return generateOwnerReport(personId, from, to, true, null, null);
     }
 
     public OwnerReportDTO generateOwnerReport(Long personId, LocalDate from, LocalDate to, Boolean useModernCharges) {
-        return generateOwnerReport(personId, from, to, true, useModernCharges);
+        return generateOwnerReport(personId, from, to, true, useModernCharges, null);
+    }
+
+    public OwnerReportDTO generateOwnerReport(Long personId, LocalDate from, LocalDate to, Boolean useModernCharges, Boolean useSmartFleetsAI) {
+        return generateOwnerReport(personId, from, to, true, useModernCharges, useSmartFleetsAI);
     }
 
     /**
@@ -225,8 +230,9 @@ public class FinancialStatementService {
      * @param includePendingTransfers If true, includes APPROVED transfer executions (for statement generation).
      *                                If false, only includes APPLIED/FINALIZED (for balance calculation)
      * @param useModernCharges Optional override: null = use tenant config, true = modern, false = legacy
+     * @param useSmartFleetsAI Optional override: null/true = use auto balance-forward, false = use legacy_balance_owed table
      */
-    public OwnerReportDTO generateOwnerReport(Long personId, LocalDate from, LocalDate to, boolean includePendingTransfers, Boolean useModernCharges) {
+    public OwnerReportDTO generateOwnerReport(Long personId, LocalDate from, LocalDate to, boolean includePendingTransfers, Boolean useModernCharges, Boolean useSmartFleetsAI) {
         Driver person = driverRepository.findById(personId)
             .orElseThrow(() -> new RuntimeException("Driver/Owner not found: " + personId));
 
@@ -1091,37 +1097,55 @@ public class FinancialStatementService {
             log.debug("Added other revenue: {} (applicationType: {}, amount: {})", revenueTypeStr, applicationTypeDisplay, revenue.getAmount());
         }
 
-        // 6. Fetch previous balance from last FINALIZED or PAID statement before this period
-        Optional<Statement> lastStatement = statementRepository.findLatestByPersonIdAndStatusInAndPeriodToBefore(
-                personId, List.of(StatementStatus.FINALIZED, StatementStatus.PAID), from);
-        if (lastStatement.isPresent()) {
-            Statement prev = lastStatement.get();
-            BigDecimal paidAmt = prev.getPaidAmount() != null ? prev.getPaidAmount() : BigDecimal.ZERO;
+        // 6. Fetch previous balance - Two modes:
+        // Mode A (useSmartFleetsAI = false): Use manual legacy balance from legacy_balance_owed table
+        // Mode B (useSmartFleetsAI = null/true): Use automatic balance from last FINALIZED/PAID statement (SmartFleets AI)
+        BigDecimal carryforward = BigDecimal.ZERO;
 
-            // For PAID statements: carry forward netDue - paidAmount (remaining balance after payment)
-            // For FINALIZED statements: carry forward netDue (no payment applied yet)
-            // Only carry forward NEGATIVE balances (amount due FROM driver/owner TO company)
-            // Positive balances (payable to driver/owner) get settled via payment batch
-            BigDecimal carryforward;
-            if (prev.getStatus() == StatementStatus.PAID) {
-                carryforward = prev.getNetDue().subtract(paidAmt);
-            } else {
-                carryforward = prev.getNetDue();
-            }
+        if (useSmartFleetsAI != null && !useSmartFleetsAI) {
+            // Use legacy balance from legacy_balance_owed table
+            Optional<com.taxi.domain.statement.model.LegacyBalance> legacyBalance =
+                legacyBalanceRepository.findLatestByDriverNumberBefore(person.getDriverNumber(), from);
 
-            // Only carry forward if negative (driver/owner owes company)
-            if (carryforward.compareTo(BigDecimal.ZERO) < 0) {
-                report.setPreviousBalance(carryforward);
-                log.info("Previous {} statement for {} — netDue={}, paid={}, carryforward={} (due from person)",
-                        prev.getStatus(), personId, prev.getNetDue(), paidAmt, carryforward);
+            if (legacyBalance.isPresent()) {
+                carryforward = legacyBalance.get().getBalanceOwed();
+                log.info("Using legacy balance for {} ({}): {} (effective: {})",
+                        person.getDriverNumber(), person.getFullName(), carryforward,
+                        legacyBalance.get().getEffectiveDate());
             } else {
-                report.setPreviousBalance(BigDecimal.ZERO);
-                log.info("Previous {} statement for {} — netDue={}, paid={}, balance={} (payable, not carried forward)",
-                        prev.getStatus(), personId, prev.getNetDue(), paidAmt, carryforward);
+                log.warn("No legacy balance found for {} ({}), using $0",
+                        person.getDriverNumber(), person.getFullName());
             }
         } else {
+            // Use SmartFleets AI (automatic balance from previous statement)
+            Optional<Statement> lastStatement = statementRepository.findLatestByPersonIdAndStatusInAndPeriodToBefore(
+                    personId, List.of(StatementStatus.FINALIZED, StatementStatus.PAID), from);
+
+            if (lastStatement.isPresent()) {
+                Statement prev = lastStatement.get();
+                BigDecimal paidAmt = prev.getPaidAmount() != null ? prev.getPaidAmount() : BigDecimal.ZERO;
+
+                // For PAID statements: carry forward netDue - paidAmount (remaining balance after payment)
+                // For FINALIZED statements: carry forward netDue (no payment applied yet)
+                if (prev.getStatus() == StatementStatus.PAID) {
+                    carryforward = prev.getNetDue().subtract(paidAmt);
+                } else {
+                    carryforward = prev.getNetDue();
+                }
+
+                log.info("Using SmartFleets AI balance for {} — previous {} statement: netDue={}, paid={}, carryforward={}",
+                        personId, prev.getStatus(), prev.getNetDue(), paidAmt, carryforward);
+            } else {
+                log.info("No previous statement found for {} before {} (SmartFleets AI mode)", personId, from);
+            }
+        }
+
+        // Only carry forward NEGATIVE balances (driver/owner owes company)
+        // Positive balances (payable to driver/owner) get settled via payment batch
+        if (carryforward.compareTo(BigDecimal.ZERO) < 0) {
+            report.setPreviousBalance(carryforward);
+        } else {
             report.setPreviousBalance(BigDecimal.ZERO);
-            log.info("No previous statement found for {} before {}", personId, from);
         }
 
         report.setPersonType(Boolean.TRUE.equals(person.getIsOwner()) ? "OWNER" : "DRIVER");

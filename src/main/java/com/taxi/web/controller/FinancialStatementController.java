@@ -46,7 +46,8 @@ public class FinancialStatementController {
             @PathVariable Long ownerId,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to,
-            @RequestParam(required = false) Boolean useModernCharges) {
+            @RequestParam(required = false) Boolean useModernCharges,
+            @RequestParam(required = false) Boolean useSmartFleetsAI) {
         try {
             // Default to current month if not provided
             if (from == null || to == null) {
@@ -74,9 +75,9 @@ public class FinancialStatementController {
             }
 
             // If no existing statement, generate a new draft report
-            log.info("No existing statement found, generating new draft report for owner {} from {} to {} (useModernCharges: {})",
-                    ownerId, from, to, useModernCharges);
-            OwnerReportDTO report = financialStatementService.generateOwnerReport(ownerId, from, to, useModernCharges);
+            log.info("No existing statement found, generating new draft report for owner {} from {} to {} (useModernCharges: {}, useSmartFleetsAI: {})",
+                    ownerId, from, to, useModernCharges, useSmartFleetsAI);
+            OwnerReportDTO report = financialStatementService.generateOwnerReport(ownerId, from, to, useModernCharges, useSmartFleetsAI);
             return ResponseEntity.ok(report);
 
         } catch (Exception e) {
@@ -95,7 +96,8 @@ public class FinancialStatementController {
             @PathVariable String driverNumber,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to,
-            @RequestParam(required = false) Boolean useModernCharges) {
+            @RequestParam(required = false) Boolean useModernCharges,
+            @RequestParam(required = false) Boolean useSmartFleetsAI) {
         try {
             // Default to current month if not provided
             if (from == null || to == null) {
@@ -108,9 +110,9 @@ public class FinancialStatementController {
             com.taxi.domain.driver.model.Driver driver = driverRepository.findByDriverNumber(driverNumber)
                     .orElseThrow(() -> new RuntimeException("Driver not found: " + driverNumber));
 
-            log.info("Generating owner report for driver {} (ID: {}) from {} to {} (useModernCharges: {})",
-                    driverNumber, driver.getId(), from, to, useModernCharges);
-            OwnerReportDTO report = financialStatementService.generateOwnerReport(driver.getId(), from, to, useModernCharges);
+            log.info("Generating owner report for driver {} (ID: {}) from {} to {} (useModernCharges: {}, useSmartFleetsAI: {})",
+                    driverNumber, driver.getId(), from, to, useModernCharges, useSmartFleetsAI);
+            OwnerReportDTO report = financialStatementService.generateOwnerReport(driver.getId(), from, to, useModernCharges, useSmartFleetsAI);
             return ResponseEntity.ok(report);
 
         } catch (Exception e) {
